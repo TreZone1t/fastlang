@@ -5,20 +5,133 @@ pub enum Visibility {
     Static,
 }
 
-#[derive(Debug, Clone)]
-pub struct Param {
-    pub base_type: String,
-    pub size: Option<i64>,
-    pub name: String,
+#[derive(Debug, Clone, PartialEq)]
+pub enum Editability {
+    Editable,
+    NotEditable,
 }
 
-/// A type as it was written in source code.  Keeping the size separate avoids
-/// losing information such as `int(16)` when a declaration is lowered to a
-/// `ScopeDecl`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypeRef {
     pub base_type: String,
     pub size: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FieldDecl {
+    pub visibility: Visibility,
+    pub editability: Editability,
+    pub type_sized: Option<TypeRef>,
+    pub name: String,
+    pub value: Option<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScopeType {
+    Fn,
+    Block,
+    Class,
+    Struct,
+    Custom,
+    Looped,
+    Case,
+    Array,
+    String,
+}
+
+#[derive(Debug, Clone)]
+pub struct Param {
+    pub name: String,
+    pub base_type: String,
+    pub size: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Flag {
+    IsReturn,
+    IsBreak,
+    IsThrow,
+    IsSwitch,
+    IsExit,
+    Custom(String),
+}
+
+impl Flag {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "is_return" => Flag::IsReturn,
+            "is_break" => Flag::IsBreak,
+            "is_throw" => Flag::IsThrow,
+            "is_switch" => Flag::IsSwitch,
+            "is_exit" => Flag::IsExit,
+            _ => Flag::Custom(s.to_string()),
+        }
+    }
+
+    pub fn as_str(&self) -> String {
+        match self {
+            Flag::IsReturn => "is_return".to_string(),
+            Flag::IsBreak => "is_break".to_string(),
+            Flag::IsThrow => "is_throw".to_string(),
+            Flag::IsSwitch => "is_switch".to_string(),
+            Flag::IsExit => "is_exit".to_string(),
+            Flag::Custom(s) => s.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Setting {
+    IndexAccess,
+    CustomInitBody,
+    Keyword,
+    CustomParamBody,
+    Param,
+    Private,
+    Public,
+    Static,
+    Length,
+    Size,
+    Data,
+    Error,
+    Custom(String),
+}
+
+impl Setting {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "index_access" => Setting::IndexAccess,
+            "init" => Setting::CustomInitBody,
+            "keyword" => Setting::Keyword,
+            "param" => Setting::Param,
+            "private" => Setting::Private,
+            "public" => Setting::Public,
+            "static" => Setting::Static,
+            "length" => Setting::Length,
+            "size" => Setting::Size,
+            "data" => Setting::Data,
+            "error" => Setting::Error,
+            _ => Setting::Custom(s.to_string()),
+        }
+    }
+
+    pub fn as_str(&self) -> String {
+        match self {
+            Setting::IndexAccess => "index_access".to_string(),
+            Setting::CustomInitBody => "init".to_string(),
+            Setting::Keyword => "keyword".to_string(),
+            Setting::CustomParamBody => "param".to_string(),
+            Setting::Param => "param".to_string(),
+            Setting::Private => "private".to_string(),
+            Setting::Public => "public".to_string(),
+            Setting::Static => "static".to_string(),
+            Setting::Length => "length".to_string(),
+            Setting::Size => "size".to_string(),
+            Setting::Data => "data".to_string(),
+            Setting::Error => "error".to_string(),
+            Setting::Custom(s) => s.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -27,16 +140,18 @@ pub enum Expr {
     LiteralFloat(f64),
     LiteralString(String),
     LiteralBool(bool),
+    LiteralChar(char),
+    ArrayLiteral(Vec<Expr>),
     Identifier(String),
-    Super,  // reference to parent class
-    This,   // reference to current instance
-    Global, // reference to global scope
+    Super,
+    This,
+    Global,
 
     ListLiteral(Vec<Expr>),
     ObjectLiteral(Vec<Stmt>),
 
     Instantiate {
-        op: String, // "new", "copy", "modify"
+        op: String,
         target: Box<Expr>,
         args: Vec<Expr>,
     },
@@ -74,18 +189,16 @@ pub enum Expr {
 
     PostfixUpdate {
         left: Box<Expr>,
-        operator: String, // "++" or "--"
+        operator: String,
     },
 }
 
 #[derive(Debug, Clone)]
 pub enum Stmt {
     VarDecl {
-        is_exported: bool,
-        is_static: bool,
-        is_const: bool,
-        base_type: Option<String>,
-        size: Option<i64>,
+        visibility: Visibility,
+        editability: Editability,
+        type_sized: Option<TypeRef>,
         name: String,
         value: Expr,
     },
@@ -97,51 +210,20 @@ pub enum Stmt {
 
     ScopeDecl {
         is_exported: bool,
+        is_const: bool,
         name: String,
-
-        /// نوع الـ scope (block, Fn, looped, custom, ...)
-        scope_type: String,
-
-        /// true لو النوع custom — بيعني الـ semantic analyzer هيتخطى معظم القواعد
-        is_custom: bool,
-
-        /// الـ params — مسموح بهم بس في Fn و custom
-        params: Vec<Stmt>,
-
-        /// The declared return type for function-like scopes.  `None` means
-        /// that the source did not declare one.
+        scope_type: ScopeType,
+        params: Vec<Param>,
         return_type: Option<TypeRef>,
-
-        /// الـ flags — control flow (isBreak, isReturn, etc.)
-        flags: Vec<String>,
-
-        /// الـ settings — scope features (index_access, public, length, size, etc.)
-        settings: Vec<String>,
-
-        /// event handlers: event.<name> -> { ... }
+        flags: Vec<Flag>,
+        settings: Vec<Setting>,
         events: Vec<EventDecl>,
-
-        /// handle handlers: handle.<flag> -> { ... }
         handles: Vec<HandleDecl>,
-
-        /// Block scope statements
         statements: Vec<Stmt>,
-
-        /// Custom scope public block
         public_block: Vec<Stmt>,
-
-        /// Fields declared with `add <type> <name>;` in a custom scope.
-        /// They are kept separate from methods in access blocks so codegen can
-        /// emit them as C++ data members.
-        fields: Vec<Stmt>,
-
-        /// Custom scope private block
+        fields: Vec<FieldDecl>,
         private_block: Vec<Stmt>,
-
-        /// return value — مسموح بها بس في Fn و block و custom
         return_value: Option<Expr>,
-
-        /// دالة البناء (constructor) — مسموح بها في הـ custom/scopes
         constructor: Option<ConstructorDecl>,
     },
 
@@ -215,14 +297,14 @@ pub enum Stmt {
     LoopStmt {
         /// عدد التكرارات — None = infinite loop
         count: Option<Expr>,
-        body: LoopBody,
+        body: EitherBlock,
     },
 
     /// `while (cond) -> { ... }`
     /// أو  `while (cond) -> scope_name(args)` (scope call)
     WhileStmt {
         condition: Expr,
-        body: LoopBody,
+        body: EitherBlock,
     },
 
     /// `for (init; cond; inc) -> { ... }`
@@ -230,13 +312,20 @@ pub enum Stmt {
         init: Option<Box<Stmt>>,
         condition: Option<Expr>,
         increment: Option<Expr>,
-        body: LoopBody,
+        body: EitherBlock,
     },
 
     Use {
         module_path: Vec<String>,
         imports: Option<Vec<String>>,
     },
+
+    SwitchStmt {
+        condition: Expr,
+        cases: EitherBlock,
+    },
+
+    DelStmt(Expr),
 }
 
 /// جسم الـ loop/while — ممكن يكون:
@@ -244,11 +333,11 @@ pub enum Stmt {
 ///   ScopeCall: استدعاء scope من نوع looped/custom
 ///     e.g. `while (cond) -> my_looped_scope()`
 #[derive(Debug, Clone)]
-pub enum LoopBody {
+pub enum EitherBlock {
     /// `{ statements... }` — inline block
     Inline(Vec<Stmt>),
     /// `scope_name(args)` — استدعاء scope
-    ScopeCall(Expr),
+    External(Expr),
 }
 
 #[derive(Debug, Clone)]

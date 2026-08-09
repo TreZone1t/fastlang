@@ -75,6 +75,8 @@ impl Scanner {
             "if" => Some(TokenKind::If),
             "else" => Some(TokenKind::Else),
             "for" => Some(TokenKind::For),
+            "switch" => Some(TokenKind::Switch),
+            "case" => Some(TokenKind::Case),
 
             // loops
             "loop" => Some(TokenKind::Loop),
@@ -353,6 +355,9 @@ impl Scanner {
                 if let Some('=') = self.peek() {
                     self.advance();
                     TokenKind::Eq
+                } else if let Some('>') = self.peek() {
+                    self.advance();
+                    TokenKind::FatArrow
                 } else {
                     TokenKind::Assign
                 }
@@ -398,8 +403,22 @@ impl Scanner {
                     )
                 }
             }
-            '>' => TokenKind::Greater,
-            '<' => TokenKind::Less,
+            '>' => {
+                if let Some('=') = self.peek() {
+                    self.advance();
+                    TokenKind::GreaterEq
+                } else {
+                    TokenKind::Greater
+                }
+            }
+            '<' => {
+                if let Some('=') = self.peek() {
+                    self.advance();
+                    TokenKind::LessEq
+                } else {
+                    TokenKind::Less
+                }
+            }
 
             other => TokenKind::Error(format!(
                 "Unexpected character '{}' at line {}",

@@ -7,8 +7,8 @@ const float(64) pi = 3.14;
 fn main() -> int(32) {
     let bool is_active = true;
     let char initial = 'A';
-    let str message = "Hello";
-    let array(int(32)) numbers = [1, 2, 3];
+    let str(255) message = "Hello";
+    let array(int(32) ,3) numbers = [1, 2, 3];
     
     return 0;
 }

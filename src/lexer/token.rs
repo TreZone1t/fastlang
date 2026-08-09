@@ -14,18 +14,20 @@ pub enum TokenKind {
     Log,      // log
     If,       // if
     Else,     // else
-    For,      // for
-    While,    // while
-    Loop,     // loop
-    Break,    // break
+    Switch, // switch // i don't know how to implement it but it will be using scope we will make a new scope type for it.
+    Case,   // case
+    For,    // for
+    While,  // while
+    Loop,   // loop
+    Break,  // break
     Continue, // continue
-    Return,   // return
-    Fn,       // fn
-    Del,      // del
-    Class,    // class
-    Enum,     // enum
-    Extends,  // extends
-    Super,    // super
+    Return, // return
+    Fn,     // fn
+    Del,    // del
+    Class,  // class
+    Enum,   // enum
+    Extends, // extends
+    Super,  // super
 
     Use,    // use
     Export, // export
@@ -83,6 +85,7 @@ pub enum TokenKind {
     // 4. Operators / punctuation
     Assign,   // =
     Arrow,    // ->
+    FatArrow, // =>
     Dot,      // .
     Not,      // !
     Plus,     // +
@@ -99,10 +102,14 @@ pub enum TokenKind {
     // logical
     And,     // && or and
     Or,      // || or or
-    Eq,      // ==
-    NotEq,   // !=
-    Greater, // >
-    Less,    // <
+
+    // Relational
+    Eq,        // ==
+    NotEq,     // !=
+    Greater,   // >
+    Less,      // <
+    GreaterEq, // >=
+    LessEq,    // <=
 
     // Symbols
     LParen,      // (

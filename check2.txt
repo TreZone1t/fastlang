@@ -1,0 +1,697 @@
+﻿cargo :     Checking fast_lang v0.1.0 (C:\Users\DELL\projects\fast_lang)
+At line:1 char:1
++ cargo check > check.txt 2>&1
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Checking fa...ects\fast_lang):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+error[E0573]: expected type, found variant `Editablity::NotEditable`
+   --> src\parser\ast.rs:348:21
+    |
+348 |     pub editablity: Editablity::NotEditable,
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^
+    |                     |
+    |                     not a type
+    |                     help: try using the variant's enum: `crate::parser::ast::Editablity`
+
+error[E0026]: variant `ast::Stmt::VarDecl` does not have fields named `base_type`, `size`, `is_exported`
+   --> src\codegen\generator.rs:119:17
+    |
+119 |                 base_type,
+    |                 ^^^^^^^^^
+120 |                 size,
+    |                 ^^^^
+121 |                 value,
+122 |                 is_exported: _,
+    |                 ^^^^^^^^^^^ variant `ast::Stmt::VarDecl` does not have these fields
+
+error[E0026]: variant `ast::Stmt::ScopeDecl` does not have a field named `is_custom`
+   --> src\codegen\generator.rs:264:17
+    |
+264 |                 is_custom,
+    |                 ^^^^^^^^^ variant `ast::Stmt::ScopeDecl` does not have this field
+
+error[E0282]: type annotations needed
+   --> src\codegen\generator.rs:165:40
+    |
+165 |                     Some(user_type) => user_type.to_string(),
+    |                                        ^^^^^^^^^ cannot infer type
+
+error[E0308]: mismatched types
+   --> src\codegen\generator.rs:285:32
+    |
+285 |                         if let Stmt::VarDecl { name: field_name, base_type, size, .. } = field {
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   ----- this expression 
+has type `&FieldDecl`
+    |                                |
+    |                                expected `FieldDecl`, found `Stmt`
+
+error[E0026]: variant `ast::Stmt::VarDecl` does not have fields named `base_type`, `size`
+   --> src\codegen\generator.rs:285:66
+    |
+285 |                         if let Stmt::VarDecl { name: field_name, base_type, size, .. } = field {
+    |                                                                  ^^^^^^^^^  ^^^^ variant `ast::Stmt::VarDecl` 
+does not have these fields
+
+error[E0308]: mismatched types
+   --> src\codegen\generator.rs:293:32
+    |
+293 |                         if let Stmt::VarDecl { name: p_name, base_type, size, .. } = p {
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   - this expression has type 
+`&Param`
+    |                                |
+    |                                expected `Param`, found `Stmt`
+
+error[E0026]: variant `ast::Stmt::VarDecl` does not have fields named `base_type`, `size`
+   --> src\codegen\generator.rs:293:62
+    |
+293 |                         if let Stmt::VarDecl { name: p_name, base_type, size, .. } = p {
+    |                                                              ^^^^^^^^^  ^^^^ variant `ast::Stmt::VarDecl` does 
+not have these fields
+
+error[E0308]: mismatched types
+   --> src\codegen\generator.rs:303:36
+    |
+303 | ...                   if let Stmt::VarDecl { name: p_name, base_type, size, .. } = p {
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   - this expression has type 
+`&Param`
+    |                              |
+    |                              expected `Param`, found `Stmt`
+
+error[E0026]: variant `ast::Stmt::VarDecl` does not have fields named `base_type`, `size`
+   --> src\codegen\generator.rs:303:66
+    |
+303 | ...                   if let Stmt::VarDecl { name: p_name, base_type, size, .. } = p {
+    |                                                            ^^^^^^^^^  ^^^^ variant `ast::Stmt::VarDecl` does not 
+have these fields
+
+error[E0308]: mismatched types
+   --> src\codegen\generator.rs:311:36
+    |
+311 | ...                   if let Stmt::VarDecl { name: p_name, .. } = p {
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   - this expression has type `&Param`
+    |                              |
+    |                              expected `Param`, found `Stmt`
+
+error[E0308]: mismatched types
+   --> src\codegen\generator.rs:364:28
+    |
+364 |                       if let Stmt::VarDecl {
+    |  ____________________________^
+365 | |                         name: p_name,
+366 | |                         base_type,
+367 | |                         size,
+368 | |                         ..
+369 | |                     } = p
+    | |                     ^   - this expression has type `&Param`
+    | |_____________________|
+    |                       expected `Param`, found `Stmt`
+
+error[E0026]: variant `ast::Stmt::VarDecl` does not have fields named `base_type`, `size`
+   --> src\codegen\generator.rs:366:25
+    |
+366 |                         base_type,
+    |                         ^^^^^^^^^
+367 |                         size,
+    |                         ^^^^ variant `ast::Stmt::VarDecl` does not have these fields
+
+error[E0599]: no variant or associated item named `ListLiteral` found for enum `ast::Expr` in the current scope
+   --> src\codegen\generator.rs:592:19
+    |
+592 |             Expr::ListLiteral(elements) => {
+    |                   ^^^^^^^^^^^ variant or associated item not found in `ast::Expr`
+    |
+   ::: src\parser\ast.rs:100:1
+    |
+100 | pub enum Expr {
+    | ------------- variant or associated item `ListLiteral` not found for this enum
+
+error[E0026]: variant `ast::Stmt::VarDecl` does not have a field named `is_exported`
+   --> src\parser\parser.rs:277:29
+    |
+277 |             Stmt::VarDecl { is_exported, .. } => *is_exported = true,
+    |                             ^^^^^^^^^^^ variant `ast::Stmt::VarDecl` does not have this field
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `is_exported`
+   --> src\parser\parser.rs:336:13
+    |
+336 |             is_exported: false,
+    |             ^^^^^^^^^^^ `ast::Stmt::VarDecl` does not have this field
+    |
+    = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `is_static`
+   --> src\parser\parser.rs:337:13
+    |
+337 |             is_static: false, // ┘à╪ñ┘é╪¬╪º┘ï ┘ä╪¡╪» ┘à╪º ┘å╪╢┘è┘ü ╪»╪╣┘à ╪º┘ä┘â┘ä┘à╪º╪¬ ╪»┘è
+    |             ^^^^^^^^^ `ast::Stmt::VarDecl` does not have this field
+    |
+    = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `is_const`
+   --> src\parser\parser.rs:338:13
+    |
+338 |             is_const: false,
+    |             ^^^^^^^^ `ast::Stmt::VarDecl` does not have this field
+    |
+    = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `base_type`
+   --> src\parser\parser.rs:339:13
+    |
+339 |             base_type,
+    |             ^^^^^^^^^ `ast::Stmt::VarDecl` does not have this field
+    |
+    = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `size`
+   --> src\parser\parser.rs:340:13
+    |
+340 |             size,
+    |             ^^^^ `ast::Stmt::VarDecl` does not have this field
+    |
+    = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `is_exported`
+   --> src\parser\parser.rs:603:17
+    |
+603 |                 is_exported: false,
+    |                 ^^^^^^^^^^^ `ast::Stmt::VarDecl` does not have this field
+    |
+    = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `is_static`
+   --> src\parser\parser.rs:604:17
+    |
+604 |                 is_static: false,
+    |                 ^^^^^^^^^ `ast::Stmt::VarDecl` does not have this field
+    |
+    = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `is_const`
+   --> src\parser\parser.rs:605:17
+    |
+605 |                 is_const: false,
+    |                 ^^^^^^^^ `ast::Stmt::VarDecl` does not have this field
+    |
+    = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `base_type`
+   --> src\parser\parser.rs:606:17
+    |
+606 |                 base_type,
+    |                 ^^^^^^^^^ `ast::Stmt::VarDecl` does not have this field
+    |
+    = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `size`
+   --> src\parser\parser.rs:607:17
+    |
+607 |                 size,
+    |                 ^^^^ `ast::Stmt::VarDecl` does not have this field
+    |
+    = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0308]: mismatched types
+    --> src\parser\parser.rs:1414:13
+     |
+1414 |             scope_type,
+     |             ^^^^^^^^^^ expected `ScopeType`, found `String`
+
+error[E0559]: variant `ast::Stmt::ScopeDecl` has no field named `is_custom`
+    --> src\parser\parser.rs:1415:13
+     |
+1415 |             is_custom,
+     |             ^^^^^^^^^ `ast::Stmt::ScopeDecl` does not have this field
+     |
+     = note: all struct fields are already assigned
+
+error[E0308]: mismatched types
+    --> src\parser\parser.rs:1416:13
+     |
+1416 |             params,
+     |             ^^^^^^ expected `Vec<Param>`, found `Vec<Stmt>`
+     |
+     = note: expected struct `Vec<Param>`
+                found struct `Vec<ast::Stmt>`
+
+error[E0308]: mismatched types
+    --> src\parser\parser.rs:1418:13
+     |
+1418 |             flags,
+     |             ^^^^^ expected `Vec<Flag>`, found `Vec<String>`
+     |
+     = note: expected struct `Vec<Flag>`
+                found struct `Vec<String>`
+
+error[E0308]: mismatched types
+    --> src\parser\parser.rs:1419:13
+     |
+1419 |             settings,
+     |             ^^^^^^^^ expected `Vec<Setting>`, found `Vec<String>`
+     |
+     = note: expected struct `Vec<Setting>`
+                found struct `Vec<String>`
+
+error[E0308]: mismatched types
+    --> src\parser\parser.rs:1424:13
+     |
+1424 |             fields,
+     |             ^^^^^^ expected `Vec<FieldDecl>`, found `Vec<Stmt>`
+     |
+     = note: expected struct `Vec<FieldDecl>`
+                found struct `Vec<ast::Stmt>`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `is_exported`
+    --> src\parser\parser.rs:1446:21
+     |
+1446 |                     is_exported: false,
+     |                     ^^^^^^^^^^^ `ast::Stmt::VarDecl` does not have this field
+     |
+     = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `is_static`
+    --> src\parser\parser.rs:1447:21
+     |
+1447 |                     is_static: false,
+     |                     ^^^^^^^^^ `ast::Stmt::VarDecl` does not have this field
+     |
+     = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `is_const`
+    --> src\parser\parser.rs:1448:21
+     |
+1448 |                     is_const: false,
+     |                     ^^^^^^^^ `ast::Stmt::VarDecl` does not have this field
+     |
+     = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `base_type`
+    --> src\parser\parser.rs:1449:21
+     |
+1449 |                     base_type: Some(base_type),
+     |                     ^^^^^^^^^ `ast::Stmt::VarDecl` does not have this field
+     |
+     = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `size`
+    --> src\parser\parser.rs:1450:21
+     |
+1450 |                     size,
+     |                     ^^^^ `ast::Stmt::VarDecl` does not have this field
+     |
+     = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0308]: mismatched types
+    --> src\parser\parser.rs:1479:25
+     |
+1479 |             scope_type: "fn".to_string(),
+     |                         ^^^^^^^^^^^^^^^^ expected `ScopeType`, found `String`
+
+error[E0559]: variant `ast::Stmt::ScopeDecl` has no field named `is_custom`
+    --> src\parser\parser.rs:1480:13
+     |
+1480 |             is_custom: false,
+     |             ^^^^^^^^^ `ast::Stmt::ScopeDecl` does not have this field
+     |
+     = note: all struct fields are already assigned
+
+error[E0308]: mismatched types
+    --> src\parser\parser.rs:1481:13
+     |
+1445 |                   params.push(Stmt::VarDecl {
+     |  _________________------______-
+     | |                 |
+     | |                 ... which causes `params` to have type `Vec<ast::Stmt>`
+1446 | |                     is_exported: false,
+1447 | |                     is_static: false,
+1448 | |                     is_const: false,
+...    |
+1452 | |                     value: Expr::Identifier("__param__".to_string()),
+1453 | |                 });
+     | |_________________- this argument has type `ast::Stmt`...
+...
+1481 |               params,
+     |               ^^^^^^ expected `Vec<Param>`, found `Vec<Stmt>`
+     |
+     = note: expected struct `Vec<Param>`
+                found struct `Vec<ast::Stmt>`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `is_exported`
+    --> src\parser\parser.rs:1605:13
+     |
+1605 |             is_exported: false,
+     |             ^^^^^^^^^^^ `ast::Stmt::VarDecl` does not have this field
+     |
+     = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `is_static`
+    --> src\parser\parser.rs:1606:13
+     |
+1606 |             is_static: false,
+     |             ^^^^^^^^^ `ast::Stmt::VarDecl` does not have this field
+     |
+     = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `is_const`
+    --> src\parser\parser.rs:1607:13
+     |
+1607 |             is_const: false,
+     |             ^^^^^^^^ `ast::Stmt::VarDecl` does not have this field
+     |
+     = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `base_type`
+    --> src\parser\parser.rs:1608:13
+     |
+1608 |             base_type,
+     |             ^^^^^^^^^ `ast::Stmt::VarDecl` does not have this field
+     |
+     = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0559]: variant `ast::Stmt::VarDecl` has no field named `size`
+    --> src\parser\parser.rs:1609:13
+     |
+1609 |             size,
+     |             ^^^^ `ast::Stmt::VarDecl` does not have this field
+     |
+     = note: available fields are: `visibility`, `editablity`, `type_sized`
+
+error[E0599]: no variant or associated item named `ListLiteral` found for enum `ast::Expr` in the current scope
+    --> src\parser\parser.rs:1895:26
+     |
+1895 |                 Ok(Expr::ListLiteral(elements))
+     |                          ^^^^^^^^^^^ variant or associated item not found in `ast::Expr`
+     |
+    ::: src\parser\ast.rs:100:1
+     |
+ 100 | pub enum Expr {
+     | ------------- variant or associated item `ListLiteral` not found for this enum
+
+error[E0026]: variant `ast::Stmt::VarDecl` does not have fields named `is_static`, `is_const`, `base_type`, `size`, 
+`is_exported`
+   --> src\semantic\analyzer.rs:95:17
+    |
+ 95 |                 is_static,
+    |                 ^^^^^^^^^
+ 96 |                 is_const,
+    |                 ^^^^^^^^
+ 97 |                 base_type,
+    |                 ^^^^^^^^^
+ 98 |                 size,
+    |                 ^^^^
+...
+101 |                 is_exported,
+    |                 ^^^^^^^^^^^ variant `ast::Stmt::VarDecl` does not have these fields
+
+error[E0027]: pattern does not mention fields `visibility`, `editablity`, `type_sized`
+   --> src\semantic\analyzer.rs:94:13
+    |
+ 94 | /             Stmt::VarDecl {
+ 95 | |                 is_static,
+ 96 | |                 is_const,
+ 97 | |                 base_type,
+...   |
+101 | |                 is_exported,
+102 | |             } => {
+    | |_____________^ missing fields `visibility`, `editablity`, `type_sized`
+    |
+help: include the missing fields in the pattern
+    |
+101 -                 is_exported,
+102 -             } => {
+101 +                 is_exported, visibility, editablity, type_sized } => {
+    |
+help: if you don't care about these missing fields, you can explicitly ignore them
+    |
+101 -                 is_exported,
+102 -             } => {
+101 +                 is_exported, visibility: _, editablity: _, type_sized: _ } => {
+    |
+help: or always ignore missing fields here
+    |
+101 -                 is_exported,
+102 -             } => {
+101 +                 is_exported, .. } => {
+    |
+
+error[E0026]: variant `ast::Stmt::ScopeDecl` does not have a field named `is_custom`
+   --> src\semantic\analyzer.rs:173:17
+    |
+173 |                 is_custom,
+    |                 ^^^^^^^^^ variant `ast::Stmt::ScopeDecl` does not have this field
+
+error[E0277]: the trait bound `Setting: std::cmp::Eq` is not satisfied
+   --> src\semantic\analyzer.rs:190:36
+    |
+190 |                     scope_settings.insert(s.clone());
+    |                                    ^^^^^^ the trait `std::cmp::Eq` is not implemented for `Setting`
+    |
+note: required by a bound in `HashSet::<T, S, A>::insert`
+   --> C:\Users\DELL\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\std\src\collections\
+hash\set.rs:525:8
+    |
+525 |     T: Eq + Hash,
+    |        ^^ required by this bound in `HashSet::<T, S, A>::insert`
+...
+995 |     pub fn insert(&mut self, value: T) -> bool {
+    |            ------ required by a bound in this associated function
+help: consider annotating `Setting` with `#[derive(Eq)]`
+   --> src\parser\ast.rs:42:1
+    |
+ 42 + #[derive(Eq)]
+ 43 | pub enum Setting {
+    |
+
+error[E0277]: the trait bound `Setting: Hash` is not satisfied
+   --> src\semantic\analyzer.rs:190:36
+    |
+190 |                     scope_settings.insert(s.clone());
+    |                                    ^^^^^^ the trait `Hash` is not implemented for `Setting`
+    |
+note: required by a bound in `HashSet::<T, S, A>::insert`
+   --> C:\Users\DELL\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\std\src\collections\
+hash\set.rs:525:13
+    |
+525 |     T: Eq + Hash,
+    |             ^^^^ required by this bound in `HashSet::<T, S, A>::insert`
+...
+995 |     pub fn insert(&mut self, value: T) -> bool {
+    |            ------ required by a bound in this associated function
+help: consider annotating `Setting` with `#[derive(Hash)]`
+   --> src\parser\ast.rs:42:1
+    |
+ 42 + #[derive(Hash)]
+ 43 | pub enum Setting {
+    |
+
+error[E0308]: mismatched types
+   --> src\semantic\analyzer.rs:195:32
+    |
+195 |                     base_type: scope_type.clone(),
+    |                                ^^^^^^^^^^^^^^^^^^ expected `String`, found `ScopeType`
+
+error[E0308]: mismatched types
+   --> src\semantic\analyzer.rs:200:31
+    |
+190 |                     scope_settings.insert(s.clone());
+    |                     --------------        --------- this argument has type `Setting`...
+    |                     |
+    |                     ... which causes `scope_settings` to have type `HashSet<Setting>`
+...
+200 |                     settings: scope_settings,
+    |                               ^^^^^^^^^^^^^^ expected `HashSet<String>`, found `HashSet<Setting>`
+    |
+    = note: expected struct `HashSet<String>`
+               found struct `HashSet<Setting>`
+
+error[E0277]: can't compare `ScopeType` with `str`
+   --> src\semantic\analyzer.rs:205:31
+    |
+205 |                 if scope_type == "statement" {
+    |                               ^^ no implementation for `ScopeType == str`
+    |
+help: the trait `PartialEq<str>` is not implemented for `ScopeType`
+      but trait `PartialEq<ScopeType>` is implemented for it
+   --> src\parser\ast.rs:74:24
+    |
+ 74 | #[derive(Debug, Clone, PartialEq)]
+    |                        ^^^^^^^^^
+    = help: for that trait implementation, expected `ScopeType`, found `str`
+    = note: required for `&ScopeType` to implement `PartialEq<&str>`
+
+error[E0277]: can't compare `ScopeType` with `str`
+   --> src\semantic\analyzer.rs:213:31
+    |
+213 |                 if scope_type == "fn" || scope_type == "block" || scope_type == "Fn" {
+    |                               ^^ no implementation for `ScopeType == str`
+    |
+help: the trait `PartialEq<str>` is not implemented for `ScopeType`
+      but trait `PartialEq<ScopeType>` is implemented for it
+   --> src\parser\ast.rs:74:24
+    |
+ 74 | #[derive(Debug, Clone, PartialEq)]
+    |                        ^^^^^^^^^
+    = help: for that trait implementation, expected `ScopeType`, found `str`
+    = note: required for `&ScopeType` to implement `PartialEq<&str>`
+
+error[E0277]: can't compare `ScopeType` with `str`
+   --> src\semantic\analyzer.rs:213:53
+    |
+213 |                 if scope_type == "fn" || scope_type == "block" || scope_type == "Fn" {
+    |                                                     ^^ no implementation for `ScopeType == str`
+    |
+help: the trait `PartialEq<str>` is not implemented for `ScopeType`
+      but trait `PartialEq<ScopeType>` is implemented for it
+   --> src\parser\ast.rs:74:24
+    |
+ 74 | #[derive(Debug, Clone, PartialEq)]
+    |                        ^^^^^^^^^
+    = help: for that trait implementation, expected `ScopeType`, found `str`
+    = note: required for `&ScopeType` to implement `PartialEq<&str>`
+
+error[E0277]: can't compare `ScopeType` with `str`
+   --> src\semantic\analyzer.rs:213:78
+    |
+213 |                 if scope_type == "fn" || scope_type == "block" || scope_type == "Fn" {
+    |                                                                              ^^ no implementation for `ScopeType 
+== str`
+    |
+help: the trait `PartialEq<str>` is not implemented for `ScopeType`
+      but trait `PartialEq<ScopeType>` is implemented for it
+   --> src\parser\ast.rs:74:24
+    |
+ 74 | #[derive(Debug, Clone, PartialEq)]
+    |                        ^^^^^^^^^
+    = help: for that trait implementation, expected `ScopeType`, found `str`
+    = note: required for `&ScopeType` to implement `PartialEq<&str>`
+
+error[E0277]: can't compare `ScopeType` with `str`
+   --> src\semantic\analyzer.rs:216:38
+    |
+216 |                 } else if scope_type == "looped" {
+    |                                      ^^ no implementation for `ScopeType == str`
+    |
+help: the trait `PartialEq<str>` is not implemented for `ScopeType`
+      but trait `PartialEq<ScopeType>` is implemented for it
+   --> src\parser\ast.rs:74:24
+    |
+ 74 | #[derive(Debug, Clone, PartialEq)]
+    |                        ^^^^^^^^^
+    = help: for that trait implementation, expected `ScopeType`, found `str`
+    = note: required for `&ScopeType` to implement `PartialEq<&str>`
+
+error[E0277]: can't compare `ScopeType` with `str`
+   --> src\semantic\analyzer.rs:219:31
+    |
+219 |                 if scope_type == "custom" {
+    |                               ^^ no implementation for `ScopeType == str`
+    |
+help: the trait `PartialEq<str>` is not implemented for `ScopeType`
+      but trait `PartialEq<ScopeType>` is implemented for it
+   --> src\parser\ast.rs:74:24
+    |
+ 74 | #[derive(Debug, Clone, PartialEq)]
+    |                        ^^^^^^^^^
+    = help: for that trait implementation, expected `ScopeType`, found `str`
+    = note: required for `&ScopeType` to implement `PartialEq<&str>`
+
+error[E0599]: no method named `starts_with` found for reference `&Flag` in the current scope
+   --> src\semantic\analyzer.rs:224:26
+    |
+224 |                     if f.starts_with('+') {
+    |                          ^^^^^^^^^^^ method not found in `&Flag`
+
+error[E0599]: no method named `trim_start_matches` found for reference `&Flag` in the current scope
+   --> src\semantic\analyzer.rs:225:35
+    |
+225 |                         let n = f.trim_start_matches('+');
+    |                                   ^^^^^^^^^^^^^^^^^^ method not found in `&Flag`
+
+error[E0599]: no method named `starts_with` found for reference `&Flag` in the current scope
+   --> src\semantic\analyzer.rs:234:33
+    |
+234 |                     } else if f.starts_with('-') {
+    |                                 ^^^^^^^^^^^ method not found in `&Flag`
+
+error[E0599]: no method named `trim_start_matches` found for reference `&Flag` in the current scope
+   --> src\semantic\analyzer.rs:235:35
+    |
+235 |                         let n = f.trim_start_matches('-');
+    |                                   ^^^^^^^^^^^^^^^^^^ method not found in `&Flag`
+
+error[E0308]: mismatched types
+   --> src\semantic\analyzer.rs:250:32
+    |
+250 |                           if let Stmt::VarDecl {
+    |  ________________________________^
+251 | |                             name: field_name,
+252 | |                             base_type,
+253 | |                             size,
+...   |
+257 | |                             ..
+258 | |                         } = field
+    | |                         ^   ----- this expression has type `&FieldDecl`
+    | |_________________________|
+    |                           expected `FieldDecl`, found `Stmt`
+
+error[E0026]: variant `ast::Stmt::VarDecl` does not have fields named `base_type`, `size`, `is_const`, `is_static`, 
+`is_exported`
+   --> src\semantic\analyzer.rs:252:29
+    |
+252 | ...                   base_type,
+    |                       ^^^^^^^^^
+253 | ...                   size,
+    |                       ^^^^
+254 | ...                   is_const,
+    |                       ^^^^^^^^
+255 | ...                   is_static,
+    |                       ^^^^^^^^^
+256 | ...                   is_exported,
+    |                       ^^^^^^^^^^^ variant `ast::Stmt::VarDecl` does not have these fields
+
+error[E0308]: mismatched types
+   --> src\semantic\analyzer.rs:279:28
+    |
+279 |                       if let Stmt::VarDecl {
+    |  ____________________________^
+280 | |                         name: p_name,
+281 | |                         base_type,
+282 | |                         size,
+283 | |                         ..
+284 | |                     } = p
+    | |                     ^   - this expression has type `&Param`
+    | |_____________________|
+    |                       expected `Param`, found `Stmt`
+
+error[E0026]: variant `ast::Stmt::VarDecl` does not have fields named `base_type`, `size`
+   --> src\semantic\analyzer.rs:281:25
+    |
+281 |                         base_type,
+    |                         ^^^^^^^^^
+282 |                         size,
+    |                         ^^^^ variant `ast::Stmt::VarDecl` does not have these fields
+
+error[E0599]: no variant or associated item named `ListLiteral` found for enum `ast::Expr` in the current scope
+   --> src\semantic\analyzer.rs:592:19
+    |
+592 |             Expr::ListLiteral(elements) => {
+    |                   ^^^^^^^^^^^ variant or associated item not found in `ast::Expr`
+    |
+   ::: src\parser\ast.rs:100:1
+    |
+100 | pub enum Expr {
+    | ------------- variant or associated item `ListLiteral` not found for this enum
+
+warning: unused variable: `ret_type`
+  --> src\semantic\analyzer.rs:37:20
+   |
+37 |         for (name, ret_type) in std_funcs {
+   |                    ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_ret_type`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+Some errors have detailed explanations: E0026, E0027, E0277, E0282, E0308, E0559, E0573, E0599.
+For more information about an error, try `rustc --explain E0026`.
+warning: `fast_lang` (bin "fast_lang") generated 1 warning
+error: could not compile `fast_lang` (bin "fast_lang") due to 67 previous errors; 1 warning emitted

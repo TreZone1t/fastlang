@@ -16,7 +16,7 @@ pub mod lexer;
 pub mod parser;
 pub mod semantic;
 
-fn parse_file(path: &str) -> Vec<Stmt> {
+fn parse_file(path: &str) -> Result<Vec<Stmt>, String> {
     let contents = fs::read_to_string(path)
         .unwrap_or_else(|_| panic!("Could not read '{}'. Make sure the file exists.", path));
 
@@ -42,7 +42,7 @@ fn parse_file(path: &str) -> Vec<Stmt> {
     }
 
     let mut parser = Parser::new(tokens);
-    parser.parse_program().statements
+    parser.parse_program().map(|program| program.statements)
 }
 
 fn main() {
@@ -55,12 +55,22 @@ fn main() {
     let mut envs: HashMap<String, Rc<RefCell<Environment>>> = HashMap::new();
 
     println!("Compiling {}...", path);
-    let main_ast = parse_file(&path);
+    let main_ast = match parse_file(&path) {
+        Ok(ast) => ast,
+        Err(err) => {
+            eprintln!("{}", err);
+            std::process::exit(1);
+        }
+    };
 
     // Collect dependencies
     let mut deps = Vec::new();
     for stmt in &main_ast {
-        if let Stmt::Use { module_path, imports } = stmt {
+        if let Stmt::Use {
+            module_path,
+            imports,
+        } = stmt
+        {
             let mut path = module_path.clone();
             let mut mod_name = path.join("/");
             let mut actual_imports = imports.clone();
@@ -93,11 +103,21 @@ fn main() {
                 format!("src/{}.fs", mod_name)
             } else {
                 let test = format!("src/examples/{}.fs", mod_name);
-                if Path::new(&test).exists() { test } else { format!("{}.fs", mod_name) }
+                if Path::new(&test).exists() {
+                    test
+                } else {
+                    format!("{}.fs", mod_name)
+                }
             };
 
             println!("Loading module {}...", mod_name);
-            let mod_ast = parse_file(&actual_path);
+            let mod_ast = match parse_file(&actual_path) {
+                Ok(ast) => ast,
+                Err(err) => {
+                    eprintln!("{}", err);
+                    std::process::exit(1);
+                }
+            };
 
             let mut analyzer = SemanticAnalyzer::new();
             if let Err(e) = analyzer.analyze(&mod_ast) {
@@ -119,13 +139,13 @@ fn main() {
         if let Some(env) = envs.get(mod_name) {
             let symbols = env.borrow().symbols.clone();
             for (sym_name, info) in symbols {
-                if info.is_exported {
+                if info.visibility == crate::parser::ast::Visibility::Public {
                     // Check if selective imports are used
                     let should_inject = match imports {
                         Some(selected) => selected.contains(&sym_name),
                         None => true, // inject all if no curly braces used
                     };
-                    
+
                     if should_inject {
                         println!("Module {} injected symbol: {}", mod_name, sym_name);
                         main_analyzer

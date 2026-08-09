@@ -57,6 +57,8 @@ impl Parser {
             TokenKind::TypeHandle => Some("handle".to_string()),
             TokenKind::TypeName => Some("name".to_string()),
             TokenKind::TypeCustom => Some("custom".to_string()),
+            TokenKind::TypePrivate => Some("private".to_string()),
+            TokenKind::TypePublic => Some("public".to_string()),
             TokenKind::TypeError => Some("error".to_string()),
             TokenKind::TypeBlock => Some("block".to_string()),
             TokenKind::Fn => Some("fn".to_string()),
@@ -70,16 +72,17 @@ impl Parser {
         }
     }
 
-    pub fn parse_program(&mut self) -> Program {
+    pub fn parse_program(&mut self) -> Result<Program, String> {
         let mut statements = Vec::new();
 
         while !self.is_at_end() {
-            if let Some(stmt) = self.parse_statement() {
-                statements.push(stmt);
+            match self.parse_statement()? {
+                Some(stmt) => statements.push(stmt),
+                None => {}
             }
         }
 
-        Program { statements }
+        Ok(Program { statements })
     }
 
     fn consume(&mut self, expected: TokenKind, error_message: &str) -> Result<&Token, String> {
@@ -135,45 +138,49 @@ impl Parser {
     // ----------------------------------------------------
 
     // الدالة دي بتحدد إحنا هنقرأ أي نوع من الأوامر
-    fn parse_statement(&mut self) -> Option<Stmt> {
+    fn parse_statement(&mut self) -> Result<Option<Stmt>, String> {
         let result = match &self.peek().kind {
             TokenKind::Use => self.parse_use_stmt(),
             TokenKind::Export => self.parse_exported_stmt(),
-            TokenKind::Let => self.parse_var_decl(),
+            TokenKind::Let | TokenKind::Const => self.parse_var_decl(),
             TokenKind::Set => self.parse_reassign_stmt(),
             TokenKind::If => self.parse_if_stmt(),
             TokenKind::For => self.parse_for_stmt(),
             TokenKind::Loop => self.parse_loop_stmt(),
             TokenKind::While => self.parse_while_stmt(),
+            TokenKind::Switch => self.parse_switch_stmt(),
             TokenKind::TypeScope => self.parse_scope_decl(),
             TokenKind::Fn => self.parse_fn_decl(),
             TokenKind::Class => self.parse_class_decl(),
             TokenKind::TypeStruct => self.parse_struct_decl(),
             TokenKind::Enum => self.parse_enum_decl(),
+            TokenKind::Del => self.parse_del_stmt(),
             TokenKind::Break => {
                 self.advance();
-                if self.peek().kind == TokenKind::SemiColon {
-                    self.advance();
-                }
+                self.consume(TokenKind::SemiColon, "Expected ';' after break")?;
                 Ok(Stmt::BreakStmt)
             }
             TokenKind::Continue => {
                 self.advance();
-                if self.peek().kind == TokenKind::SemiColon {
-                    self.advance();
-                }
+                self.consume(TokenKind::SemiColon, "Expected ';' after continue")?;
                 Ok(Stmt::ContinueStmt)
             }
             TokenKind::Return => {
                 self.advance();
-                match self.parse_expression() {
-                    Ok(val) => {
-                        if self.peek().kind == TokenKind::SemiColon {
-                            self.advance();
+
+                if self.peek().kind == TokenKind::SemiColon {
+                    self.advance();
+                    Ok(Stmt::ReturnStmt(Expr::Identifier("null".to_string())))
+                } else {
+                    match self.parse_expression() {
+                        Ok(val) => {
+                            if self.peek().kind == TokenKind::SemiColon {
+                                self.advance();
+                            }
+                            Ok(Stmt::ReturnStmt(val))
                         }
-                        Ok(Stmt::ReturnStmt(val))
+                        Err(e) => Err(e),
                     }
-                    Err(e) => Err(e),
                 }
             }
             TokenKind::Throw => self.parse_throw_stmt(),
@@ -183,11 +190,11 @@ impl Parser {
         };
 
         match result {
-            Ok(stmt) => Some(stmt),
+            Ok(stmt) => Ok(Some(stmt)),
             Err(err) => {
-                println!("Syntax Error: {}", err); // هنطور شكل الطباعة دي قدام
-                self.synchronize(); // تخطى العك ده وشوف السطر اللي بعده
-                None
+                eprintln!("Syntax Error: {}", err);
+                self.synchronize();
+                Err(format!("Syntax Error: {}", err))
             }
         }
     }
@@ -274,16 +281,19 @@ impl Parser {
             Stmt::ClassDecl { is_exported, .. } => *is_exported = true,
             Stmt::StructDecl { is_exported, .. } => *is_exported = true,
             Stmt::EnumDecl { is_exported, .. } => *is_exported = true,
-            Stmt::VarDecl { is_exported, .. } => *is_exported = true,
+            Stmt::VarDecl { visibility, .. } => {
+                *visibility = crate::parser::ast::Visibility::Public
+            }
             _ => {}
         }
 
         Ok(stmt)
     }
 
-    // تحليل تعريف المتغير: let int : 8 a = 5; أو let a : i8 = 5;
+    // يحلل تعريف المتغير: let int : 8 a = 5; أو let a : i8 = 5; أو const ...
     fn parse_var_decl(&mut self) -> Result<Stmt, String> {
-        self.advance(); // نتخطى كلمة 'let' اللي دخلتنا الدالة دي أصلاً
+        let is_const = self.peek().kind == TokenKind::Const;
+        self.advance(); // نتخطى كلمة 'let' أو 'const'
 
         // 1. تحديد الـ Base Type والـ Size
         let (base_type, size) = match self.parse_type() {
@@ -314,22 +324,16 @@ impl Parser {
             ));
         };
 
-        // 4. التأكد من وجود علامة '='
-        if self.peek().kind == TokenKind::Assign {
+        // 4. قبول التهيئة الاختيارية: let <type> <name>; أو let <type> <name> = <value>;
+        let value = if self.peek().kind == TokenKind::Assign {
             self.advance(); // نتخطى الـ '='
+            self.parse_expression()?
         } else {
-            // هنا ممكن نحط الـ Hint بتاعنا لو كتب -> بدل = بالغلط
             if self.peek().kind == TokenKind::Arrow {
                 return Err(format!("Syntax Error: Expected '=' to assign value to '{}'. Use '->' for reassignment (set), not declaration (let).", name));
             }
-            return Err(format!(
-                "Syntax Error: Expected '=' after variable name '{}'",
-                name
-            ));
-        }
-
-        // 5. قراءة القيمة (Expression)
-        let value = self.parse_expression()?;
+            Expr::Identifier("__param__".to_string())
+        };
 
         // 6. التأكد من وجود الفصلة المنقوطة ';'
         if self.peek().kind == TokenKind::SemiColon {
@@ -340,11 +344,16 @@ impl Parser {
 
         // لو كل حاجة تمام، نرجع الـ Node بتاعة الـ AST
         Ok(Stmt::VarDecl {
-            is_exported: false,
-            is_static: false, // مؤقتاً لحد ما نضيف دعم الكلمات دي
-            is_const: false,
-            base_type,
-            size,
+            visibility: crate::parser::ast::Visibility::Private,
+            editability: if is_const {
+                crate::parser::ast::Editability::NotEditable
+            } else {
+                crate::parser::ast::Editability::Editable
+            },
+            type_sized: Some(crate::parser::ast::TypeRef {
+                base_type: base_type.unwrap_or_else(|| "unknown".to_string()),
+                size,
+            }),
             name,
             value,
         })
@@ -444,14 +453,14 @@ impl Parser {
         let body = if self.peek().kind == TokenKind::LBrace {
             self.advance(); // '{'
             let stmts = self.parse_block()?;
-            crate::parser::ast::LoopBody::Inline(stmts)
+            crate::parser::ast::EitherBlock::Inline(stmts)
         } else {
             // scope_name(args) أو scope_name بدون أرغومنتس
             let expr = self.parse_expression()?;
             if self.peek().kind == TokenKind::SemiColon {
                 self.advance();
             }
-            crate::parser::ast::LoopBody::ScopeCall(expr)
+            crate::parser::ast::EitherBlock::External(expr)
         };
 
         Ok(Stmt::LoopStmt { count, body })
@@ -460,7 +469,6 @@ impl Parser {
     // --- while (cond) -> { ... }  أو  while (cond) -> scope_name() ---
     fn parse_while_stmt(&mut self) -> Result<Stmt, String> {
         self.advance(); // 'while'
-
         self.consume(TokenKind::LParen, "Expected '(' after 'while'")?;
         let condition = self.parse_expression()?;
         self.consume(TokenKind::RParen, "Expected ')' after while condition")?;
@@ -471,16 +479,109 @@ impl Parser {
         let body = if self.peek().kind == TokenKind::LBrace {
             self.advance(); // '{'
             let stmts = self.parse_block()?;
-            crate::parser::ast::LoopBody::Inline(stmts)
+            crate::parser::ast::EitherBlock::Inline(stmts)
         } else {
             let expr = self.parse_expression()?;
             if self.peek().kind == TokenKind::SemiColon {
                 self.advance();
             }
-            crate::parser::ast::LoopBody::ScopeCall(expr)
+            crate::parser::ast::EitherBlock::External(expr)
         };
 
         Ok(Stmt::WhileStmt { condition, body })
+    }
+
+    fn parse_switch_stmt(&mut self) -> Result<Stmt, String> {
+        self.advance(); // consume 'switch'
+        self.consume(TokenKind::LParen, "Expected '(' after switch")?;
+        let condition = self.parse_expression()?;
+        self.consume(TokenKind::RParen, "Expected ')' after switch condition")?;
+
+        self.consume(TokenKind::Arrow, "Expected '->' after switch condition")?;
+
+        let cases = if self.peek().kind == TokenKind::LBrace {
+            self.advance(); // consume '{'
+            let mut body = Vec::new();
+            while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                if self.peek().kind == TokenKind::Case {
+                    self.advance(); // consume 'case'
+                    let val = self.parse_expression()?;
+                    self.consume(TokenKind::FatArrow, "Expected '=>' after case value")?;
+                    
+                    let case_body = if self.peek().kind == TokenKind::LBrace {
+                        self.advance();
+                        self.parse_block()?
+                    } else {
+                        return Err("Syntax Error: Expected '{' after '=>' in case".to_string());
+                    };
+
+                    body.push(Stmt::ScopeDecl {
+                        is_exported: false,
+                        is_const: false,
+                        name: "case".to_string(),
+                        scope_type: crate::parser::ast::ScopeType::Case,
+                        params: vec![],
+                        return_type: None,
+                        flags: vec![],
+                        settings: vec![],
+                        events: vec![],
+                        handles: vec![],
+                        statements: case_body,
+                        public_block: vec![],
+                        fields: vec![],
+                        private_block: vec![],
+                        return_value: Some(val),
+                        constructor: None,
+                    });
+                } else if self.peek().kind == TokenKind::Underscore {
+                    self.advance(); // consume '_'
+                    self.consume(TokenKind::FatArrow, "Expected '=>' after default case")?;
+                    
+                    let def_body = if self.peek().kind == TokenKind::LBrace {
+                        self.advance();
+                        self.parse_block()?
+                    } else {
+                        return Err("Syntax Error: Expected '{' after '=>' in default case".to_string());
+                    };
+
+                    body.push(Stmt::ScopeDecl {
+                        is_exported: false,
+                        is_const: false,
+                        name: "default".to_string(),
+                        scope_type: crate::parser::ast::ScopeType::Case,
+                        params: vec![],
+                        return_type: None,
+                        flags: vec![],
+                        settings: vec![],
+                        events: vec![],
+                        handles: vec![],
+                        statements: def_body,
+                        public_block: vec![],
+                        fields: vec![],
+                        private_block: vec![],
+                        return_value: None,
+                        constructor: None,
+                    });
+                } else {
+                    return Err("Syntax Error: Expected 'case' or '_' inside switch block".to_string());
+                }
+            }
+            self.consume(TokenKind::RBrace, "Expected '}' to close switch block")?;
+            crate::parser::ast::EitherBlock::Inline(body)
+        } else {
+            let external_scope = self.get_identifier("Expected external scope name for switch cases")?;
+            self.consume(TokenKind::SemiColon, "Expected ';' after external scope reference in switch")?;
+            crate::parser::ast::EitherBlock::External(crate::parser::ast::Expr::Identifier(external_scope))
+        };
+
+        Ok(Stmt::SwitchStmt { condition, cases })
+    }
+
+    fn parse_del_stmt(&mut self) -> Result<Stmt, String> {
+        self.advance(); // consume 'del'
+        let expr = self.parse_expression()?;
+        self.consume(TokenKind::SemiColon, "Expected ';' after del statement")?;
+        Ok(Stmt::DelStmt(expr))
     }
 
     fn parse_for_stmt(&mut self) -> Result<Stmt, String> {
@@ -521,13 +622,13 @@ impl Parser {
         let body = if self.peek().kind == TokenKind::LBrace {
             self.advance();
             let stmts = self.parse_block()?;
-            crate::parser::ast::LoopBody::Inline(stmts)
+            crate::parser::ast::EitherBlock::Inline(stmts)
         } else {
             let expr = self.parse_expression()?;
             if self.peek().kind == TokenKind::SemiColon {
                 self.advance();
             }
-            crate::parser::ast::LoopBody::ScopeCall(expr)
+            crate::parser::ast::EitherBlock::External(expr)
         };
 
         Ok(Stmt::ForStmt {
@@ -607,11 +708,12 @@ impl Parser {
             };
 
             return Ok(Stmt::VarDecl {
-                is_exported: false,
-                is_static: false,
-                is_const: false,
-                base_type,
-                size,
+                visibility: crate::parser::ast::Visibility::Public,
+                editability: crate::parser::ast::Editability::Editable,
+                type_sized: Some(crate::parser::ast::TypeRef {
+                    base_type: base_type.unwrap_or_else(|| "unknown".to_string()),
+                    size,
+                }),
                 name,
                 value,
             });
@@ -661,10 +763,14 @@ impl Parser {
     fn parse_block(&mut self) -> Result<Vec<Stmt>, String> {
         let mut stmts = Vec::new();
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-            if let Some(stmt) = self.parse_statement() {
-                stmts.push(stmt);
-            } else if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                self.advance(); // تفادي infinite loop عند الـ error
+            match self.parse_statement() {
+                Ok(Some(stmt)) => stmts.push(stmt),
+                Ok(None) => {
+                    if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                        self.advance();
+                    }
+                }
+                Err(err) => return Err(err),
             }
         }
         self.consume(TokenKind::RBrace, "Expected '}' to close block")?;
@@ -752,10 +858,9 @@ impl Parser {
         let mut params: Vec<crate::parser::ast::Param> = Vec::new();
         if self.peek().kind != TokenKind::RParen {
             loop {
-                let name = self.get_identifier("Expected parameter name")?;
-                self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
-
                 let (base_type, size) = self.parse_type()?;
+                let name = self.get_identifier("Expected parameter name")?;
+
                 params.push(crate::parser::ast::Param {
                     name,
                     base_type,
@@ -859,14 +964,18 @@ impl Parser {
                             }
 
                             // parse statements (which can be var decls with 'let')
-                            if let Some(stmt) = self.parse_statement() {
-                                if is_public {
-                                    public_block.push(stmt);
-                                } else if is_private {
-                                    private_block.push(stmt);
-                                } else {
-                                    static_block.push(stmt);
+                            match self.parse_statement() {
+                                Ok(Some(stmt)) => {
+                                    if is_public {
+                                        public_block.push(stmt);
+                                    } else if is_private {
+                                        private_block.push(stmt);
+                                    } else {
+                                        static_block.push(stmt);
+                                    }
                                 }
+                                Ok(None) => {}
+                                Err(err) => return Err(err),
                             }
                         }
                         self.consume(TokenKind::RBrace, "Expected '}' to close visibility block")?;
@@ -1000,8 +1109,8 @@ impl Parser {
         let mut scope_type: String = "block".to_string(); // الافتراضي
         let mut params: Vec<Stmt> = Vec::new();
         let return_type = None;
-        let mut flags: Vec<String> = Vec::new();
-        let mut settings: Vec<String> = Vec::new();
+        let mut flags: Vec<crate::parser::ast::Flag> = Vec::new();
+        let mut settings: Vec<crate::parser::ast::Setting> = Vec::new();
         let mut constructor: Option<crate::parser::ast::ConstructorDecl> = None;
         let mut events: Vec<crate::parser::ast::EventDecl> = Vec::new();
         let mut handles: Vec<crate::parser::ast::HandleDecl> = Vec::new();
@@ -1009,7 +1118,7 @@ impl Parser {
         let mut statements: Vec<Stmt> = Vec::new();
         let mut public_block_ast: Vec<Stmt> = Vec::new();
         let mut private_block_ast: Vec<Stmt> = Vec::new();
-        let mut fields: Vec<Stmt> = Vec::new();
+        let mut fields: Vec<crate::parser::ast::FieldDecl> = Vec::new();
 
         // 4. نقرأ محتوى الـ body حتى '}'
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
@@ -1051,13 +1160,15 @@ impl Parser {
                 self.advance(); // 'flag'
 
                 // Allow older syntax: flag <name>;
-                if let TokenKind::Identifier(n) = &self.peek().kind.clone() {
-                    let n = n.clone();
+                if let TokenKind::Identifier(flag_name) = &self.peek().kind {
+                    let f = crate::parser::ast::Flag::from_str(flag_name);
+                    if !flags.contains(&f) {
+                        flags.push(f);
+                    }
                     self.advance();
                     if self.peek().kind == TokenKind::SemiColon {
                         self.advance();
                     }
-                    flags.push(format!("+{}", n));
                     continue;
                 }
 
@@ -1073,7 +1184,10 @@ impl Parser {
                     } else {
                         return Err(format!("Expected flag name at line {}", self.peek().line));
                     };
-                    flags.push(format!("+{}", flag_name));
+                    let f = crate::parser::ast::Flag::from_str(&flag_name);
+                    if !flags.contains(&f) {
+                        flags.push(f);
+                    }
                     self.consume(TokenKind::RBracket, "Expected ']' after flag name")?;
                     if self.peek().kind == TokenKind::SemiColon {
                         self.advance();
@@ -1104,9 +1218,13 @@ impl Parser {
                             };
 
                             if is_enable {
-                                flags.push(format!("+{}", flag_name));
+                                let f = crate::parser::ast::Flag::from_str(&flag_name);
+                                if !flags.contains(&f) {
+                                    flags.push(f);
+                                }
                             } else {
-                                flags.push(format!("-{}", flag_name));
+                                let f = crate::parser::ast::Flag::from_str(&flag_name);
+                                flags.retain(|x| x != &f);
                             }
 
                             if self.peek().kind == TokenKind::SemiColon {
@@ -1163,9 +1281,15 @@ impl Parser {
                         };
 
                         if is_flag {
-                            flags.push(format!("+{}", name));
+                            let f = crate::parser::ast::Flag::from_str(&name);
+                            if !flags.contains(&f) {
+                                flags.push(f);
+                            }
                         } else {
-                            settings.push(format!("+{}", name));
+                            let s = crate::parser::ast::Setting::from_str(&name);
+                            if !settings.contains(&s) {
+                                settings.push(s);
+                            }
                         }
 
                         if self.peek().kind == TokenKind::Comma {
@@ -1192,9 +1316,15 @@ impl Parser {
                         return Err(format!("Expected name at line {}", self.peek().line));
                     };
                     if is_flag {
-                        flags.push(format!("+{}", name));
+                        let f = crate::parser::ast::Flag::from_str(&name);
+                        if !flags.contains(&f) {
+                            flags.push(f);
+                        }
                     } else {
-                        settings.push(format!("+{}", name));
+                        let s = crate::parser::ast::Setting::from_str(&name);
+                        if !settings.contains(&s) {
+                            settings.push(s);
+                        }
                     }
                 }
 
@@ -1267,10 +1397,14 @@ impl Parser {
 
                     let mut body: Vec<Stmt> = Vec::new();
                     while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        if let Some(stmt) = self.parse_statement() {
-                            body.push(stmt);
-                        } else {
-                            self.advance();
+                        match self.parse_statement() {
+                            Ok(Some(stmt)) => body.push(stmt),
+                            Ok(None) => {
+                                if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                                    self.advance();
+                                }
+                            }
+                            Err(err) => return Err(err),
                         }
                     }
                     self.consume(TokenKind::RBrace, "Expected '}' to close body")?;
@@ -1322,7 +1456,32 @@ impl Parser {
                     self.advance(); // consume 'add'
 
                     match self.parse_var_decl_bare() {
-                        Ok(stmt) => fields.push(stmt),
+                        Ok(stmt) => {
+                            if let Stmt::VarDecl {
+                                visibility,
+                                editability,
+                                type_sized,
+                                name,
+                                value,
+                            } = stmt
+                            {
+                                fields.push(crate::parser::ast::FieldDecl {
+                                    visibility,
+                                    editability,
+                                    type_sized,
+                                    name,
+                                    value: if let Expr::Identifier(ref s) = value {
+                                        if s == "__param__" || s == "" {
+                                            None
+                                        } else {
+                                            Some(value)
+                                        }
+                                    } else {
+                                        Some(value)
+                                    },
+                                });
+                            }
+                        }
                         Err(e) => {
                             eprintln!("Syntax Error in 'add' component: {}", e);
                             self.synchronize();
@@ -1341,10 +1500,14 @@ impl Parser {
                 self.consume(TokenKind::LBrace, "Expected '{' to open public block")?;
 
                 while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                    if let Some(stmt) = self.parse_statement() {
-                        public_block_ast.push(stmt);
-                    } else if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        self.advance(); // تفادي infinite loop
+                    match self.parse_statement() {
+                        Ok(Some(stmt)) => public_block_ast.push(stmt),
+                        Ok(None) => {
+                            if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                                self.advance();
+                            }
+                        }
+                        Err(err) => return Err(err),
                     }
                 }
 
@@ -1364,10 +1527,14 @@ impl Parser {
                 self.consume(TokenKind::LBrace, "Expected '{' to open private block")?;
 
                 while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                    if let Some(stmt) = self.parse_statement() {
-                        private_block_ast.push(stmt);
-                    } else if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        self.advance(); // تفادي infinite loop
+                    match self.parse_statement() {
+                        Ok(Some(stmt)) => private_block_ast.push(stmt),
+                        Ok(None) => {
+                            if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                                self.advance();
+                            }
+                        }
+                        Err(err) => return Err(err),
                     }
                 }
 
@@ -1379,25 +1546,56 @@ impl Parser {
             }
 
             // --- أي شيء تاني يعتبر عبارة برمجية (Statement) مباشرة ---
-            if let Some(stmt) = self.parse_statement() {
-                statements.push(stmt);
-            } else if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                self.advance(); // تفادي infinite loop لو فيه خطأ
+            match self.parse_statement() {
+                Ok(Some(stmt)) => statements.push(stmt),
+                Ok(None) => {
+                    if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                        self.advance();
+                    }
+                }
+                Err(err) => return Err(err),
             }
         }
 
         // 5. نتأكد من '}'
         self.consume(TokenKind::RBrace, "Expected '}' to close scope body")?;
 
-        // نحدد is_custom بناءً على الـ scope_type
-        let is_custom = scope_type == "custom";
+        let parsed_scope_type = if scope_type.starts_with("custom") {
+            crate::parser::ast::ScopeType::Custom
+        } else {
+            match scope_type.as_str() {
+                "fn" | "Fn" => crate::parser::ast::ScopeType::Fn,
+                "looped" => crate::parser::ast::ScopeType::Looped,
+                "array" => crate::parser::ast::ScopeType::Array,
+                "str" | "string" => crate::parser::ast::ScopeType::String,
+                _ => crate::parser::ast::ScopeType::Block,
+            }
+        };
+
+        // params in ScopeDecl are Vec<Param>, but we gathered Stmt::VarDecl. We must map them.
+        let mut mapped_params = Vec::new();
+        for p in params {
+            if let Stmt::VarDecl {
+                type_sized, name, ..
+            } = p
+            {
+                let (base_type, size) = type_sized
+                    .map(|t| (t.base_type, t.size))
+                    .unwrap_or(("unknown".to_string(), None));
+                mapped_params.push(crate::parser::ast::Param {
+                    base_type,
+                    size,
+                    name,
+                });
+            }
+        }
 
         Ok(Stmt::ScopeDecl {
             is_exported: false,
+            is_const: false,
             name,
-            scope_type,
-            is_custom,
-            params,
+            scope_type: parsed_scope_type,
+            params: mapped_params,
             return_type,
             flags,
             settings,
@@ -1426,14 +1624,10 @@ impl Parser {
                 self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
                 let (base_type, size) = self.parse_type()?;
 
-                params.push(Stmt::VarDecl {
-                    is_exported: false,
-                    is_static: false,
-                    is_const: false,
-                    base_type: Some(base_type),
+                params.push(crate::parser::ast::Param {
+                    base_type,
                     size,
                     name: p_name,
-                    value: Expr::Identifier("__param__".to_string()),
                 });
 
                 if self.peek().kind == TokenKind::Comma {
@@ -1459,12 +1653,12 @@ impl Parser {
 
         Ok(Stmt::ScopeDecl {
             is_exported: false,
+            is_const: false,
             name,
-            scope_type: "fn".to_string(),
-            is_custom: false,
+            scope_type: crate::parser::ast::ScopeType::Fn,
             params,
             return_type,
-            flags: Vec::new(),
+            flags: vec![crate::parser::ast::Flag::IsReturn],
             settings: Vec::new(),
             events: Vec::new(),
             handles: Vec::new(),
@@ -1586,11 +1780,12 @@ impl Parser {
         }
 
         Ok(Stmt::VarDecl {
-            is_exported: false,
-            is_static: false,
-            is_const: false,
-            base_type,
-            size,
+            visibility: crate::parser::ast::Visibility::Private,
+            editability: crate::parser::ast::Editability::Editable,
+            type_sized: Some(crate::parser::ast::TypeRef {
+                base_type: base_type.unwrap_or_else(|| "unknown".to_string()),
+                size,
+            }),
             name,
             value,
         })
@@ -1636,42 +1831,43 @@ impl Parser {
     ///                        event, handle, custom
     /// يرجع None لو الـ token الحالي مش type أصلاً.
     fn parse_type(&mut self) -> Result<(String, Option<i64>), String> {
-        let type_name = match &self.peek().kind {
-            TokenKind::TypeInt => "int",
-            TokenKind::TypeFloat => "float",
-            TokenKind::TypeStr => "str",
-            TokenKind::TypeArray => "array",
-            TokenKind::TypeBool => "bool",
-            TokenKind::TypeChar => "char",
-            TokenKind::TypeName => "name",
-            TokenKind::TypeLength => "length",
-            TokenKind::TypeSize => "size",
-            TokenKind::TypeScope => "scope",
-            TokenKind::TypeFlag => "flag",
-            TokenKind::TypeParam => "param",
-            TokenKind::TypeType => "type",
-            TokenKind::TypeBluePrint => "blueprint",
-            TokenKind::TypeInit => "init",
-            TokenKind::TypeStatic => "static",
-            TokenKind::TypePublic => "public",
-            TokenKind::TypePrivate => "private",
-            TokenKind::TypeEvent => "event",
-            TokenKind::TypeHandle => "handle",
-            TokenKind::TypeCustom => "custom",
-            TokenKind::TypeStruct => "struct",
-            TokenKind::TypeVoid => "void",
-            TokenKind::TypeString => "string",
-            TokenKind::TypeBlock => "block",
-            TokenKind::TypeObject => "object",
-            TokenKind::Identifier(n) => return Ok((n.clone(), None)), // allow user-defined types (classes/structs)
+        let result = match &self.peek().kind {
+            TokenKind::TypeInt => "int".to_string(),
+            TokenKind::TypeFloat => "float".to_string(),
+            TokenKind::TypeStr => "str".to_string(),
+            TokenKind::TypeArray => "array".to_string(),
+            TokenKind::TypeBool => "bool".to_string(),
+            TokenKind::TypeChar => "char".to_string(),
+            TokenKind::TypeName => "name".to_string(),
+            TokenKind::TypeLength => "length".to_string(),
+            TokenKind::TypeSize => "size".to_string(),
+            TokenKind::TypeScope => "scope".to_string(),
+            TokenKind::TypeFlag => "flag".to_string(),
+            TokenKind::TypeParam => "param".to_string(),
+            TokenKind::TypeType => "type".to_string(),
+            TokenKind::TypeBluePrint => "blueprint".to_string(),
+            TokenKind::TypeInit => "init".to_string(),
+            TokenKind::TypeStatic => "static".to_string(),
+            TokenKind::TypePublic => "public".to_string(),
+            TokenKind::TypePrivate => "private".to_string(),
+            TokenKind::TypeEvent => "event".to_string(),
+            TokenKind::TypeHandle => "handle".to_string(),
+            TokenKind::TypeCustom => "custom".to_string(),
+            TokenKind::TypeStruct => "struct".to_string(),
+            TokenKind::TypeVoid => "void".to_string(),
+            TokenKind::TypeString => "string".to_string(),
+            TokenKind::TypeBlock => "block".to_string(),
+            TokenKind::TypeObject => "object".to_string(),
+            TokenKind::Identifier(n) => n.clone(),
             _ => return Err("Expected a type".to_string()),
         };
-        let result = type_name.to_string();
         self.advance();
 
-        // Enforce sizes for int and float
+        // Enforce sizes for int, float, str, string, and array
         let mut size = None;
-        if result == "int" || result == "float" {
+        let mut final_result = result.clone();
+
+        if result == "int" || result == "float" || result == "str" || result == "string" {
             if self.peek().kind == TokenKind::LParen {
                 self.advance();
                 if let TokenKind::Int(s) = self.peek().kind {
@@ -1697,10 +1893,12 @@ impl Parser {
                 }
                 self.consume(TokenKind::RParen, "Expected ')' after type size")?;
             } else {
-                return Err(format!(
-                    "Syntax Error: Type '{}' requires a size, e.g., {}(32)",
-                    result, result
-                ));
+                if result == "int" || result == "float" {
+                    return Err(format!(
+                        "Syntax Error: Type '{}' requires a size, e.g., {}(32)",
+                        result, result
+                    ));
+                }
             }
         } else if result == "array" {
             if self.peek().kind == TokenKind::LParen {
@@ -1711,25 +1909,91 @@ impl Parser {
                 } else {
                     inner_type
                 };
-                self.consume(TokenKind::RParen, "Expected ')' after array inner type")?;
-                return Ok((format!("array({})", formatted_inner), None));
+                final_result = format!("array<{}>", formatted_inner);
+
+                if self.peek().kind == TokenKind::Comma {
+                    self.advance();
+                    if let TokenKind::Int(s) = self.peek().kind {
+                        size = Some(s);
+                        self.advance();
+                    } else if self.peek().kind == TokenKind::TypeSize || matches!(self.peek().kind, TokenKind::Identifier(_)) {
+                        size = Some(-1); // Dynamic size
+                        self.advance();
+                    } else {
+                        return Err("Syntax Error: Expected integer size for array".to_string());
+                    }
+                }
+                self.consume(
+                    TokenKind::RParen,
+                    "Expected ')' after array inner type or size",
+                )?;
             } else {
-                return Err(
-                    "Syntax Error: array type requires an inner type, e.g., array(int(32))"
-                        .to_string(),
-                );
+                return Err("Syntax Error: Type 'array' requires an inner type, e.g., array(int(32)) or array(int(32), 10)".to_string());
             }
         } else if self.peek().kind == TokenKind::LParen {
-            // Optional size for other types (e.g. str(256))
+            // Optional size or generic type argument
             self.advance();
             if let TokenKind::Int(s) = self.peek().kind {
                 size = Some(s);
                 self.advance();
+                self.consume(TokenKind::RParen, "Expected ')' after type size")?;
+            } else {
+                // Try parsing it as an inner type
+                let old_pos = self.current;
+                if let Ok((inner_type, inner_size)) = self.parse_type() {
+                    if self.peek().kind == TokenKind::RParen {
+                        self.advance(); // consume ')'
+                        let formatted_inner = if let Some(s) = inner_size {
+                            format!("{}({})", inner_type, s)
+                        } else {
+                            inner_type
+                        };
+                        final_result = format!("{}<{}>", final_result, formatted_inner);
+                    } else if self.peek().kind == TokenKind::Comma {
+                        self.advance(); // consume ','
+                        if let TokenKind::Int(s) = self.peek().kind {
+                            size = Some(s);
+                            self.advance();
+                        } else if self.peek().kind == TokenKind::TypeSize || matches!(self.peek().kind, TokenKind::Identifier(_)) {
+                            size = Some(-1);
+                            self.advance();
+                        } else {
+                            return Err("Syntax Error: Expected integer size for array".to_string());
+                        }
+                        self.consume(TokenKind::RParen, "Expected ')' after generic type or size")?;
+                        let formatted_inner = if let Some(s) = inner_size {
+                            format!("{}({})", inner_type, s)
+                        } else {
+                            inner_type
+                        };
+                        final_result = format!("{}<{}>", final_result, formatted_inner);
+                    } else {
+                        // Not a valid generic syntax, fallback to dynamic size marker
+                        self.current = old_pos;
+                        if self.peek().kind == TokenKind::TypeSize || matches!(self.peek().kind, TokenKind::Identifier(_)) {
+                            size = Some(-1);
+                            self.advance();
+                        }
+                        self.consume(TokenKind::RParen, "Expected ')' after type size")?;
+                    }
+                } else {
+                    self.current = old_pos;
+                    if self.peek().kind == TokenKind::TypeSize || matches!(self.peek().kind, TokenKind::Identifier(_)) {
+                        size = Some(-1);
+                        self.advance();
+                    }
+                    self.consume(TokenKind::RParen, "Expected ')' after type size")?;
+                }
             }
-            self.consume(TokenKind::RParen, "Expected ')' after type size")?;
+        } else if self.peek().kind == TokenKind::Less {
+            // Generics: Option<name>
+            self.advance(); // consume '<'
+            let (inner_type, _) = self.parse_type()?;
+            self.consume(TokenKind::Greater, "Expected '>' after generic type")?;
+            final_result = format!("{}<{}>", final_result, inner_type);
         }
 
-        Ok((result, size))
+        Ok((final_result, size))
     }
 
     // ====================================================
@@ -1827,6 +2091,11 @@ impl Parser {
                 self.advance();
                 Ok(Expr::LiteralString(val))
             }
+            TokenKind::Char(c) => {
+                let val = *c;
+                self.advance();
+                Ok(Expr::LiteralChar(val))
+            }
             TokenKind::Bool(b) => {
                 let val = *b;
                 self.advance();
@@ -1872,7 +2141,7 @@ impl Parser {
                     }
                 }
                 self.consume(TokenKind::RBracket, "Expected ']' to close array literal")?;
-                Ok(Expr::ListLiteral(elements))
+                Ok(Expr::ArrayLiteral(elements))
             }
 
             // --- Instantiate: new/copy/modify Target(args) ---
@@ -2083,6 +2352,8 @@ impl Parser {
             TokenKind::NotEq => Some((5, 6)),
             TokenKind::Less => Some((7, 8)),
             TokenKind::Greater => Some((7, 8)),
+            TokenKind::LessEq => Some((7, 8)),
+            TokenKind::GreaterEq => Some((7, 8)),
             TokenKind::Plus => Some((9, 10)), // left-associative
             TokenKind::Minus => Some((9, 10)),
             TokenKind::Multiply => Some((11, 12)),
@@ -2105,6 +2376,8 @@ impl Parser {
             TokenKind::NotEq => "!=".to_string(),
             TokenKind::Less => "<".to_string(),
             TokenKind::Greater => ">".to_string(),
+            TokenKind::GreaterEq => ">=".to_string(),
+            TokenKind::LessEq => "<=".to_string(),
             TokenKind::And => "&&".to_string(),
             TokenKind::Or => "||".to_string(),
             other => format!("{:?}", other),

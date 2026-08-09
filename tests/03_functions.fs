@@ -2,3 +2,7 @@
 fn add(a: int(32), b: int(32)) -> int(32) {
     return a + b;
 }
+
+fn main() -> int(32) {
+    return 0;
+}

@@ -5,11 +5,10 @@ use std::cell::RefCell;
 #[derive(Debug, Clone)]
 pub struct SymbolInfo {
     pub name: String,
-    pub base_type: String, // e.g., "int", "str", "object", "length", "size"
-    pub size: Option<i64>, // e.g., 32
-    pub is_const: bool,
-    pub is_static: bool,
-    pub is_exported: bool,
+    pub type_sized: Option<crate::parser::ast::TypeRef>,
+    pub visibility: crate::parser::ast::Visibility,
+    pub editability: crate::parser::ast::Editability,
+    pub settings: std::collections::HashSet<crate::parser::ast::Setting>,
 }
 
 pub struct Environment {
