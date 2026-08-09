@@ -111,6 +111,8 @@ pub enum TokenKind {
     GreaterEq, // >=
     LessEq,    // <=
 
+    Ampersand, // &
+
     // Symbols
     LParen,      // (
     RParen,      // )

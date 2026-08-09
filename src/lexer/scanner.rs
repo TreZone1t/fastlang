@@ -386,10 +386,7 @@ impl Scanner {
                     self.advance();
                     TokenKind::And
                 } else {
-                    TokenKind::Error(
-                        "Unsupported operator '&' (bitwise AND is not supported; did you mean '&&'?)"
-                            .to_string(),
-                    )
+                    TokenKind::Ampersand
                 }
             }
             '|' => {

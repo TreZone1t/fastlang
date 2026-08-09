@@ -1,7 +1,7 @@
 // Standard Library: List utilities
 // using the scope system to define behavior
 scope Node -> {
-    enable [private, public, init];
+    enable [private, public, init ];
     type -> custom("node");
     param -> {
         type(size) T;
@@ -24,21 +24,23 @@ scope Node -> {
         return this.value;
       }
     }
-    _(T value) -> {
-         this.value -> value;
+    _(name value) -> {
+         this.value -> copy(&value);
          this.next -> null;
     }
 }
 
 export scope LinkedList -> {
-    enable [private , public,param , init,keyword];
+    enable [private , public,param , init,keyword ,length ];
     type -> custom("list");
     private -> {
         name head = null;
+        set length -> 0;
     }
     public -> {
       fn set_head(node: name) -> void{
         this.head = node;
+        this.length = this.length + 1;
       }
       fn get_head() -> name {
         return this.head;
@@ -46,11 +48,13 @@ export scope LinkedList -> {
       fn push(item: T) -> void{
         if (this.head == null ){
           this.head = new Node(item);
+          this.length = this.length + 1;
         }else{
           let name new_node = new Node(item);
           // Hack: we prepend to make it simple
           new_node.set_next(this.head);
           this.head = new_node;
+          this.length = this.length + 1;
         }
       }
 
@@ -60,6 +64,7 @@ export scope LinkedList -> {
           this.head = temp.get_next();
           let T val = temp.get_value();
           del temp;
+          this.length = this.length - 1;
           return Some(val);
         }
         else {
@@ -71,6 +76,7 @@ export scope LinkedList -> {
     fn extend_from_array (arr: array(T, size)) -> void {
       for (let int(32) i = 0;i < arr.size; i++) -> {
         this.push(arr[i]);
+        this.length = this.length + 1;
       }
     }
     //this way combine with keyword allow to be declared as list(int(32)) 
