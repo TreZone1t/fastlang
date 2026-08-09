@@ -1,0 +1,9 @@
+(function() {
+    const implementors = Object.fromEntries([["lexer",[["impl <a class=\"trait\" href=\"serde_core/ser/trait.Serialize.html\" title=\"trait serde_core::ser::Serialize\">Serialize</a> for <a class=\"struct\" href=\"lexer/struct.TokenMeta.html\" title=\"struct lexer::TokenMeta\">TokenMeta</a>",0],["impl&lt;E&gt; <a class=\"trait\" href=\"serde_core/ser/trait.Serialize.html\" title=\"trait serde_core::ser::Serialize\">Serialize</a> for <a class=\"struct\" href=\"lexer/struct.TokenError.html\" title=\"struct lexer::TokenError\">TokenError</a>&lt;E&gt;<div class=\"where\">where\n    E: <a class=\"trait\" href=\"serde_core/ser/trait.Serialize.html\" title=\"trait serde_core::ser::Serialize\">Serialize</a>,</div>",0],["impl&lt;T&gt; <a class=\"trait\" href=\"serde_core/ser/trait.Serialize.html\" title=\"trait serde_core::ser::Serialize\">Serialize</a> for <a class=\"struct\" href=\"lexer/struct.Token.html\" title=\"struct lexer::Token\">Token</a>&lt;T&gt;<div class=\"where\">where\n    T: <a class=\"trait\" href=\"serde_core/ser/trait.Serialize.html\" title=\"trait serde_core::ser::Serialize\">Serialize</a>,</div>",0],["impl&lt;T, E&gt; <a class=\"trait\" href=\"serde_core/ser/trait.Serialize.html\" title=\"trait serde_core::ser::Serialize\">Serialize</a> for <a class=\"enum\" href=\"lexer/enum.ReaderResult.html\" title=\"enum lexer::ReaderResult\">ReaderResult</a>&lt;T, E&gt;<div class=\"where\">where\n    T: <a class=\"trait\" href=\"serde_core/ser/trait.Serialize.html\" title=\"trait serde_core::ser::Serialize\">Serialize</a>,\n    E: <a class=\"trait\" href=\"serde_core/ser/trait.Serialize.html\" title=\"trait serde_core::ser::Serialize\">Serialize</a>,</div>",0]]],["serde",[]],["serde_core",[]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":59,"fragment_lengths":[1645,13,18]}

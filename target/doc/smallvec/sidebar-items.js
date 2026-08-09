@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["unreachable"],"macro":["smallvec"],"struct":["Drain","IntoIter","SmallVec"],"trait":["Array","ExtendFromSlice","VecLike"]};

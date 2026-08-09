@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ReaderResult"],"fn":["read"],"struct":["Line","Lines","Readers","ReadersBuilder","State","Token","TokenError","TokenMeta"],"trait":["Input","Reader"]};
