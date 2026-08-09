@@ -16,7 +16,6 @@ namespace std_list {
 template <typename T>
 struct Node {
     Node(T value) {
-        this->T = T;
         this->value = value;
         this->next = nullptr;
     }
@@ -40,14 +39,13 @@ private:
 template <typename T>
 struct LinkedList {
     LinkedList(std::vector<T> arr) {
-        this->T = T;
         this->extend_from_array(arr);
     }
     void extend_from_array(std::vector<T> arr) {
         {
             int32_t i = 0;
-            while ((i < arr.size)) {
-                this->push(/* unimplemented expr */);
+            while ((i < arr.size())) {
+                this->push(arr[i]);
                 i++;
             }
         }

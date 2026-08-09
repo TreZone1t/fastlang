@@ -25,7 +25,6 @@ scope Node -> {
       }
     }
     _(T value) -> {
-         this.T -> T;
          this.value -> value;
          this.next -> null;
     }
@@ -80,7 +79,6 @@ export scope LinkedList -> {
     }
     //and any elment came from the constructor when we allow keyword will be one arg came after ->
     _(array(T, size) arr) -> {
-        set this.T -> T;
         this.extend_from_array(arr);
     }
 }
