@@ -3,7 +3,7 @@ use crate::parser::ast::*;
 use crate::parser::parser::Parser;
 
 impl Parser {
-    pub(crate) fn is_type_token(kind: &TokenKind) -> bool {
+    pub(crate) fn is_type_token(&self, kind: &TokenKind) -> bool {
         match kind {
             TokenKind::TypeInt
             | TokenKind::TypeFloat
@@ -31,6 +31,7 @@ impl Parser {
             | TokenKind::TypeString
             | TokenKind::TypeBlock
             | TokenKind::TypeObject => true,
+                        TokenKind::Identifier(n) => self.custom_keywords.contains(n),
             _ => false,
         }
     }
@@ -128,7 +129,9 @@ impl Parser {
                     if let TokenKind::Int(s) = self.peek().kind {
                         size = Some(s);
                         self.advance();
-                    } else if self.peek().kind == TokenKind::TypeSize || matches!(self.peek().kind, TokenKind::Identifier(_)) {
+                    } else if self.peek().kind == TokenKind::TypeSize
+                        || matches!(self.peek().kind, TokenKind::Identifier(_))
+                    {
                         size = Some(-1); // Dynamic size
                         self.advance();
                     } else {
@@ -166,7 +169,9 @@ impl Parser {
                         if let TokenKind::Int(s) = self.peek().kind {
                             size = Some(s);
                             self.advance();
-                        } else if self.peek().kind == TokenKind::TypeSize || matches!(self.peek().kind, TokenKind::Identifier(_)) {
+                        } else if self.peek().kind == TokenKind::TypeSize
+                            || matches!(self.peek().kind, TokenKind::Identifier(_))
+                        {
                             size = Some(-1);
                             self.advance();
                         } else {
@@ -182,7 +187,9 @@ impl Parser {
                     } else {
                         // Not a valid generic syntax, fallback to dynamic size marker
                         self.current = old_pos;
-                        if self.peek().kind == TokenKind::TypeSize || matches!(self.peek().kind, TokenKind::Identifier(_)) {
+                        if self.peek().kind == TokenKind::TypeSize
+                            || matches!(self.peek().kind, TokenKind::Identifier(_))
+                        {
                             size = Some(-1);
                             self.advance();
                         }
@@ -190,7 +197,9 @@ impl Parser {
                     }
                 } else {
                     self.current = old_pos;
-                    if self.peek().kind == TokenKind::TypeSize || matches!(self.peek().kind, TokenKind::Identifier(_)) {
+                    if self.peek().kind == TokenKind::TypeSize
+                        || matches!(self.peek().kind, TokenKind::Identifier(_))
+                    {
                         size = Some(-1);
                         self.advance();
                     }
@@ -366,38 +375,47 @@ impl Parser {
                 Ok(Expr::ArrayLiteral(elements))
             }
 
-            // --- Instantiate: new/copy/modify Target(args) ---
-            TokenKind::New | TokenKind::Copy | TokenKind::Modify => {
-                let op = match self.peek().kind {
-                    TokenKind::New => "new",
-                    TokenKind::Copy => "copy",
-                    TokenKind::Modify => "modify",
-                    _ => unreachable!(),
-                }
-                .to_string();
+            // --- Instantiate: new Target(args) ---
+            TokenKind::New => {
                 self.advance();
-
-                // Target can be an identifier (like Counter), or another expression
-                let target = self.parse_expr(9)?; // Bind tightly to the target (higher than postfix 8)
-
-                // Optional arguments
+                let target = self.parse_expr(9)?; 
                 let mut args = Vec::new();
                 if self.peek().kind == TokenKind::LParen {
                     self.advance();
                     if self.peek().kind != TokenKind::RParen {
-                        args.push(self.parse_expr(0)?);
-                        while self.peek().kind == TokenKind::Comma {
-                            self.advance();
-                            args.push(self.parse_expr(0)?);
+                        loop {
+                            args.push(self.parse_expression()?);
+                            if self.peek().kind == TokenKind::Comma {
+                                self.advance();
+                            } else {
+                                break;
+                            }
                         }
                     }
-                    self.consume(TokenKind::RParen, "Expected ')' to close arguments")?;
+                    self.consume(TokenKind::RParen, "Expected ')' after new arguments")?;
                 }
-
                 Ok(Expr::Instantiate {
-                    op,
                     target: Box::new(target),
                     args,
+                })
+            }
+
+
+            // --- Copy: copy Target ---
+            TokenKind::Copy => {
+                self.advance();
+                let target = self.parse_expr(9)?;
+                Ok(Expr::Copy {
+                    target: Box::new(target),
+                })
+            }
+
+            // --- Modify: modify Target ---
+            TokenKind::Modify => {
+                self.advance();
+                let target = self.parse_expr(9)?;
+                Ok(Expr::Modify {
+                    target: Box::new(target),
                 })
             }
 

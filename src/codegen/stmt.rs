@@ -203,7 +203,10 @@ impl CodeGenerator {
                 flags: _,
                 settings: _,
                 events,
-                handles,
+                custom_keyword: _,
+                handle_block: handles,
+                generic_block: _,
+                static_block: _,
                 statements,
                 public_block,
                 fields,
@@ -316,13 +319,7 @@ impl CodeGenerator {
 
                     // Handles
                     for h in handles {
-                        self.emit(&format!("void {}() {{", h.target_flag));
-                        self.indent_level += 1;
-                        for s in &h.body {
-                            self.visit_statement(s);
-                        }
-                        self.indent_level -= 1;
-                        self.emit("}");
+                        self.visit_statement(h);
                     }
 
                     self.indent_level -= 1;

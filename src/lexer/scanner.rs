@@ -75,6 +75,7 @@ impl Scanner {
             "if" => Some(TokenKind::If),
             "else" => Some(TokenKind::Else),
             "for" => Some(TokenKind::For),
+            "in" => Some(TokenKind::In),
             "switch" => Some(TokenKind::Switch),
             "case" => Some(TokenKind::Case),
 
@@ -87,8 +88,8 @@ impl Scanner {
             "copy" => Some(TokenKind::Copy),
             "new" => Some(TokenKind::New),
 
-            "class" => Some(TokenKind::Class),
-            "enum" => Some(TokenKind::Enum),
+            "class" => Some(TokenKind::TypeClass),
+            "enum" => Some(TokenKind::TypeEnum),
             "extends" => Some(TokenKind::Extends),
             "super" => Some(TokenKind::Super),
 
@@ -107,6 +108,7 @@ impl Scanner {
             "init" => Some(TokenKind::TypeInit),
             "blueprint" => Some(TokenKind::TypeBluePrint),
             "flag" => Some(TokenKind::TypeFlag),
+            "generic" => Some(TokenKind::TypeGeneric),
             "type" => Some(TokenKind::TypeType),
             "event" => Some(TokenKind::TypeEvent),
             "handle" => Some(TokenKind::TypeHandle),

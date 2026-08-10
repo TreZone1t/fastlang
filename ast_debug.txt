@@ -1,0 +1,240 @@
+[
+    ScopeDecl {
+        is_exported: false,
+        is_const: false,
+        name: "main",
+        scope_type: Fn,
+        custom_keyword: None,
+        params: [],
+        return_type: None,
+        flags: [],
+        settings: [
+            Statement,
+            Return,
+            Param,
+        ],
+        events: [],
+        handle_block: [],
+        statements: [
+            VarDecl {
+                visibility: Private,
+                editability: Editable,
+                type_sized: Some(
+                    TypeRef {
+                        base_type: "array<int(32)>",
+                        size: Some(
+                            3,
+                        ),
+                    },
+                ),
+                name: "arr1",
+                value: ArrayLiteral(
+                    [
+                        LiteralInt(
+                            1,
+                        ),
+                        LiteralInt(
+                            2,
+                        ),
+                        LiteralInt(
+                            3,
+                        ),
+                    ],
+                ),
+            },
+            VarDecl {
+                visibility: Private,
+                editability: Editable,
+                type_sized: Some(
+                    TypeRef {
+                        base_type: "int",
+                        size: Some(
+                            32,
+                        ),
+                    },
+                ),
+                name: "y",
+                value: LiteralInt(
+                    10,
+                ),
+            },
+            ScopeDecl {
+                is_exported: false,
+                is_const: false,
+                name: "test_magic",
+                scope_type: Fn,
+                custom_keyword: None,
+                params: [],
+                return_type: Some(
+                    TypeRef {
+                        base_type: "void",
+                        size: None,
+                    },
+                ),
+                flags: [
+                    IsReturn,
+                ],
+                settings: [],
+                events: [],
+                handle_block: [],
+                statements: [
+                    VarDecl {
+                        visibility: Private,
+                        editability: Editable,
+                        type_sized: Some(
+                            TypeRef {
+                                base_type: "name",
+                                size: None,
+                            },
+                        ),
+                        name: "x",
+                        value: Modify {
+                            target: Identifier(
+                                "y",
+                            ),
+                        },
+                    },
+                    ExpressionStmt(
+                        Call {
+                            callee: Identifier(
+                                "log",
+                            ),
+                            args: [
+                                UnaryOp {
+                                    operator: "&",
+                                    operand: Identifier(
+                                        "x",
+                                    ),
+                                },
+                            ],
+                        },
+                    ),
+                    VarDecl {
+                        visibility: Private,
+                        editability: Editable,
+                        type_sized: Some(
+                            TypeRef {
+                                base_type: "array<int(32)>",
+                                size: Some(
+                                    3,
+                                ),
+                            },
+                        ),
+                        name: "arr2",
+                        value: Copy {
+                            target: Identifier(
+                                "arr1",
+                            ),
+                        },
+                    },
+                    StructDecl {
+                        is_exported: false,
+                        name: "Node",
+                        public_block: [
+                            VarDecl {
+                                visibility: Private,
+                                editability: Editable,
+                                type_sized: Some(
+                                    TypeRef {
+                                        base_type: "int",
+                                        size: Some(
+                                            32,
+                                        ),
+                                    },
+                                ),
+                                name: "value",
+                                value: Identifier(
+                                    "__param__",
+                                ),
+                            },
+                        ],
+                        private_block: [],
+                        static_block: [],
+                        constructor: Some(
+                            ConstructorDecl {
+                                params: [
+                                    Param {
+                                        name: "value",
+                                        base_type: "int",
+                                        size: Some(
+                                            32,
+                                        ),
+                                    },
+                                ],
+                                expected_types: [],
+                                body: [
+                                    ReassignStmt {
+                                        target: PropertyAccess {
+                                            object: This,
+                                            property: "value",
+                                        },
+                                        value: Identifier(
+                                            "value",
+                                        ),
+                                    },
+                                ],
+                            },
+                        ),
+                    },
+                    VarDecl {
+                        visibility: Private,
+                        editability: Editable,
+                        type_sized: Some(
+                            TypeRef {
+                                base_type: "int",
+                                size: Some(
+                                    32,
+                                ),
+                            },
+                        ),
+                        name: "temp",
+                        value: LiteralInt(
+                            10,
+                        ),
+                    },
+                    VarDecl {
+                        visibility: Public,
+                        editability: Editable,
+                        type_sized: Some(
+                            TypeRef {
+                                base_type: "Node",
+                                size: None,
+                            },
+                        ),
+                        name: "n",
+                        value: Instantiate {
+                            target: Identifier(
+                                "Node",
+                            ),
+                            args: [
+                                Identifier(
+                                    "temp",
+                                ),
+                            ],
+                        },
+                    },
+                ],
+                public_block: [],
+                fields: [],
+                private_block: [],
+                static_block: [],
+                return_value: None,
+                constructor: None,
+            },
+            ExpressionStmt(
+                Call {
+                    callee: Identifier(
+                        "test_magic",
+                    ),
+                    args: [],
+                },
+            ),
+        ],
+        public_block: [],
+        fields: [],
+        private_block: [],
+        static_block: [],
+        return_value: None,
+        constructor: None,
+    },
+]

@@ -1,8 +1,8 @@
 // Standard Library: List utilities
 // using the scope system to define behavior
 scope Node -> {
-    enable [private, public, init ];
-    type -> custom("node");
+    enable [private, public, init,custom_keyword ];
+    type -> custom;
     param -> {
         type(size) T;
     }
@@ -31,8 +31,9 @@ scope Node -> {
 }
 
 export scope LinkedList -> {
-    enable [private , public,param , init,keyword ,length ];
-    type -> custom("list");
+    enable [private , public,param , init,custom_keyword ,length ];
+    type -> custom;
+    keyword -> "list";
     private -> {
         name head = null;
         set length -> 0;

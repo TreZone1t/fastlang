@@ -12,13 +12,22 @@ std::ostream& operator<<(std::ostream& os, const std::exception& e) {
 }
 
 
-int32_t global_counter = 0;
-const double pi = 3.14;
 int main() {
-    bool is_active = true;
-    char initial = 'A';
-    str<255> message = "Hello";
-    std::array<int32_t, 3> numbers = std::vector{1, 2, 3};
-    return 0;
+    std::array<int32_t, 3> arr1 = {1, 2, 3};
+    int32_t y = 10;
+    auto test_magic = [&]() {
+        auto x = (&y);
+        std::cout << (*x) << std::endl;
+        std::array<int32_t, 3> arr2 = arr1;
+        struct Node {
+            int32_t value;
+            Node(int32_t value) {
+                this->value = value;
+            }
+        };
+        int32_t temp = 10;
+        Node n = Node(temp);
+    };
+    test_magic();
 }
 

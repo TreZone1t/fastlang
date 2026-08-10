@@ -13,11 +13,16 @@ const EOF_TOKEN: Token = Token {
 pub struct Parser {
     pub(crate) tokens: Vec<Token>,
     pub(crate) current: usize,
+    pub(crate) custom_keywords: Vec<String>,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Parser { tokens, current: 0 }
+        Parser {
+            tokens,
+            current: 0,
+            custom_keywords: Vec::new(),
+        }
     }
 
     pub(crate) fn peek(&self) -> &Token {
@@ -63,8 +68,11 @@ impl Parser {
             TokenKind::TypeBlock => Some("block".to_string()),
             TokenKind::Fn => Some("fn".to_string()),
             TokenKind::TypeStruct => Some("struct".to_string()),
-            TokenKind::Class => Some("class".to_string()),
-            TokenKind::Enum => Some("enum".to_string()),
+            TokenKind::TypeClass => Some("class".to_string()),
+            TokenKind::TypeEnum => Some("enum".to_string()),
+            TokenKind::New => Some("new".to_string()), //todo
+            TokenKind::Copy => Some("copy".to_string()),
+            TokenKind::Modify => Some("modify".to_string()),
             TokenKind::Log => Some("log".to_string()),
             // booleans as identifiers
             TokenKind::Bool(b) => Some(if *b { "true" } else { "false" }.to_string()),
@@ -85,7 +93,11 @@ impl Parser {
         Ok(Program { statements })
     }
 
-    pub(crate) fn consume(&mut self, expected: TokenKind, error_message: &str) -> Result<&Token, String> {
+    pub(crate) fn consume(
+        &mut self,
+        expected: TokenKind,
+        error_message: &str,
+    ) -> Result<&Token, String> {
         if core::mem::discriminant(&self.peek().kind) == core::mem::discriminant(&expected) {
             Ok(self.advance())
         } else {
@@ -121,8 +133,8 @@ impl Parser {
                 | TokenKind::Return
                 | TokenKind::Fn
                 | TokenKind::TypeScope
-                | TokenKind::Class
-                | TokenKind::Enum
+                | TokenKind::TypeClass
+                | TokenKind::TypeEnum
                 | TokenKind::TypeStruct => {
                     return;
                 }

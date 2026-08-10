@@ -56,7 +56,11 @@ fn main() {
 
     println!("Compiling {}...", path);
     let main_ast = match parse_file(&path) {
-        Ok(ast) => ast,
+        Ok(ast) => {
+            println!("AST Length: {}", ast.len());
+            std::fs::write("ast_debug.txt", format!("{:#?}", ast)).unwrap();
+            ast
+        },
         Err(err) => {
             eprintln!("{}", err);
             std::process::exit(1);

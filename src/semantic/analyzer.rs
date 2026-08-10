@@ -42,6 +42,7 @@ impl SemanticAnalyzer {
                 type_sized: Some(crate::parser::ast::TypeRef {
                     base_type: "fn".to_string(),
                     size: None,
+                    generics: Vec::new(),
                 }),
                 visibility: if true {
                     crate::parser::ast::Visibility::Public
@@ -116,7 +117,8 @@ impl SemanticAnalyzer {
 
                 // Special handling for Magic Types (length, size, init, param, blueprint, type)
                 if ["length", "size", "init", "param", "blueprint", "type"]
-                    .contains(&declared_type.as_str()) || declared_type.starts_with("type<")
+                    .contains(&declared_type.as_str())
+                    || declared_type.starts_with("type<")
                 {
                     if declared_type.starts_with("type") || declared_type.starts_with("type<") {
                         // type assignment logic
@@ -146,7 +148,10 @@ impl SemanticAnalyzer {
                         // valid
                     } else {
                         let mut mismatch = !self.types_are_compatible(&declared_type, &expr_type);
-                        if expr_type == "list" && (declared_type.starts_with("array<") || declared_type.starts_with("list<")) {
+                        if expr_type == "list"
+                            && (declared_type.starts_with("array<")
+                                || declared_type.starts_with("list<"))
+                        {
                             mismatch = false;
                         }
                         if mismatch {
@@ -213,19 +218,23 @@ impl SemanticAnalyzer {
                 flags,
                 settings: _,
                 events: _,
-                handles: _,
+                generic_block: _,
+                static_block: _,
                 statements,
                 public_block,
                 fields,
                 private_block,
                 return_value: _,
                 constructor,
+                custom_keyword: _,
+                handle_block: _,
             } => {
                 let info = SymbolInfo {
                     name: name.clone(),
                     type_sized: Some(crate::parser::ast::TypeRef {
                         base_type: format!("{:?}", scope_type),
                         size: None,
+                        generics: vec![],
                     }),
                     visibility: if *is_exported {
                         crate::parser::ast::Visibility::Public
@@ -303,6 +312,7 @@ impl SemanticAnalyzer {
                         type_sized: Some(crate::parser::ast::TypeRef {
                             base_type: p.base_type.clone(),
                             size: p.size,
+                            generics: Vec::new(),
                         }),
                         visibility: crate::parser::ast::Visibility::Public,
                         editability: crate::parser::ast::Editability::Editable,
@@ -330,6 +340,7 @@ impl SemanticAnalyzer {
                             type_sized: Some(crate::parser::ast::TypeRef {
                                 base_type: param.base_type.clone(),
                                 size: param.size,
+                                generics: Vec::new(),
                             }),
                             visibility: if false {
                                 crate::parser::ast::Visibility::Public
@@ -376,6 +387,7 @@ impl SemanticAnalyzer {
                     type_sized: Some(crate::parser::ast::TypeRef {
                         base_type: "blueprint".to_string(),
                         size: None,
+                        generics: Vec::new(),
                     }),
                     visibility: if *is_exported {
                         crate::parser::ast::Visibility::Public
@@ -417,6 +429,7 @@ impl SemanticAnalyzer {
                             type_sized: Some(crate::parser::ast::TypeRef {
                                 base_type: p.base_type.clone(),
                                 size: p.size,
+                                generics: Vec::new(),
                             }),
                             visibility: if false {
                                 crate::parser::ast::Visibility::Public
@@ -457,6 +470,7 @@ impl SemanticAnalyzer {
                     type_sized: Some(crate::parser::ast::TypeRef {
                         base_type: "blueprint".to_string(),
                         size: None,
+                        generics: Vec::new(),
                     }),
                     visibility: if *is_exported {
                         crate::parser::ast::Visibility::Public
@@ -492,6 +506,7 @@ impl SemanticAnalyzer {
                             type_sized: Some(crate::parser::ast::TypeRef {
                                 base_type: p.base_type.clone(),
                                 size: p.size,
+                                generics: Vec::new(),
                             }),
                             visibility: if false {
                                 crate::parser::ast::Visibility::Public
@@ -662,6 +677,7 @@ impl SemanticAnalyzer {
                     type_sized: Some(crate::parser::ast::TypeRef {
                         base_type: "error".to_string(),
                         size: None,
+                        generics: Vec::new(),
                     }),
                     visibility: if false {
                         crate::parser::ast::Visibility::Public
@@ -818,7 +834,9 @@ impl SemanticAnalyzer {
                     if let Some(info) = self.current_env.borrow().lookup(name) {
                         println!("DEBUG: Found callee in env: {:?}", info.type_sized);
                         if let Some(type_ref) = &info.type_sized {
-                            if type_ref.base_type == "type" || type_ref.base_type.starts_with("type<") {
+                            if type_ref.base_type == "type"
+                                || type_ref.base_type.starts_with("type<")
+                            {
                                 // It's a type instantiation (e.g. T(size))
                                 // Don't visit arguments as normal expressions
                                 return Ok(name.clone());
@@ -907,6 +925,7 @@ mod tests {
             type_sized: Some(TypeRef {
                 base_type: "int".to_string(),
                 size: Some(32),
+                generics: Vec::new(),
             }),
             name: name.to_string(),
             value: None,
@@ -924,11 +943,15 @@ mod tests {
             return_type: Some(TypeRef {
                 base_type: "int".to_string(),
                 size: Some(32),
+                generics: Vec::new(),
             }),
             flags: Vec::new(),
             settings: Vec::new(),
             events: Vec::new(),
-            handles: Vec::new(),
+            custom_keyword: None,
+            handle_block: Vec::new(),
+            generic_block: Vec::new(),
+            static_block: Vec::new(),
             statements: vec![Stmt::ReturnStmt(Expr::LiteralString("wrong".to_string()))],
             public_block: Vec::new(),
             fields: Vec::new(),
@@ -955,7 +978,10 @@ mod tests {
             flags: Vec::new(),
             settings: Vec::new(),
             events: Vec::new(),
-            handles: Vec::new(),
+            custom_keyword: None,
+            handle_block: Vec::new(),
+            generic_block: Vec::new(),
+            static_block: Vec::new(),
             statements: Vec::new(),
             public_block: Vec::new(),
             fields: vec![int_field("width")],

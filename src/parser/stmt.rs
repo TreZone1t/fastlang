@@ -16,9 +16,9 @@ impl Parser {
             TokenKind::Switch => self.parse_switch_stmt(),
             TokenKind::TypeScope => self.parse_scope_decl(),
             TokenKind::Fn => self.parse_fn_decl(),
-            TokenKind::Class => self.parse_class_decl(),
+            TokenKind::TypeClass => self.parse_class_decl(),
             TokenKind::TypeStruct => self.parse_struct_decl(),
-            TokenKind::Enum => self.parse_enum_decl(),
+            TokenKind::TypeEnum => self.parse_enum_decl(),
             TokenKind::Del => self.parse_del_stmt(),
             TokenKind::Break => {
                 self.advance();
@@ -50,7 +50,7 @@ impl Parser {
             }
             TokenKind::Throw => self.parse_throw_stmt(),
             TokenKind::Try => self.parse_try_catch_stmt(),
-            kind if Self::is_type_token(kind) => self.parse_var_decl_bare(),
+            kind if self.is_type_token(kind) => self.parse_var_decl_bare(),
             _ => self.parse_expression_stmt(),
         };
 
@@ -132,9 +132,9 @@ impl Parser {
         let mut stmt = match &self.peek().kind {
             TokenKind::Fn => self.parse_fn_decl()?,
             TokenKind::TypeScope => self.parse_scope_decl()?,
-            TokenKind::Class => self.parse_class_decl()?,
+            TokenKind::TypeClass => self.parse_class_decl()?,
             TokenKind::TypeStruct => self.parse_struct_decl()?,
-            TokenKind::Enum => self.parse_enum_decl()?,
+            TokenKind::TypeEnum => self.parse_enum_decl()?,
             TokenKind::Let => self.parse_var_decl()?,
             kind => return Err(format!("Syntax Error: Cannot export '{:?}', only let, fn, scope, class, struct, and enum can be exported", kind)),
         };
@@ -218,6 +218,7 @@ impl Parser {
             type_sized: Some(crate::parser::ast::TypeRef {
                 base_type: base_type.unwrap_or_else(|| "unknown".to_string()),
                 size,
+                generics: Vec::new(),
             }),
             name,
             value,
@@ -372,7 +373,7 @@ impl Parser {
                     self.advance(); // consume 'case'
                     let val = self.parse_expression()?;
                     self.consume(TokenKind::FatArrow, "Expected '=>' after case value")?;
-                    
+
                     let case_body = if self.peek().kind == TokenKind::LBrace {
                         self.advance();
                         self.parse_block()?
@@ -390,7 +391,10 @@ impl Parser {
                         flags: vec![],
                         settings: vec![],
                         events: vec![],
-                        handles: vec![],
+                        generic_block: vec![],
+                        static_block: vec![],
+                        handle_block: vec![],
+                        custom_keyword: None,
                         statements: case_body,
                         public_block: vec![],
                         fields: vec![],
@@ -401,12 +405,14 @@ impl Parser {
                 } else if self.peek().kind == TokenKind::Underscore {
                     self.advance(); // consume '_'
                     self.consume(TokenKind::FatArrow, "Expected '=>' after default case")?;
-                    
+
                     let def_body = if self.peek().kind == TokenKind::LBrace {
                         self.advance();
                         self.parse_block()?
                     } else {
-                        return Err("Syntax Error: Expected '{' after '=>' in default case".to_string());
+                        return Err(
+                            "Syntax Error: Expected '{' after '=>' in default case".to_string()
+                        );
                     };
 
                     body.push(Stmt::ScopeDecl {
@@ -419,8 +425,11 @@ impl Parser {
                         flags: vec![],
                         settings: vec![],
                         events: vec![],
-                        handles: vec![],
+                        generic_block: vec![],
+                        static_block: vec![],
                         statements: def_body,
+                        handle_block: vec![],
+                        custom_keyword: None,
                         public_block: vec![],
                         fields: vec![],
                         private_block: vec![],
@@ -428,15 +437,23 @@ impl Parser {
                         constructor: None,
                     });
                 } else {
-                    return Err("Syntax Error: Expected 'case' or '_' inside switch block".to_string());
+                    return Err(
+                        "Syntax Error: Expected 'case' or '_' inside switch block".to_string()
+                    );
                 }
             }
             self.consume(TokenKind::RBrace, "Expected '}' to close switch block")?;
             crate::parser::ast::EitherBlock::Inline(body)
         } else {
-            let external_scope = self.get_identifier("Expected external scope name for switch cases")?;
-            self.consume(TokenKind::SemiColon, "Expected ';' after external scope reference in switch")?;
-            crate::parser::ast::EitherBlock::External(crate::parser::ast::Expr::Identifier(external_scope))
+            let external_scope =
+                self.get_identifier("Expected external scope name for switch cases")?;
+            self.consume(
+                TokenKind::SemiColon,
+                "Expected ';' after external scope reference in switch",
+            )?;
+            crate::parser::ast::EitherBlock::External(crate::parser::ast::Expr::Identifier(
+                external_scope,
+            ))
         };
 
         Ok(Stmt::SwitchStmt { condition, cases })
@@ -578,6 +595,7 @@ impl Parser {
                 type_sized: Some(crate::parser::ast::TypeRef {
                     base_type: base_type.unwrap_or_else(|| "unknown".to_string()),
                     size,
+                    generics: Vec::new(),
                 }),
                 name,
                 value,
@@ -717,7 +735,9 @@ impl Parser {
         })
     }
 
-    pub(crate) fn parse_constructor_decl(&mut self) -> Result<crate::parser::ast::ConstructorDecl, String> {
+    pub(crate) fn parse_constructor_decl(
+        &mut self,
+    ) -> Result<crate::parser::ast::ConstructorDecl, String> {
         self.advance(); // '_'
         self.consume(TokenKind::LParen, "Expected '(' after constructor '_'")?;
         let mut params: Vec<crate::parser::ast::Param> = Vec::new();
@@ -730,6 +750,7 @@ impl Parser {
                     name,
                     base_type,
                     size,
+                    generics: Vec::new(),
                 });
 
                 if self.peek().kind == TokenKind::Comma {
@@ -1451,6 +1472,7 @@ impl Parser {
                     base_type,
                     size,
                     name,
+                    generics: Vec::new(),
                 });
             }
         }
@@ -1465,7 +1487,10 @@ impl Parser {
             flags,
             settings,
             events,
-            handles,
+            generic_block: vec![],
+            static_block: vec![],
+            handle_block: vec![],
+            custom_keyword: None,
             statements,
             public_block: public_block_ast,
             fields,
@@ -1493,6 +1518,7 @@ impl Parser {
                     base_type,
                     size,
                     name: p_name,
+                    generics: Vec::new(),
                 });
 
                 if self.peek().kind == TokenKind::Comma {
@@ -1508,7 +1534,11 @@ impl Parser {
         let return_type = if self.peek().kind == TokenKind::Arrow {
             self.advance();
             let (base_type, size) = self.parse_type()?;
-            Some(crate::parser::ast::TypeRef { base_type, size })
+            Some(crate::parser::ast::TypeRef {
+                base_type,
+                size,
+                generics: vec![],
+            })
         } else {
             None
         };
@@ -1526,7 +1556,10 @@ impl Parser {
             flags: vec![crate::parser::ast::Flag::IsReturn],
             settings: Vec::new(),
             events: Vec::new(),
-            handles: Vec::new(),
+            generic_block: Vec::new(),
+            static_block: Vec::new(),
+            handle_block: Vec::new(),
+            custom_keyword: None,
             statements,
             public_block: Vec::new(),
             fields: Vec::new(),
@@ -1650,10 +1683,10 @@ impl Parser {
             type_sized: Some(crate::parser::ast::TypeRef {
                 base_type: base_type.unwrap_or_else(|| "unknown".to_string()),
                 size,
+                generics: Vec::new(),
             }),
             name,
             value,
         })
     }
-
 }

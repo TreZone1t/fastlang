@@ -3,3 +3,5 @@
 /output.cpp
 /output.exe
 **/*.rs.bk
+**/*.py
+**/*.text

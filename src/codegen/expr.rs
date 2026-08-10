@@ -1,5 +1,5 @@
-use crate::parser::ast::*;
 use crate::codegen::generator::CodeGenerator;
+use crate::parser::ast::*;
 
 impl CodeGenerator {
     pub(crate) fn visit_expression(&mut self, expr: &Expr) -> String {
@@ -22,7 +22,7 @@ impl CodeGenerator {
                 for el in elements {
                     elems_code.push(self.visit_expression(el));
                 }
-                format!("std::vector{{{}}}", elems_code.join(", "))
+                format!("{{{}}}", elems_code.join(", "))
             }
             Expr::ObjectLiteral(stmts) => {
                 let mut struct_code = "([]() { struct __Anon {\n".to_string();
@@ -63,6 +63,15 @@ impl CodeGenerator {
                 let l = self.visit_expression(left);
                 format!("{}{}", l, operator)
             }
+            Expr::UnaryOp { operator, operand } => {
+                let op_code = self.visit_expression(operand);
+                if operator == "&" {
+                    // In FastLang, '&' means dereference! (pull data)
+                    format!("(*{})", op_code)
+                } else {
+                    format!("{}{}", operator, op_code)
+                }
+            }
             Expr::Call { callee, args } => {
                 let callee_code = self.visit_expression(callee);
 
@@ -92,26 +101,28 @@ impl CodeGenerator {
                     format!("{}({})", callee_code, args_code.join(", "))
                 }
             }
-            Expr::Instantiate { op, target, args } => {
+            Expr::Instantiate { target, args } => {
                 let target_code = self.visit_expression(target);
                 let mut args_code = Vec::new();
                 for arg in args {
                     args_code.push(self.visit_expression(arg));
                 }
-                if op == "new" {
-                    let mut tc = target_code.clone();
-                    if tc == "Node" {
-                        tc = "Node<T>".to_string();
-                    }
-                    format!("(void*)new {}({})", tc, args_code.join(", "))
-                } else if op == "copy" {
-                    format!(
-                        "new std::decay_t<decltype(*{})>(*{})",
-                        target_code, target_code
-                    ) // basic copy using decltype
-                } else {
-                    target_code // modify or other
-                }
+                // Value instantiation in C++ (stack allocation)
+                format!("{}({})", target_code, args_code.join(", "))
+            }
+            Expr::Modify { target } => {
+                // In FastLang, 'modify' means address-of (take the name)
+                let t_code = self.visit_expression(target);
+                format!("(&{})", t_code)
+            }
+            Expr::Copy { target } => {
+                // Value copy in C++
+                self.visit_expression(target)
+            }
+            Expr::MagicCast { magic_type, target } => {
+                let target_code = self.visit_expression(target);
+                // In C++, reinterpret_cast or static_cast is safer, but C-style cast is easier for now
+                format!("({}*){}", magic_type, target_code)
             }
             Expr::PropertyAccess { object, property } => {
                 let obj_code = self.visit_expression(object);
@@ -142,5 +153,4 @@ impl CodeGenerator {
             _ => "/* unimplemented expr */".to_string(),
         }
     }
-
 }

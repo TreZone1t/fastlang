@@ -15,6 +15,7 @@ pub enum Editability {
 pub struct TypeRef {
     pub base_type: String,
     pub size: Option<i64>,
+    pub generics: Vec<TypeRef>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +45,7 @@ pub struct Param {
     pub name: String,
     pub base_type: String,
     pub size: Option<i64>,
+    pub generics: Vec<TypeRef>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -82,9 +84,13 @@ impl Flag {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Setting {
-    IndexAccess,
-    CustomInitBody,
-    Keyword,
+    CustomIndexAccess,
+    CustomConstructor,
+    CustomKeyword,
+    CustomGeneric,
+    CustomIterator,
+    CustomDisplay,
+    CustomOperators,
     CustomParamBody,
     Param,
     Private,
@@ -94,15 +100,24 @@ pub enum Setting {
     Size,
     Data,
     Error,
+    All,
+    Statement,
+    Constructor,
+    Handle,
+    Return,
     Custom(String),
 }
 
 impl Setting {
     pub fn from_str(s: &str) -> Self {
         match s {
-            "index_access" => Setting::IndexAccess,
-            "init" => Setting::CustomInitBody,
-            "keyword" => Setting::Keyword,
+            "custom_index_access" => Setting::CustomIndexAccess,
+            "custom_constructor" => Setting::CustomConstructor,
+            "custom_keyword" => Setting::CustomKeyword,
+            "custom_generic" => Setting::CustomGeneric,
+            "custom_iterator" => Setting::CustomIterator,
+            "custom_display" => Setting::CustomDisplay,
+            "custom_operators" => Setting::CustomOperators,
             "param" => Setting::Param,
             "private" => Setting::Private,
             "public" => Setting::Public,
@@ -111,16 +126,25 @@ impl Setting {
             "size" => Setting::Size,
             "data" => Setting::Data,
             "error" => Setting::Error,
+            "all" => Setting::All,
+            "statement" => Setting::Statement,
+            "constructor" => Setting::Constructor,
+            "handle" => Setting::Handle,
+            "return" => Setting::Return,
             _ => Setting::Custom(s.to_string()),
         }
     }
 
     pub fn as_str(&self) -> String {
         match self {
-            Setting::IndexAccess => "index_access".to_string(),
-            Setting::CustomInitBody => "init".to_string(),
-            Setting::Keyword => "keyword".to_string(),
-            Setting::CustomParamBody => "param".to_string(),
+            Setting::CustomIndexAccess => "custom_index_access".to_string(),
+            Setting::CustomConstructor => "custom_constructor".to_string(),
+            Setting::CustomKeyword => "custom_keyword".to_string(),
+            Setting::CustomGeneric => "custom_generic".to_string(),
+            Setting::CustomIterator => "custom_iterator".to_string(),
+            Setting::CustomDisplay => "custom_display".to_string(),
+            Setting::CustomOperators => "custom_operators".to_string(),
+            Setting::CustomParamBody => "custom_param_body".to_string(),
             Setting::Param => "param".to_string(),
             Setting::Private => "private".to_string(),
             Setting::Public => "public".to_string(),
@@ -129,6 +153,11 @@ impl Setting {
             Setting::Size => "size".to_string(),
             Setting::Data => "data".to_string(),
             Setting::Error => "error".to_string(),
+            Setting::All => "all".to_string(),
+            Setting::Statement => "statement".to_string(),
+            Setting::Constructor => "constructor".to_string(),
+            Setting::Handle => "handle".to_string(),
+            Setting::Return => "return".to_string(),
             Setting::Custom(s) => s.clone(),
         }
     }
@@ -151,9 +180,18 @@ pub enum Expr {
     ObjectLiteral(Vec<Stmt>),
 
     Instantiate {
-        op: String,
         target: Box<Expr>,
         args: Vec<Expr>,
+    },
+    Modify {
+        target: Box<Expr>,
+    },
+    Copy {
+        target: Box<Expr>,
+    },
+    MagicCast {
+        magic_type: String,
+        target: Box<Expr>,
     },
 
     UnaryOp {
@@ -213,17 +251,21 @@ pub enum Stmt {
         is_const: bool,
         name: String,
         scope_type: ScopeType,
+        custom_keyword: Option<String>,
         params: Vec<Param>,
         return_type: Option<TypeRef>,
         flags: Vec<Flag>,
         settings: Vec<Setting>,
         events: Vec<EventDecl>,
-        handles: Vec<HandleDecl>,
+        handle_block: Vec<Stmt>,
         statements: Vec<Stmt>,
         public_block: Vec<Stmt>,
         fields: Vec<FieldDecl>,
         private_block: Vec<Stmt>,
+        generic_block: Vec<Stmt>,
+        static_block: Vec<Stmt>,
         return_value: Option<Expr>,
+        // we will add polymorphism on the next updates vec<ConstructorDecl>
         constructor: Option<ConstructorDecl>,
     },
 
@@ -261,6 +303,11 @@ pub enum Stmt {
     },
 
     ReturnStmt(Expr),
+    ForIn {
+        item_decl: Box<Stmt>,
+        iterable: Expr,
+        body: Vec<Stmt>,
+    },
     BreakStmt,
     ContinueStmt,
     ExpressionStmt(Expr),
@@ -400,7 +447,7 @@ params : {names || vars}, //  name is like a ref
 public : {vars , fns},
 private : {vars , fns},
 static : {vars , fns},
-settings : {index_access, custom_init_body ,keyword, custom_param_body,param,private,public,static,length,size,data,error...},
+settings : {custom_index_access, custom_constructor, custom_keyword, custom_param_body,param,private,public,static,length,size,data,error...},
 flags : {isReturn , isExit, isBreak ,isThrow}
 return : type() ,
 statement : statement,
@@ -412,4 +459,49 @@ name : "id",
 type : {struct || class || object (instance) || block || global || Fn || looped || custom || array || str } ,
 }
 
+*/
+/*
+what the custom sys does (all the setting start with custom_ ) :
+1.index_access :
+ it enable the cusom scope to be accessed like that custom_scope_name[index];
+ but of course  you need to decare a fn with the name "index_access" in handle will handle the index_access
+ for ex if i have a list custom scope with this setting and a fn called access take a index and return a name (ref)
+ what i can do in handle is will be like that
+ handle -> {
+  fn index_access (index : int(32)) -> name {
+    let name  ele= this.access(index);
+    return ele;
+  }
+ }
+ 2.constructor :
+  that will enable us to change the way we deal with what come after -> in constrcuting that way
+  list(int(32)) li -> [1,2,3]
+  it will treat the [1,2,3] as a params to the constructor
+  and it will not need a handle for now at least
+  in defining that way
+  list(int(32)) li = new list([1,2,3]);
+  that will work like the frist one
+  so what is the constructor will lock
+  _( arr : name) -> {
+    this.extend(arr);
+}
+3.keyword:
+ is the easy one it basically make you change the keyword you will use to use the custom scope
+ so for ex
+ scope List -> {
+     type -> custom;
+   keyword "my_list";
+ }
+ my_list(int(32)) li -> [1,2,3];
+ List(int(32)) li -> [1,2,3]; // will not work now
+ 4.param_body:
+ it allow to use a params after the name of the scope or the keyword
+ like this
+ list(int(32)) li -> [1,2,3]; // the (int(32)) is the param we can use that only with the param_body setting on
+ it also will not use handle so the param part in the scope declaration will handle that actually i think we will use it in anther thing and make will you enable param do that insted
+ and make the param body use the <> and have a custom handle for it or a new block called custom param
+ so
+ array<int(32)>(3) arr -> [1,2,3] so now the custom param take the type and size and the normal one take the length
+
+ * i think that is all of we have for now you can enhance it and add more
 */

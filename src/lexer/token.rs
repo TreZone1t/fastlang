@@ -17,6 +17,7 @@ pub enum TokenKind {
     Switch, // switch // i don't know how to implement it but it will be using scope we will make a new scope type for it.
     Case,   // case
     For,    // for
+    In,     // in
     While,  // while
     Loop,   // loop
     Break,  // break
@@ -24,8 +25,6 @@ pub enum TokenKind {
     Return, // return
     Fn,     // fn
     Del,    // del
-    Class,  // class
-    Enum,   // enum
     Extends, // extends
     Super,  // super
 
@@ -70,6 +69,7 @@ pub enum TokenKind {
     TypeParam,     // param    //*  with  scope and fn and custom and init
     TypeInit,      // init for getting constructor   //* with  class and struct and custom
     TypeBluePrint, // blueprint  //* with objects
+    TypeGeneric,   // generic    //* for custom generics
     TypeObject,    // object    //* with class and struct and custom
     TypeFlag,      // flag      //* with  scope and fn and looped and block and custom
     TypeStatic,    // static    //* with  class and struct and custom
@@ -81,6 +81,9 @@ pub enum TokenKind {
     TypeName,      // name      //*with all
     TypeStatement, // statement //* with all meta-block: statement -> { ... }
     TypeCustom,    // custom
+
+    TypeClass, // class
+    TypeEnum,  // enum
 
     // 4. Operators / punctuation
     Assign,   // =
@@ -100,8 +103,8 @@ pub enum TokenKind {
     Underscore, // _
 
     // logical
-    And,     // && or and
-    Or,      // || or or
+    And, // && or and
+    Or,  // || or or
 
     // Relational
     Eq,        // ==
