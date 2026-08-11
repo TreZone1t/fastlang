@@ -31,7 +31,7 @@ impl Parser {
             | TokenKind::TypeStr
             | TokenKind::TypeBlock
             | TokenKind::TypeObject => true,
-            TokenKind::Identifier(n) => self.custom_keywords.contains(n),
+            TokenKind::Identifier(n) => self.custom_keywords.contains(&n.to_string()),
             _ => false,
         }
     }
@@ -71,7 +71,7 @@ impl Parser {
             TokenKind::TypeStr => "str".to_string(),
             TokenKind::TypeBlock => "block".to_string(),
             TokenKind::TypeObject => "object".to_string(),
-            TokenKind::Identifier(n) => n.clone(),
+            TokenKind::Identifier(n) => n.to_string(),
             _ => return Err("Expected a type".to_string()),
         };
         self.advance();
@@ -313,7 +313,7 @@ impl Parser {
             TokenKind::String(s) => {
                 let val = s.clone();
                 self.advance();
-                Ok(Expr::LiteralString(val))
+                Ok(Expr::LiteralString(val.to_string()))
             }
             TokenKind::Char(c) => {
                 let val = *c;
@@ -330,7 +330,7 @@ impl Parser {
             TokenKind::Identifier(name) => {
                 let val = name.clone();
                 self.advance();
-                Ok(Expr::Identifier(val))
+                Ok(Expr::Identifier(val.to_string()))
             }
 
             // --- Unary: !expr ---
@@ -474,14 +474,14 @@ impl Parser {
             TokenKind::Dot => {
                 self.advance(); // نتخطى '.'
                                 // نقبل identifiers وكمان keywords كـ field names (زي .length, .size)
-                let prop = if let TokenKind::Identifier(name) = &self.peek().kind.clone() {
-                    let n = name.clone();
+                let mut prop = String::new();
+                if let TokenKind::Identifier(name) = &self.peek().kind.clone() {
+                    prop = name.to_string();
                     self.advance();
-                    n
                 } else if let Some(kw_name) = Self::keyword_as_identifier(&self.peek().kind.clone())
                 {
+                    prop = kw_name.to_string();
                     self.advance();
-                    kw_name
                 } else {
                     return Err(format!(
                         "Syntax Error: Expected field name after '.' at line {}, column {}",
@@ -520,7 +520,7 @@ impl Parser {
 
                 Ok(Expr::NamespaceAccess {
                     namespace,
-                    property: Box::new(Expr::Identifier(prop)),
+                    property: Box::new(Expr::Identifier(prop.to_string())),
                 })
             }
 

@@ -33,7 +33,7 @@ impl Parser {
             | TokenKind::TypeClass
             | TokenKind::TypeEnum
             | TokenKind::TypeStatement
-            | TokenKind::TypeString
+            | TokenKind::TypeStr
             | TokenKind::TypeBlock
             | TokenKind::TypeObject => true,
             _ => false,
@@ -50,7 +50,7 @@ impl Parser {
             | TokenKind::TypeStruct
             | TokenKind::TypeClass
             | TokenKind::TypeEnum
-            | TokenKind::TypeString
+            | TokenKind::TypeStr
             | TokenKind::TypeBlock => true,
             _ => false,
         }

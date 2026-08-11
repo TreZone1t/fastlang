@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["Expr","Stmt","Visibility"],"struct":["ConstructorDecl","EventDecl","HandleDecl","Param","Program"]};

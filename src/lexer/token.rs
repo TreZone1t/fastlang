@@ -1,12 +1,12 @@
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone)]
 
 pub enum TokenKind {
     // 1. Data Types
     Int(i64),
     Float(f64),
-    String(&'static str),
+    String(String),
     Char(char),
-    Identifier(&'static str),
+    Identifier(String),
     Bool(bool),
     // 2. Keywords
     Let,      // let
@@ -142,7 +142,7 @@ pub enum TokenKind {
     EOF,
     Default, // legacy catch-all, no longer emitted by the scanner (kept so nothing
     // downstream that matches on it breaks); prefer Error(String) instead.
-    Error(&'static str), // lexical error with a human-readable message; scanning continues
+    Error(String), // lexical error with a human-readable message; scanning continues
                          // afterward so the parser can still synchronize() and report more errors.
 }
 impl TokenKind {

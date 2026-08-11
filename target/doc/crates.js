@@ -1,2 +1,0 @@
-window.ALL_CRATES = ["fast_lang","lexer","maybe_uninit","peek_nth","proc_macro2","quote","serde","serde_core","serde_derive","smallvec","syn","unicode_ident"];
-//{"start":21,"fragment_lengths":[11,8,15,11,14,8,8,13,15,11,6,16]}

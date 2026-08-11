@@ -43,22 +43,14 @@ impl CodeGenerator {
         // Generate top-level non-main functions, classes, structs, globals first
         for stmt in ast {
             match stmt {
-                Stmt::ClassDecl { .. } | Stmt::StructDecl { .. } => {
-                    self.visit_statement(stmt);
-                }
-                Stmt::VarDecl { .. } => {
-                    self.visit_statement(stmt);
-                }
-                Stmt::CustomDecl { .. } => {
-                    self.visit_statement(stmt);
-                }
-                Stmt::StructDecl { .. } => {
-                    self.visit_statement(stmt);
-                }
-                Stmt::EnumDecl { .. } => {
-                    self.visit_statement(stmt);
-                }
-                Stmt::FnDecl { .. } => {
+                Stmt::ClassDecl { .. }
+                | Stmt::StructDecl { .. }
+                | Stmt::ArrayDecl { .. }
+                | Stmt::StrDecl { .. }
+                | Stmt::CustomDecl { .. }
+                | Stmt::EnumDecl { .. }
+                | Stmt::FnDecl { .. }
+                | Stmt::VarDecl { .. } => {
                     self.visit_statement(stmt);
                 }
                 Stmt::Use {
@@ -98,6 +90,8 @@ impl CodeGenerator {
                     match stmt {
                         Stmt::ClassDecl { .. }
                         | Stmt::StructDecl { .. }
+                        | Stmt::ArrayDecl { .. }
+                        | Stmt::StrDecl { .. }
                         | Stmt::VarDecl { .. }
                         | Stmt::BlockDecl { .. }
                         | Stmt::CustomDecl { .. }

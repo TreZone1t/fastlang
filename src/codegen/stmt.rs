@@ -114,24 +114,19 @@ impl CodeGenerator {
                 match cases {
                     crate::parser::ast::EitherBlock::Inline(stmts) => {
                         for s in stmts {
-                            if let Stmt::BlockDecl {
-                                name
-                                , statements, ..
-                            } = s
-                            {
-                                if *scope_type == crate::parser::ast::ScopeType::Case {
-                                    if let Some(val) = return_value {
-                                        let val_code = self.visit_expression(val);
-                                        self.emit(&format!("case {}: {{", val_code));
-                                    } else {
-                                        self.emit("default: {");
-                                    }
-                                    self.indent_level += 1;
-                                    for case_stmt in statements {
-                                        self.visit_statement(case_stmt);
-                                    }
-                                    // if it doesn't end with return or break, emit break
-                                    let needs_break = if let Some(last) = statements.last() {
+                            if let Stmt::CaseStmt { value, body } = s {
+                                if let Some(val) = value {
+                                    let val_code = self.visit_expression(val);
+                                    self.emit(&format!("case {}: {{", val_code));
+                                } else {
+                                    self.emit("default: {");
+                                }
+                                self.indent_level += 1;
+                                for case_stmt in body {
+                                    self.visit_statement(case_stmt);
+                                }
+                                // if it doesn't end with return or break, emit break
+                                let needs_break = if let Some(last) = body.last() {
                                         !matches!(last, Stmt::ReturnStmt(_) | Stmt::BreakStmt)
                                     } else {
                                         true
@@ -142,7 +137,6 @@ impl CodeGenerator {
                                     self.indent_level -= 1;
                                     self.emit("}");
                                 }
-                            }
                         }
                     }
                     crate::parser::ast::EitherBlock::External(name_expr) => {
@@ -218,370 +212,7 @@ impl CodeGenerator {
                 self.indent_level -= 1;
                 self.emit("}");
             }
-            Stmt::ScopeDecl {
-                is_exported: _,
-                is_const,
-                name,
-                scope_type,
-                params,
-                return_type,
-                flags: _,
-                settings: _,
-                events,
-                custom_keyword: _,
-                handle_block: handles,
-                generic_block: _,
-                static_block: _,
-                statements,
-                public_block,
-                fields,
-                private_block,
-                return_value,
-                constructor,
-            } => {
-                if *scope_type == crate::parser::ast::ScopeType::Custom {
-                    let type_params: Vec<_> = params
-                        .iter()
-                        .filter(|p| {
-                            p.type_node
-                                .as_ref()
-                                .map(|t| match t {
-                                    crate::parser::ast::TypeNode::Simple(r) => r.base_type.clone(),
-                                    crate::parser::ast::TypeNode::Generic(g) => g.base_type.clone(),
-                                })
-                                .unwrap_or("unknown".to_string())
-                                == "type"
-                                || p.type_node
-                                    .as_ref()
-                                    .map(|t| match t {
-                                        crate::parser::ast::TypeNode::Simple(r) => {
-                                            r.base_type.clone()
-                                        }
-                                        crate::parser::ast::TypeNode::Generic(g) => {
-                                            g.base_type.clone()
-                                        }
-                                    })
-                                    .unwrap_or("unknown".to_string())
-                                    .starts_with("type<")
-                        })
-                        .collect();
-                    if !type_params.is_empty() {
-                        let template_args: Vec<_> = type_params
-                            .iter()
-                            .map(|p| format!("typename {}", p.name))
-                            .collect();
-                        self.emit(&format!("template <{}>", template_args.join(", ")));
-                    }
-                    self.emit(&format!("struct {} {{", name));
-                    self.indent_level += 1;
 
-                    for field in fields {
-                        if field.type_node.as_ref().map(|t| match t {
-                            crate::parser::ast::TypeNode::Simple(r) => r.base_type.as_str(),
-                            crate::parser::ast::TypeNode::Generic(g) => g.base_type.as_str(),
-                        }) != Some("type")
-                            && !field.type_node.as_ref().map_or(false, |t| match t {
-                                crate::parser::ast::TypeNode::Simple(r) => {
-                                    r.base_type.starts_with("type<")
-                                }
-                                crate::parser::ast::TypeNode::Generic(g) => {
-                                    g.base_type.starts_with("type<")
-                                }
-                            })
-                        {
-                            let base_type = field.type_node.as_ref().map(|t| match t {
-                                crate::parser::ast::TypeNode::Simple(r) => r.base_type.as_str(),
-                                crate::parser::ast::TypeNode::Generic(g) => g.base_type.as_str(),
-                            });
-                            let size = field.type_node.as_ref().and_then(|t| match t {
-                                crate::parser::ast::TypeNode::Simple(r) => r.size,
-                                crate::parser::ast::TypeNode::Generic(_) => None,
-                            });
-                            let cpp_type = self.map_type(base_type, size);
-                            self.emit(&format!("{} {};", cpp_type, field.name));
-                        }
-                    }
-
-                    // Fields from params
-                    for p in params {
-                        if p.type_node
-                            .as_ref()
-                            .map(|t| match t {
-                                crate::parser::ast::TypeNode::Simple(r) => r.base_type.clone(),
-                                crate::parser::ast::TypeNode::Generic(g) => g.base_type.clone(),
-                            })
-                            .unwrap_or("unknown".to_string())
-                            != "type"
-                            && !p
-                                .type_node
-                                .as_ref()
-                                .map(|t| match t {
-                                    crate::parser::ast::TypeNode::Simple(r) => r.base_type.clone(),
-                                    crate::parser::ast::TypeNode::Generic(g) => g.base_type.clone(),
-                                })
-                                .unwrap_or("unknown".to_string())
-                                .starts_with("type<")
-                        {
-                            let cpp_t = p
-                                .type_node
-                                .as_ref()
-                                .map(|t| match t {
-                                    crate::parser::ast::TypeNode::Simple(r) => {
-                                        self.map_type(Some(r.base_type.as_str()), r.size)
-                                    }
-                                    crate::parser::ast::TypeNode::Generic(g) => {
-                                        self.map_type(Some(g.base_type.as_str()), None)
-                                    }
-                                })
-                                .unwrap_or("auto".to_string());
-                            self.emit(&format!("{} {};", cpp_t, p.name));
-                        }
-                    }
-
-                    // Constructor
-                    if let Some(c) = constructor {
-                        let param_list: Vec<String> =
-                            c.params
-                                .iter()
-                                .filter(|p| {
-                                    p.type_node
-                                        .as_ref()
-                                        .map(|t| match t {
-                                            crate::parser::ast::TypeNode::Simple(r) => {
-                                                r.base_type.clone()
-                                            }
-                                            crate::parser::ast::TypeNode::Generic(g) => {
-                                                g.base_type.clone()
-                                            }
-                                        })
-                                        .unwrap_or("unknown".to_string())
-                                        != "type"
-                                })
-                                .map(|p| {
-                                    let cpp_t =
-                                        p.type_node
-                                            .as_ref()
-                                            .map(|t| match t {
-                                                crate::parser::ast::TypeNode::Simple(r) => self
-                                                    .map_type(Some(r.base_type.as_str()), r.size),
-                                                crate::parser::ast::TypeNode::Generic(g) => {
-                                                    self.map_type(Some(g.base_type.as_str()), None)
-                                                }
-                                            })
-                                            .unwrap_or("auto".to_string());
-                                    format!("{} {}", cpp_t, p.name)
-                                })
-                                .collect();
-                        self.emit(&format!("{}({}) {{", name, param_list.join(", ")));
-                        self.indent_level += 1;
-                        for s in &c.body {
-                            self.visit_statement(s);
-                        }
-                        self.indent_level -= 1;
-                        self.emit("}");
-                    } else {
-                        // Fallback constructor
-                        let mut param_list = Vec::new();
-                        let mut has_constructor_params = false;
-                        for p in params {
-                            if p.type_node
-                                .as_ref()
-                                .map(|t| match t {
-                                    crate::parser::ast::TypeNode::Simple(r) => r.base_type.clone(),
-                                    crate::parser::ast::TypeNode::Generic(g) => g.base_type.clone(),
-                                })
-                                .unwrap_or("unknown".to_string())
-                                != "type"
-                                && !p
-                                    .type_node
-                                    .as_ref()
-                                    .map(|t| match t {
-                                        crate::parser::ast::TypeNode::Simple(r) => {
-                                            r.base_type.clone()
-                                        }
-                                        crate::parser::ast::TypeNode::Generic(g) => {
-                                            g.base_type.clone()
-                                        }
-                                    })
-                                    .unwrap_or("unknown".to_string())
-                                    .starts_with("type<")
-                            {
-                                let cpp_t = p
-                                    .type_node
-                                    .as_ref()
-                                    .map(|t| match t {
-                                        crate::parser::ast::TypeNode::Simple(r) => {
-                                            self.map_type(Some(r.base_type.as_str()), r.size)
-                                        }
-                                        crate::parser::ast::TypeNode::Generic(g) => {
-                                            self.map_type(Some(g.base_type.as_str()), None)
-                                        }
-                                    })
-                                    .unwrap_or("auto".to_string());
-                                param_list.push(format!("{} _{}", cpp_t, p.name));
-                                has_constructor_params = true;
-                            }
-                        }
-                        if has_constructor_params {
-                            self.emit(&format!("{}({}) {{", name, param_list.join(", ")));
-                            self.indent_level += 1;
-                            for p in params {
-                                if p.type_node
-                                    .as_ref()
-                                    .map(|t| match t {
-                                        crate::parser::ast::TypeNode::Simple(r) => {
-                                            r.base_type.clone()
-                                        }
-                                        crate::parser::ast::TypeNode::Generic(g) => {
-                                            g.base_type.clone()
-                                        }
-                                    })
-                                    .unwrap_or("unknown".to_string())
-                                    == "type"
-                                    || p.type_node
-                                        .as_ref()
-                                        .map(|t| match t {
-                                            crate::parser::ast::TypeNode::Simple(r) => {
-                                                r.base_type.clone()
-                                            }
-                                            crate::parser::ast::TypeNode::Generic(g) => {
-                                                g.base_type.clone()
-                                            }
-                                        })
-                                        .unwrap_or("unknown".to_string())
-                                        .starts_with("type<")
-                                {
-                                    continue;
-                                }
-                                self.emit(&format!("this->{} = _{};", p.name, p.name));
-                            }
-                            self.indent_level -= 1;
-                            self.emit("}");
-                        }
-                    }
-
-                    self.in_class_def = true;
-                    // General statements
-                    for s in statements {
-                        self.visit_statement(s);
-                    }
-
-                    // Public Block
-                    self.emit("public:");
-                    for s in public_block {
-                        self.visit_statement(s);
-                    }
-
-                    // Events
-                    for e in events {
-                        self.emit(&format!("void {}() {{", e.trigger_name));
-                        self.indent_level += 1;
-                        for s in &e.body {
-                            self.visit_statement(s);
-                        }
-                        self.indent_level -= 1;
-                        self.emit("}");
-                    }
-
-                    // Handles
-                    for h in handles {
-                        self.visit_statement(h);
-                    }
-
-                    self.indent_level -= 1;
-                    if !private_block.is_empty() {
-                        self.emit("private:");
-                        self.indent_level += 1;
-                        for s in private_block {
-                            self.visit_statement(s);
-                        }
-                        self.indent_level -= 1;
-                    }
-                    self.in_class_def = false;
-                    self.emit("};");
-                    return;
-                }
-                // Build param list
-                let mut param_list = Vec::new();
-                for p in params {
-                    let cpp_t = p
-                        .type_node
-                        .as_ref()
-                        .map(|t| match t {
-                            crate::parser::ast::TypeNode::Simple(r) => {
-                                self.map_type(Some(r.base_type.as_str()), r.size)
-                            }
-                            crate::parser::ast::TypeNode::Generic(g) => {
-                                self.map_type(Some(g.base_type.as_str()), None)
-                            }
-                        })
-                        .unwrap_or("auto".to_string());
-                    param_list.push(format!("{} {}", cpp_t, p.name));
-                }
-
-                let constexpr_prefix = if *is_const { "constexpr " } else { "" };
-
-                if self.indent_level == 0 || self.in_class_def {
-                    // Top-level scope or class method → proper C++ function
-                    let has_return_stmt =
-                        statements.iter().any(|s| matches!(s, Stmt::ReturnStmt(_)));
-                    let cpp_ret = if name == "main" {
-                        "int".to_string()
-                    } else if *scope_type == crate::parser::ast::ScopeType::Custom {
-                        "".to_string() // Custom scope (struct/class) doesn't have a return type like this
-                    } else if let Some(rt) = return_type {
-                        self.map_type(
-                            Some(match rt {
-                                crate::parser::ast::TypeNode::Simple(r) => &r.base_type,
-                                crate::parser::ast::TypeNode::Generic(g) => &g.base_type,
-                            }),
-                            match rt {
-                                crate::parser::ast::TypeNode::Simple(r) => r.size,
-                                crate::parser::ast::TypeNode::Generic(_) => None,
-                            },
-                        )
-                    } else if has_return_stmt || return_value.is_some() {
-                        "auto".to_string()
-                    } else {
-                        "void".to_string()
-                    };
-
-                    self.emit(&format!(
-                        "{}{} {}({}) {{",
-                        constexpr_prefix,
-                        cpp_ret,
-                        name,
-                        param_list.join(", ")
-                    ));
-                    self.indent_level += 1;
-                    for s in statements {
-                        self.visit_statement(s);
-                    }
-                    if let Some(rv) = return_value {
-                        let rv_code = self.visit_expression(rv);
-                        self.emit(&format!("return {};", rv_code));
-                    }
-                    self.indent_level -= 1;
-                    self.emit("}");
-                } else {
-                    // Nested scope → lambda bound to variable
-                    self.emit(&format!(
-                        "auto {} = [&]({}) {{",
-                        name,
-                        param_list.join(", ")
-                    ));
-                    self.indent_level += 1;
-                    for s in statements {
-                        self.visit_statement(s);
-                    }
-                    if let Some(rv) = return_value {
-                        let rv_code = self.visit_expression(rv);
-                        self.emit(&format!("return {};", rv_code));
-                    }
-                    self.indent_level -= 1;
-                    self.emit("};");
-                }
-            }
             Stmt::ClassDecl {
                 name,
                 extends,
@@ -590,6 +221,7 @@ impl CodeGenerator {
                 static_block,
                 constructor,
                 is_exported: _,
+                ..
             } => {
                 let ext_code = if let Some(ext) = extends {
                     format!(": public {}", ext)
@@ -663,6 +295,7 @@ impl CodeGenerator {
                 static_block,
                 constructor,
                 is_exported: _,
+                ..
             } => {
                 self.emit(&format!("struct {} {{", name));
                 self.indent_level += 1;

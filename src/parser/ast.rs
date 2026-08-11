@@ -466,6 +466,7 @@ pub enum Stmt {
         imports: Option<Vec<String>>,
     },
 
+    CaseStmt { value: Option<Expr>, body: Vec<Stmt> },
     SwitchStmt {
         condition: Expr,
         cases: EitherBlock,

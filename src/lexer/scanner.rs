@@ -195,7 +195,7 @@ impl Scanner {
                         break;
                     }
                 }
-                Self::check_keyword(&word).unwrap_or(TokenKind::Identifier(&word))
+                Self::check_keyword(&word).unwrap_or(TokenKind::Identifier(word.clone()))
             }
 
             '0'..='9' => {
@@ -260,7 +260,7 @@ impl Scanner {
                     }
                 }
                 if terminated {
-                    TokenKind::String(s)
+                    TokenKind::String(s.clone())
                 } else {
                     TokenKind::Error(format!(
                         "Unterminated string literal starting at line {}",

@@ -50,7 +50,7 @@ impl Parser {
             }
             TokenKind::Throw => self.parse_throw_stmt(),
             TokenKind::Try => self.parse_try_catch_stmt(),
-            kind if self.is_type_token(kind) => self.parse_var_decl_bare(),
+            kind if self.is_type_token(kind) => self.parse_var_decl(),
             _ => self.parse_expression_stmt(),
         };
 
@@ -66,41 +66,39 @@ impl Parser {
 
     pub(crate) fn parse_use_stmt(&mut self) -> Result<Stmt, String> {
         self.advance(); // consume 'use'
-
-        let mut module_path = Vec::new();
-        let mut imports = None;
+        let mut module_path: Vec<String> = Vec::new();
+        let mut imports: Option<Vec<String>> = None;
 
         loop {
-            let name = if let TokenKind::Identifier(n) = &self.peek().kind {
-                let n = n.clone();
+            let mut name = String::new();
+            if let TokenKind::Identifier(n) = &self.peek().kind.clone() {
+                name = n.to_string();
                 self.advance();
-                n
             } else if let Some(kw) = Self::keyword_as_identifier(&self.peek().kind.clone()) {
+                name = kw.to_string();
                 self.advance();
-                kw
             } else {
-                return Err(
-                    "Syntax Error: Expected module or import name in use statement".to_string(),
-                );
-            };
-
+                return Err("Syntax Error: Expected module or import name in use statement".to_string());
+            }
             module_path.push(name);
 
             if self.peek().kind == TokenKind::DoubleColon {
                 self.advance();
-                // Check if next is '{'
                 if self.peek().kind == TokenKind::LBrace {
                     self.advance();
-                    let mut selected = Vec::new();
-                    if self.peek().kind != TokenKind::RBrace {
+                    let mut selected: Vec<String> = Vec::new();
+                    if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
                         loop {
-                            let n = if let TokenKind::Identifier(n) = &self.peek().kind {
-                                let n = n.clone();
+                            let mut n = String::new();
+                            if let TokenKind::Identifier(id) = &self.peek().kind.clone() {
+                                n = id.to_string();
                                 self.advance();
-                                n
+                            } else if let Some(kw) = Self::keyword_as_identifier(&self.peek().kind.clone()) {
+                                n = kw.to_string();
+                                self.advance();
                             } else {
                                 return Err("Syntax Error: Expected imported name".to_string());
-                            };
+                            }
                             selected.push(n);
                             if self.peek().kind == TokenKind::Comma {
                                 self.advance();
@@ -111,18 +109,14 @@ impl Parser {
                     }
                     self.consume(TokenKind::RBrace, "Expected '}' after import list")?;
                     imports = Some(selected);
-                    break; // After '{...}', use statement ends
+                    break;
                 }
             } else {
-                break; // No '::', so path is done
+                break;
             }
         }
-
         self.consume(TokenKind::SemiColon, "Expected ';' after use statement")?;
-        Ok(Stmt::Use {
-            module_path,
-            imports,
-        })
+        Ok(Stmt::Use { module_path, imports })
     }
 
     pub(crate) fn parse_exported_stmt(&mut self) -> Result<Stmt, String> {
@@ -177,20 +171,16 @@ impl Parser {
 
         // 3. قراءة اسم المتغير (Identifier)
         //    نقبل كمان بعض الـ keywords كـ identifiers في موضع الاسم (زي flag, length, etc.)
-        let name = if let TokenKind::Identifier(n) = &self.peek().kind {
-            let var_name = n.clone();
-            self.advance(); // نتخطى الاسم
-            var_name
-        } else if let Some(kw_name) = Self::keyword_as_identifier(&self.peek().kind.clone()) {
+        let mut name = String::new();
+        if let TokenKind::Identifier(n) = &self.peek().kind.clone() {
+            name = n.to_string();
             self.advance();
-            kw_name
+        } else if let Some(kw_name) = Self::keyword_as_identifier(&self.peek().kind.clone()) {
+            name = kw_name.to_string();
+            self.advance();
         } else {
-            return Err(format!(
-                "Syntax Error: Expected variable name at line {}, column {}",
-                self.peek().line,
-                self.peek().column
-            ));
-        };
+            return Err(format!("Syntax Error: Expected variable name at line {}, column {}", self.peek().line, self.peek().column));
+        }
 
         // 4. قبول التهيئة الاختيارية: let <type> <name>; أو let <type> <name> = <value>;
         let value = if self.peek().kind == TokenKind::Assign {
@@ -380,26 +370,9 @@ impl Parser {
                         return Err("Syntax Error: Expected '{' after '=>' in case".to_string());
                     };
 
-                    body.push(Stmt::ScopeDecl {
-                        is_exported: false,
-                        is_const: false,
-                        name: "case".to_string(),
-                        scope_type: crate::parser::ast::ScopeType::Case,
-                        params: vec![],
-                        return_type: None,
-                        flags: vec![],
-                        settings: vec![],
-                        events: vec![],
-                        generic_block: vec![],
-                        static_block: vec![],
-                        handle_block: vec![],
-                        custom_keyword: None,
-                        statements: case_body,
-                        public_block: vec![],
-                        fields: vec![],
-                        private_block: vec![],
-                        return_value: Some(val),
-                        constructor: None,
+                    body.push(Stmt::CaseStmt {
+                        value: Some(val),
+                        body: case_body,
                     });
                 } else if self.peek().kind == TokenKind::Underscore {
                     self.advance(); // consume '_'
@@ -414,26 +387,9 @@ impl Parser {
                         );
                     };
                     // todo: add SwitchDecl for future updates
-                    body.push(Stmt::ScopeDecl {
-                        is_exported: false,
-                        is_const: false,
-                        name: "default".to_string(),
-                        scope_type: crate::parser::ast::ScopeType::Case,
-                        params: vec![],
-                        return_type: None,
-                        flags: vec![],
-                        settings: vec![],
-                        events: vec![],
-                        generic_block: vec![],
-                        static_block: vec![],
-                        statements: def_body,
-                        handle_block: vec![],
-                        custom_keyword: None,
-                        public_block: vec![],
-                        fields: vec![],
-                        private_block: vec![],
-                        return_value: None,
-                        constructor: None,
+                    body.push(Stmt::CaseStmt {
+                        value: None,
+                        body: def_body,
                     });
                 } else {
                     return Err(
@@ -618,8 +574,8 @@ impl Parser {
         self.consume(TokenKind::Catch, "Expected 'catch' after try block")?;
         self.consume(TokenKind::LParen, "Expected '(' after 'catch'")?;
 
-        let catch_param = if let TokenKind::Identifier(n) = &self.peek().kind.clone() {
-            let n = n.clone();
+        let catch_param: String = if let TokenKind::Identifier(n) = &self.peek().kind.clone() {
+            let n = n.to_string();
             self.advance();
             n
         } else {
@@ -650,19 +606,17 @@ impl Parser {
 
     pub(crate) fn get_identifier(&mut self, err_msg: &str) -> Result<String, String> {
         if let TokenKind::Identifier(n) = &self.peek().kind.clone() {
-            let n = n.clone();
+            let s = n.to_string();
             self.advance();
-            Ok(n)
-        } else if let Some(kw) = Self::keyword_as_identifier(&self.peek().kind.clone()) {
-            self.advance();
-            Ok(kw)
-        } else {
-            Err(format!(
-                "{} at line {}, column {}",
-                err_msg,
-                self.peek().line,
-                self.peek().column
-            ))
+            return Ok(s);
         }
+        if let Some(kw) = Self::keyword_as_identifier(&self.peek().kind.clone()) {
+            let s = kw.to_string();
+            self.advance();
+            return Ok(s);
+        }
+        Err(format!("{} at line {}, column {}", err_msg, self.peek().line, self.peek().column))
     }
 }
+
+    

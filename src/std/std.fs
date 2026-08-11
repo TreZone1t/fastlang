@@ -79,9 +79,6 @@ export scope Array -> {
     generic -> {
         type(size) T;
     }
-    param -> {
-       int(32) len;
-    }
     _(arr : name) -> {
         this.data -> arr; 
     }
@@ -89,46 +86,37 @@ export scope Array -> {
         T data;
         int(32) length = len;
     }
-    public -> {
-        fn get_data() -> T {
-            return this.data;
-        }
-        fn get_size() -> usize {
-            return this.size;
-        }
-    }
     handle -> {
         fn index_access(index : int(32)) -> T {
             return this.data[index];
         }
     }
 }
+//str s -> "hello"; 
 export scope Str -> { 
     type -> str;
     keyword -> "str";
     param -> {
         int(32) len;
     }
-    _(arr : name) -> {
-        this.data -> arr; 
-    }
     private -> {
-        array<char>(len) data;
+        name data;
         int(32) length = len;
     }
-    public -> {
-        fn get_data() -> array<char> {
-            return this.data;
-        }
-        fn get_size() -> usize {
-            return this.size;
-        }
+    _(arr : name) -> {
+         this.data -> arr; 
     }
     handle -> {
         fn add(b : str) -> str {
             return this.data + b.data;
         }
-        
+        //data is has no use for now
+        fn data() -> array<char> {
+            return this.data;
+        }
+        fn length() -> int(32) {
+            return this.length;
+        }
     }
 }
     
