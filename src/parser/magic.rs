@@ -59,13 +59,33 @@ impl Parser {
     pub(crate) fn is_magic_type_str(type_name: &str) -> bool {
         matches!(
             type_name,
-            "name" | "scope" | "flag" | "length" | "size" | "param" | "init" | "blueprint"
-                | "type" | "event" | "handle" | "statement" | "custom" | "struct" | "class"
-                | "enum" | "string" | "block" | "object"
+            "name"
+                | "scope"
+                | "flag"
+                | "length"
+                | "size"
+                | "param"
+                | "init"
+                | "blueprint"
+                | "type"
+                | "event"
+                | "handle"
+                | "statement"
+                | "custom"
+                | "struct"
+                | "class"
+                | "enum"
+                | "string"
+                | "block"
+                | "object"
         )
     }
 
-    pub(crate) fn parse_magic_cast(&mut self, magic_type: String, target: Expr) -> Result<Expr, String> {
+    pub(crate) fn parse_magic_cast(
+        &mut self,
+        magic_type: String,
+        target: Expr,
+    ) -> Result<Expr, String> {
         Ok(Expr::MagicCast {
             magic_type,
             target: Box::new(target),
@@ -100,7 +120,7 @@ impl Parser {
                 TokenKind::TypeStruct => "struct",
                 TokenKind::TypeClass => "class",
                 TokenKind::TypeEnum => "enum",
-                TokenKind::TypeString => "string",
+                TokenKind::TypeStr => "str",
                 TokenKind::TypeBlock => "block",
                 _ => unreachable!(),
             };

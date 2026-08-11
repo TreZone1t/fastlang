@@ -1,11 +1,11 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::cell::RefCell;
 
 #[derive(Debug, Clone)]
 pub struct SymbolInfo {
     pub name: String,
-    pub type_sized: Option<crate::parser::ast::TypeRef>,
+    pub type_node: Option<crate::parser::ast::TypeNode>,
     pub visibility: crate::parser::ast::Visibility,
     pub editability: crate::parser::ast::Editability,
     pub settings: std::collections::HashSet<crate::parser::ast::Setting>,
@@ -33,7 +33,10 @@ impl Environment {
 
     pub fn define(&mut self, name: String, info: SymbolInfo) -> Result<(), String> {
         if self.symbols.contains_key(&name) {
-            return Err(format!("Semantic Error: Variable '{}' is already defined in this scope.", name));
+            return Err(format!(
+                "Semantic Error: Variable '{}' is already defined in this scope.",
+                name
+            ));
         }
         self.symbols.insert(name, info);
         Ok(())

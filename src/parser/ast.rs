@@ -1,3 +1,5 @@
+use crate::lexer::token::TokenKind;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Visibility {
     Public,
@@ -15,14 +17,25 @@ pub enum Editability {
 pub struct TypeRef {
     pub base_type: String,
     pub size: Option<i64>,
-    pub generics: Vec<TypeRef>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeNode {
+    Simple(TypeRef),
+    Generic(TypeGeneric),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeGeneric {
+    pub base_type: String,
+    pub generics: Vec<TypeNode>,
 }
 
 #[derive(Debug, Clone)]
 pub struct FieldDecl {
     pub visibility: Visibility,
     pub editability: Editability,
-    pub type_sized: Option<TypeRef>,
+    pub type_node: Option<TypeNode>,
     pub name: String,
     pub value: Option<Expr>,
 }
@@ -34,18 +47,17 @@ pub enum ScopeType {
     Class,
     Struct,
     Custom,
-    Looped,
+    //todo : add looped
     Case,
     Array,
+    Enum,
     String,
 }
 
 #[derive(Debug, Clone)]
 pub struct Param {
     pub name: String,
-    pub base_type: String,
-    pub size: Option<i64>,
-    pub generics: Vec<TypeRef>,
+    pub type_node: Option<TypeNode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -91,47 +103,50 @@ pub enum Setting {
     CustomIterator,
     CustomDisplay,
     CustomOperators,
-    CustomParamBody,
     Param,
     Private,
     Public,
     Static,
     Length,
-    Size,
     Data,
+    Size,
+    Extends,
+    Variants,
     Error,
-    All,
     Statement,
     Constructor,
     Handle,
     Return,
     Custom(String),
+    NotFound,
 }
 
 impl Setting {
     pub fn from_str(s: &str) -> Self {
         match s {
-            "custom_index_access" => Setting::CustomIndexAccess,
+            "index_access" => Setting::CustomIndexAccess,
             "custom_constructor" => Setting::CustomConstructor,
             "custom_keyword" => Setting::CustomKeyword,
             "custom_generic" => Setting::CustomGeneric,
-            "custom_iterator" => Setting::CustomIterator,
-            "custom_display" => Setting::CustomDisplay,
-            "custom_operators" => Setting::CustomOperators,
+            "iterator" => Setting::CustomIterator,
+            "display" => Setting::CustomDisplay,
+            "operators" => Setting::CustomOperators,
             "param" => Setting::Param,
             "private" => Setting::Private,
             "public" => Setting::Public,
             "static" => Setting::Static,
             "length" => Setting::Length,
             "size" => Setting::Size,
-            "data" => Setting::Data,
+            "extends" => Setting::Extends,
+            "variants" => Setting::Variants,
             "error" => Setting::Error,
-            "all" => Setting::All,
+            "data" => Setting::Data,
             "statement" => Setting::Statement,
             "constructor" => Setting::Constructor,
+            "_" => Setting::Constructor, // only for from_token
             "handle" => Setting::Handle,
             "return" => Setting::Return,
-            _ => Setting::Custom(s.to_string()),
+            _ => Setting::NotFound,
         }
     }
 
@@ -144,25 +159,66 @@ impl Setting {
             Setting::CustomIterator => "custom_iterator".to_string(),
             Setting::CustomDisplay => "custom_display".to_string(),
             Setting::CustomOperators => "custom_operators".to_string(),
-            Setting::CustomParamBody => "custom_param_body".to_string(),
             Setting::Param => "param".to_string(),
+
             Setting::Private => "private".to_string(),
             Setting::Public => "public".to_string(),
             Setting::Static => "static".to_string(),
             Setting::Length => "length".to_string(),
+            Setting::Extends => "extends".to_string(),
+            Setting::Variants => "variants".to_string(),
             Setting::Size => "size".to_string(),
             Setting::Data => "data".to_string(),
             Setting::Error => "error".to_string(),
-            Setting::All => "all".to_string(),
             Setting::Statement => "statement".to_string(),
             Setting::Constructor => "constructor".to_string(),
             Setting::Handle => "handle".to_string(),
             Setting::Return => "return".to_string(),
+            Setting::NotFound => "not_found".to_string(),
             Setting::Custom(s) => s.clone(),
         }
     }
+    pub fn from_token(t: TokenKind) -> Self {
+        let s = TokenKind::as_str(&t);
+        return Setting::from_str(s);
+    }
 }
-
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub enum HandleMethods {
+    IndexAccess,
+    Display,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Iterator,
+    Next,
+    Length,
+    Size,
+    NotFound,
+}
+impl HandleMethods {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "index_access" => HandleMethods::IndexAccess,
+            "display" => HandleMethods::Display,
+            "add" => HandleMethods::Add,
+            "sub" => HandleMethods::Sub,
+            "mul" => HandleMethods::Mul,
+            "div" => HandleMethods::Div,
+            "mod" => HandleMethods::Mod,
+            "iterator" => HandleMethods::Iterator,
+            "next" => HandleMethods::Next,
+            "length" => HandleMethods::Length,
+            "size" => HandleMethods::Size,
+            _ => {
+                println!("DEBUG: Handle method not found: {}", s);
+                HandleMethods::NotFound
+            }
+        }
+    }
+}
 #[derive(Debug, Clone)]
 pub enum Expr {
     LiteralInt(i64),
@@ -236,7 +292,7 @@ pub enum Stmt {
     VarDecl {
         visibility: Visibility,
         editability: Editability,
-        type_sized: Option<TypeRef>,
+        type_node: Option<TypeNode>,
         name: String,
         value: Expr,
     },
@@ -246,44 +302,83 @@ pub enum Stmt {
         value: Expr,
     },
 
-    ScopeDecl {
+    BlockDecl {
         is_exported: bool,
-        is_const: bool,
         name: String,
-        scope_type: ScopeType,
-        custom_keyword: Option<String>,
-        params: Vec<Param>,
-        return_type: Option<TypeRef>,
-        flags: Vec<Flag>,
-        settings: Vec<Setting>,
-        events: Vec<EventDecl>,
-        handle_block: Vec<Stmt>,
         statements: Vec<Stmt>,
-        public_block: Vec<Stmt>,
-        fields: Vec<FieldDecl>,
-        private_block: Vec<Stmt>,
-        generic_block: Vec<Stmt>,
-        static_block: Vec<Stmt>,
-        return_value: Option<Expr>,
-        // we will add polymorphism on the next updates vec<ConstructorDecl>
+    },
+    CustomDecl {
+        is_exported: bool,
+        name: String,
+        keyword: String,
+        settings: Option<Vec<Setting>>,
+        handles: Option<Vec<HandleMethods>>,
+        params: Option<Vec<Param>>,
+        flags: Option<Vec<Flag>>,
+        events: Option<Vec<EventDecl>>,
+        fields: Option<Vec<FieldDecl>>,
+        return_type: Option<TypeNode>,
+        public_block: Option<Vec<Stmt>>,
+        private_block: Option<Vec<Stmt>>,
+        static_block: Option<Vec<Stmt>>,
+        statements: Option<Vec<Stmt>>,
+        variant_block: Option<Vec<EnumVariant>>,
+        generic_block: Option<Vec<Stmt>>,
+        handle_block: Option<Vec<Stmt>>,
         constructor: Option<ConstructorDecl>,
     },
 
     ClassDecl {
         is_exported: bool,
         name: String,
+        keyword: String,
         extends: Option<String>,
+        handles: Vec<HandleMethods>,
+        settings: Vec<Setting>,
         public_block: Vec<Stmt>,
         private_block: Vec<Stmt>,
         static_block: Vec<Stmt>,
+        generic_block: Vec<Stmt>,
+        handle_block: Vec<Stmt>,
+        length: i64,
         constructor: Option<ConstructorDecl>,
     },
-
+    ArrayDecl {
+        is_exported: bool,
+        name: String,
+        keyword: String,
+        length: i64,
+        data: String,
+        handles: Vec<HandleMethods>,
+        settings: Vec<Setting>,
+        public_block: Vec<Stmt>,
+        private_block: Vec<Stmt>,
+        generic_block: Vec<Stmt>,
+        handle_block: Vec<Stmt>,
+        constructor: Option<ConstructorDecl>,
+    },
+    StrDecl {
+        is_exported: bool,
+        name: String,
+        keyword: String,
+        length: i64,
+        data: String,
+        handles: Vec<HandleMethods>,
+        settings: Vec<Setting>,
+        public_block: Vec<Stmt>,
+        private_block: Vec<Stmt>,
+        handle_block: Vec<Stmt>,
+        constructor: Option<ConstructorDecl>,
+    },
     StructDecl {
         is_exported: bool,
         name: String,
+        keyword: String,
+        handles: Vec<HandleMethods>,
+        settings: Vec<Setting>,
         public_block: Vec<Stmt>,
         private_block: Vec<Stmt>,
+        handle_block: Vec<Stmt>,
         static_block: Vec<Stmt>,
         constructor: Option<ConstructorDecl>,
     },
@@ -291,6 +386,10 @@ pub enum Stmt {
     EnumDecl {
         is_exported: bool,
         name: String,
+        keyword: String,
+        handles: Vec<HandleMethods>,
+        settings: Vec<Setting>,
+        handle_block: Vec<Stmt>,
         variants: Vec<EnumVariant>,
     },
 
@@ -298,7 +397,7 @@ pub enum Stmt {
         is_exported: bool,
         name: String,
         params: Vec<Param>,
-        return_type: String,
+        return_type: TypeNode,
         body: Vec<Stmt>,
     },
 
@@ -409,7 +508,7 @@ pub struct HandleDecl {
 #[derive(Debug, Clone)]
 pub struct EnumVariant {
     pub name: String,
-    pub data_types: Vec<String>, // e.g. Success(int) -> vec!["int"]
+    pub data_types: Option<Vec<TypeNode>>, // e.g. Success(int) -> vec!["int"]
 }
 
 #[derive(Debug, Clone)]

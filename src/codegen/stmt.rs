@@ -1,5 +1,5 @@
-use crate::parser::ast::*;
 use crate::codegen::generator::CodeGenerator;
+use crate::parser::ast::*;
 
 impl CodeGenerator {
     pub(crate) fn visit_statement(&mut self, stmt: &Stmt) {
@@ -10,7 +10,7 @@ impl CodeGenerator {
             }
             Stmt::VarDecl {
                 name,
-                type_sized,
+                type_node,
                 value,
                 editability,
                 ..
@@ -20,8 +20,14 @@ impl CodeGenerator {
                 // If value is __param__ sentinel, it's a declaration without init (struct field / function param)
                 let is_param = val_code == "__param__";
 
-                let base_type = type_sized.as_ref().map(|t| t.base_type.clone());
-                let size = type_sized.as_ref().and_then(|t| t.size);
+                let base_type = type_node.as_ref().map(|t| match t {
+                    crate::parser::ast::TypeNode::Simple(r) => r.base_type.clone(),
+                    crate::parser::ast::TypeNode::Generic(g) => g.base_type.clone(),
+                });
+                let size = type_node.as_ref().and_then(|t| match t {
+                    crate::parser::ast::TypeNode::Simple(r) => r.size,
+                    crate::parser::ast::TypeNode::Generic(_) => None,
+                });
 
                 let cpp_type = match base_type.as_deref() {
                     Some("length") => {
@@ -108,11 +114,9 @@ impl CodeGenerator {
                 match cases {
                     crate::parser::ast::EitherBlock::Inline(stmts) => {
                         for s in stmts {
-                            if let Stmt::ScopeDecl {
-                                scope_type,
-                                return_value,
-                                statements,
-                                ..
+                            if let Stmt::BlockDecl {
+                                name
+                                , statements, ..
                             } = s
                             {
                                 if *scope_type == crate::parser::ast::ScopeType::Case {
@@ -193,6 +197,27 @@ impl CodeGenerator {
                 self.indent_level -= 1;
                 self.emit("}");
             }
+            Stmt::ForIn {
+                item_decl,
+                iterable,
+                body,
+            } => {
+                let old_out = std::mem::take(&mut self.output);
+                self.visit_statement(item_decl);
+                let mut decl_code = std::mem::replace(&mut self.output, old_out);
+                // Decl_code may have a trailing semicolon, remove it
+                decl_code = decl_code.trim_end().trim_end_matches(';').to_string();
+
+                let iter_code = self.visit_expression(iterable);
+                self.emit(&format!("for ({} : {}) {{", decl_code, iter_code));
+
+                self.indent_level += 1;
+                for s in body {
+                    self.visit_statement(s);
+                }
+                self.indent_level -= 1;
+                self.emit("}");
+            }
             Stmt::ScopeDecl {
                 is_exported: _,
                 is_const,
@@ -217,7 +242,28 @@ impl CodeGenerator {
                 if *scope_type == crate::parser::ast::ScopeType::Custom {
                     let type_params: Vec<_> = params
                         .iter()
-                        .filter(|p| p.base_type == "type" || p.base_type.starts_with("type<"))
+                        .filter(|p| {
+                            p.type_node
+                                .as_ref()
+                                .map(|t| match t {
+                                    crate::parser::ast::TypeNode::Simple(r) => r.base_type.clone(),
+                                    crate::parser::ast::TypeNode::Generic(g) => g.base_type.clone(),
+                                })
+                                .unwrap_or("unknown".to_string())
+                                == "type"
+                                || p.type_node
+                                    .as_ref()
+                                    .map(|t| match t {
+                                        crate::parser::ast::TypeNode::Simple(r) => {
+                                            r.base_type.clone()
+                                        }
+                                        crate::parser::ast::TypeNode::Generic(g) => {
+                                            g.base_type.clone()
+                                        }
+                                    })
+                                    .unwrap_or("unknown".to_string())
+                                    .starts_with("type<")
+                        })
                         .collect();
                     if !type_params.is_empty() {
                         let template_args: Vec<_> = type_params
@@ -230,14 +276,27 @@ impl CodeGenerator {
                     self.indent_level += 1;
 
                     for field in fields {
-                        if field.type_sized.as_ref().map(|t| t.base_type.as_str()) != Some("type")
-                            && !field
-                                .type_sized
-                                .as_ref()
-                                .map_or(false, |t| t.base_type.starts_with("type<"))
+                        if field.type_node.as_ref().map(|t| match t {
+                            crate::parser::ast::TypeNode::Simple(r) => r.base_type.as_str(),
+                            crate::parser::ast::TypeNode::Generic(g) => g.base_type.as_str(),
+                        }) != Some("type")
+                            && !field.type_node.as_ref().map_or(false, |t| match t {
+                                crate::parser::ast::TypeNode::Simple(r) => {
+                                    r.base_type.starts_with("type<")
+                                }
+                                crate::parser::ast::TypeNode::Generic(g) => {
+                                    g.base_type.starts_with("type<")
+                                }
+                            })
                         {
-                            let base_type = field.type_sized.as_ref().map(|t| t.base_type.as_str());
-                            let size = field.type_sized.as_ref().and_then(|t| t.size);
+                            let base_type = field.type_node.as_ref().map(|t| match t {
+                                crate::parser::ast::TypeNode::Simple(r) => r.base_type.as_str(),
+                                crate::parser::ast::TypeNode::Generic(g) => g.base_type.as_str(),
+                            });
+                            let size = field.type_node.as_ref().and_then(|t| match t {
+                                crate::parser::ast::TypeNode::Simple(r) => r.size,
+                                crate::parser::ast::TypeNode::Generic(_) => None,
+                            });
                             let cpp_type = self.map_type(base_type, size);
                             self.emit(&format!("{} {};", cpp_type, field.name));
                         }
@@ -245,23 +304,74 @@ impl CodeGenerator {
 
                     // Fields from params
                     for p in params {
-                        if p.base_type != "type" && !p.base_type.starts_with("type<") {
-                            let cpp_t = self.map_type(Some(p.base_type.as_str()), p.size);
+                        if p.type_node
+                            .as_ref()
+                            .map(|t| match t {
+                                crate::parser::ast::TypeNode::Simple(r) => r.base_type.clone(),
+                                crate::parser::ast::TypeNode::Generic(g) => g.base_type.clone(),
+                            })
+                            .unwrap_or("unknown".to_string())
+                            != "type"
+                            && !p
+                                .type_node
+                                .as_ref()
+                                .map(|t| match t {
+                                    crate::parser::ast::TypeNode::Simple(r) => r.base_type.clone(),
+                                    crate::parser::ast::TypeNode::Generic(g) => g.base_type.clone(),
+                                })
+                                .unwrap_or("unknown".to_string())
+                                .starts_with("type<")
+                        {
+                            let cpp_t = p
+                                .type_node
+                                .as_ref()
+                                .map(|t| match t {
+                                    crate::parser::ast::TypeNode::Simple(r) => {
+                                        self.map_type(Some(r.base_type.as_str()), r.size)
+                                    }
+                                    crate::parser::ast::TypeNode::Generic(g) => {
+                                        self.map_type(Some(g.base_type.as_str()), None)
+                                    }
+                                })
+                                .unwrap_or("auto".to_string());
                             self.emit(&format!("{} {};", cpp_t, p.name));
                         }
                     }
 
                     // Constructor
                     if let Some(c) = constructor {
-                        let param_list: Vec<String> = c
-                            .params
-                            .iter()
-                            .filter(|p| p.base_type != "type" && !p.base_type.starts_with("type<"))
-                            .map(|p| {
-                                let cpp_t = self.map_type(Some(p.base_type.as_str()), p.size);
-                                format!("{} {}", cpp_t, p.name)
-                            })
-                            .collect();
+                        let param_list: Vec<String> =
+                            c.params
+                                .iter()
+                                .filter(|p| {
+                                    p.type_node
+                                        .as_ref()
+                                        .map(|t| match t {
+                                            crate::parser::ast::TypeNode::Simple(r) => {
+                                                r.base_type.clone()
+                                            }
+                                            crate::parser::ast::TypeNode::Generic(g) => {
+                                                g.base_type.clone()
+                                            }
+                                        })
+                                        .unwrap_or("unknown".to_string())
+                                        != "type"
+                                })
+                                .map(|p| {
+                                    let cpp_t =
+                                        p.type_node
+                                            .as_ref()
+                                            .map(|t| match t {
+                                                crate::parser::ast::TypeNode::Simple(r) => self
+                                                    .map_type(Some(r.base_type.as_str()), r.size),
+                                                crate::parser::ast::TypeNode::Generic(g) => {
+                                                    self.map_type(Some(g.base_type.as_str()), None)
+                                                }
+                                            })
+                                            .unwrap_or("auto".to_string());
+                                    format!("{} {}", cpp_t, p.name)
+                                })
+                                .collect();
                         self.emit(&format!("{}({}) {{", name, param_list.join(", ")));
                         self.indent_level += 1;
                         for s in &c.body {
@@ -274,8 +384,40 @@ impl CodeGenerator {
                         let mut param_list = Vec::new();
                         let mut has_constructor_params = false;
                         for p in params {
-                            if p.base_type != "type" && !p.base_type.starts_with("type<") {
-                                let cpp_t = self.map_type(Some(p.base_type.as_str()), p.size);
+                            if p.type_node
+                                .as_ref()
+                                .map(|t| match t {
+                                    crate::parser::ast::TypeNode::Simple(r) => r.base_type.clone(),
+                                    crate::parser::ast::TypeNode::Generic(g) => g.base_type.clone(),
+                                })
+                                .unwrap_or("unknown".to_string())
+                                != "type"
+                                && !p
+                                    .type_node
+                                    .as_ref()
+                                    .map(|t| match t {
+                                        crate::parser::ast::TypeNode::Simple(r) => {
+                                            r.base_type.clone()
+                                        }
+                                        crate::parser::ast::TypeNode::Generic(g) => {
+                                            g.base_type.clone()
+                                        }
+                                    })
+                                    .unwrap_or("unknown".to_string())
+                                    .starts_with("type<")
+                            {
+                                let cpp_t = p
+                                    .type_node
+                                    .as_ref()
+                                    .map(|t| match t {
+                                        crate::parser::ast::TypeNode::Simple(r) => {
+                                            self.map_type(Some(r.base_type.as_str()), r.size)
+                                        }
+                                        crate::parser::ast::TypeNode::Generic(g) => {
+                                            self.map_type(Some(g.base_type.as_str()), None)
+                                        }
+                                    })
+                                    .unwrap_or("auto".to_string());
                                 param_list.push(format!("{} _{}", cpp_t, p.name));
                                 has_constructor_params = true;
                             }
@@ -284,7 +426,31 @@ impl CodeGenerator {
                             self.emit(&format!("{}({}) {{", name, param_list.join(", ")));
                             self.indent_level += 1;
                             for p in params {
-                                if p.base_type == "type" || p.base_type.starts_with("type<") {
+                                if p.type_node
+                                    .as_ref()
+                                    .map(|t| match t {
+                                        crate::parser::ast::TypeNode::Simple(r) => {
+                                            r.base_type.clone()
+                                        }
+                                        crate::parser::ast::TypeNode::Generic(g) => {
+                                            g.base_type.clone()
+                                        }
+                                    })
+                                    .unwrap_or("unknown".to_string())
+                                    == "type"
+                                    || p.type_node
+                                        .as_ref()
+                                        .map(|t| match t {
+                                            crate::parser::ast::TypeNode::Simple(r) => {
+                                                r.base_type.clone()
+                                            }
+                                            crate::parser::ast::TypeNode::Generic(g) => {
+                                                g.base_type.clone()
+                                            }
+                                        })
+                                        .unwrap_or("unknown".to_string())
+                                        .starts_with("type<")
+                                {
                                     continue;
                                 }
                                 self.emit(&format!("this->{} = _{};", p.name, p.name));
@@ -338,7 +504,18 @@ impl CodeGenerator {
                 // Build param list
                 let mut param_list = Vec::new();
                 for p in params {
-                    let cpp_t = self.map_type(Some(p.base_type.as_str()), p.size);
+                    let cpp_t = p
+                        .type_node
+                        .as_ref()
+                        .map(|t| match t {
+                            crate::parser::ast::TypeNode::Simple(r) => {
+                                self.map_type(Some(r.base_type.as_str()), r.size)
+                            }
+                            crate::parser::ast::TypeNode::Generic(g) => {
+                                self.map_type(Some(g.base_type.as_str()), None)
+                            }
+                        })
+                        .unwrap_or("auto".to_string());
                     param_list.push(format!("{} {}", cpp_t, p.name));
                 }
 
@@ -353,7 +530,16 @@ impl CodeGenerator {
                     } else if *scope_type == crate::parser::ast::ScopeType::Custom {
                         "".to_string() // Custom scope (struct/class) doesn't have a return type like this
                     } else if let Some(rt) = return_type {
-                        self.map_type(Some(&rt.base_type), rt.size)
+                        self.map_type(
+                            Some(match rt {
+                                crate::parser::ast::TypeNode::Simple(r) => &r.base_type,
+                                crate::parser::ast::TypeNode::Generic(g) => &g.base_type,
+                            }),
+                            match rt {
+                                crate::parser::ast::TypeNode::Simple(r) => r.size,
+                                crate::parser::ast::TypeNode::Generic(_) => None,
+                            },
+                        )
                     } else if has_return_stmt || return_value.is_some() {
                         "auto".to_string()
                     } else {
@@ -425,9 +611,29 @@ impl CodeGenerator {
                     let param_list: Vec<String> = c
                         .params
                         .iter()
-                        .filter(|p| p.base_type != "type" && !p.base_type.starts_with("type<"))
+                        .filter(|p| {
+                            p.type_node
+                                .as_ref()
+                                .map(|t| match t {
+                                    crate::parser::ast::TypeNode::Simple(r) => r.base_type.clone(),
+                                    crate::parser::ast::TypeNode::Generic(g) => g.base_type.clone(),
+                                })
+                                .unwrap_or("unknown".to_string())
+                                != "type"
+                        })
                         .map(|p| {
-                            let cpp_t = self.map_type(Some(p.base_type.as_str()), p.size);
+                            let cpp_t = p
+                                .type_node
+                                .as_ref()
+                                .map(|t| match t {
+                                    crate::parser::ast::TypeNode::Simple(r) => {
+                                        self.map_type(Some(r.base_type.as_str()), r.size)
+                                    }
+                                    crate::parser::ast::TypeNode::Generic(g) => {
+                                        self.map_type(Some(g.base_type.as_str()), None)
+                                    }
+                                })
+                                .unwrap_or("auto".to_string());
                             format!("{} {}", cpp_t, p.name)
                         })
                         .collect();
@@ -470,9 +676,29 @@ impl CodeGenerator {
                     let param_list: Vec<String> = c
                         .params
                         .iter()
-                        .filter(|p| p.base_type != "type" && !p.base_type.starts_with("type<"))
+                        .filter(|p| {
+                            p.type_node
+                                .as_ref()
+                                .map(|t| match t {
+                                    crate::parser::ast::TypeNode::Simple(r) => r.base_type.clone(),
+                                    crate::parser::ast::TypeNode::Generic(g) => g.base_type.clone(),
+                                })
+                                .unwrap_or("unknown".to_string())
+                                != "type"
+                        })
                         .map(|p| {
-                            let cpp_t = self.map_type(Some(p.base_type.as_str()), p.size);
+                            let cpp_t = p
+                                .type_node
+                                .as_ref()
+                                .map(|t| match t {
+                                    crate::parser::ast::TypeNode::Simple(r) => {
+                                        self.map_type(Some(r.base_type.as_str()), r.size)
+                                    }
+                                    crate::parser::ast::TypeNode::Generic(g) => {
+                                        self.map_type(Some(g.base_type.as_str()), None)
+                                    }
+                                })
+                                .unwrap_or("auto".to_string());
                             format!("{} {}", cpp_t, p.name)
                         })
                         .collect();
@@ -555,5 +781,4 @@ impl CodeGenerator {
             }
         }
     }
-
 }

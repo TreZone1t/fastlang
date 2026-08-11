@@ -11,7 +11,7 @@ pub struct SemanticAnalyzer {
     pub in_statement_scope: bool,
     pub active_flags: Vec<String>,
     /// Declared return type of the function-like scope currently being analyzed.
-    pub active_return_type: Option<TypeRef>,
+    pub active_return_type: Option<crate::parser::ast::TypeNode>,
 }
 
 impl SemanticAnalyzer {
@@ -39,11 +39,12 @@ impl SemanticAnalyzer {
         for (name, _ret_type) in std_funcs {
             let info = SymbolInfo {
                 name: name.to_string(),
-                type_sized: Some(crate::parser::ast::TypeRef {
-                    base_type: "fn".to_string(),
-                    size: None,
-                    generics: Vec::new(),
-                }),
+                type_node: Some(crate::parser::ast::TypeNode::Simple(
+                    crate::parser::ast::TypeRef {
+                        base_type: "fn".to_string(),
+                        size: None,
+                    },
+                )),
                 visibility: if true {
                     crate::parser::ast::Visibility::Public
                 } else {
@@ -88,7 +89,7 @@ impl SemanticAnalyzer {
             Stmt::VarDecl {
                 visibility,
                 editability,
-                type_sized,
+                type_node,
                 name,
                 value,
             } => {
@@ -96,21 +97,26 @@ impl SemanticAnalyzer {
                 let expr_type = self.visit_expression(value)?;
 
                 // Get the declared type
-                let declared_type = type_sized
+                let declared_type = type_node
                     .clone()
-                    .map(|t| t.base_type)
+                    .map(|t| match t {
+                        crate::parser::ast::TypeNode::Simple(r) => r.base_type.clone(),
+                        crate::parser::ast::TypeNode::Generic(g) => g.base_type.clone(),
+                    })
                     .unwrap_or_else(|| "unknown".to_string());
 
                 // Enforce fixed sizes for array and str
-                if let Some(ref t) = type_sized {
-                    if (t.base_type.starts_with("array<")
-                        || t.base_type == "str"
-                        || t.base_type == "string")
-                        && t.size.is_none()
+                if let Some(ref t) = type_node {
+                    let (t_base, t_size) = match t {
+                        crate::parser::ast::TypeNode::Simple(r) => (&r.base_type, r.size),
+                        crate::parser::ast::TypeNode::Generic(g) => (&g.base_type, None),
+                    };
+                    if (t_base.starts_with("array<") || t_base == "str" || t_base == "string")
+                        && t_size.is_none()
                     {
                         return Err(format!(
                             "Semantic Error: Type '{}' requires a fixed size (e.g., '{}(255)')",
-                            t.base_type, t.base_type
+                            t_base, t_base
                         ));
                     }
                 }
@@ -165,7 +171,7 @@ impl SemanticAnalyzer {
 
                 let info = SymbolInfo {
                     name: name.clone(),
-                    type_sized: type_sized.clone(),
+                    type_node: type_node.clone(),
                     visibility: visibility.clone(),
                     editability: editability.clone(),
                     settings: std::collections::HashSet::new(),
@@ -208,9 +214,8 @@ impl SemanticAnalyzer {
             Stmt::ExpressionStmt(expr) => {
                 self.visit_expression(expr)?;
             }
-            Stmt::ScopeDecl {
+            Stmt::CustomDecl {
                 is_exported,
-                is_const,
                 name,
                 scope_type,
                 params,
@@ -227,23 +232,21 @@ impl SemanticAnalyzer {
                 return_value: _,
                 constructor,
                 custom_keyword: _,
-                handle_block: _,
+                handle_block,
             } => {
                 let info = SymbolInfo {
                     name: name.clone(),
-                    type_sized: Some(crate::parser::ast::TypeRef {
-                        base_type: format!("{:?}", scope_type),
-                        size: None,
-                        generics: vec![],
-                    }),
+                    type_node: Some(crate::parser::ast::TypeNode::Simple(
+                        crate::parser::ast::TypeRef {
+                            base_type: format!("{:?}", scope_type),
+                            size: None,
+                        },
+                    )),
                     visibility: if *is_exported {
                         crate::parser::ast::Visibility::Public
                     } else {
                         crate::parser::ast::Visibility::Private
-                    },
-                    editability: if *is_const {
-                        crate::parser::ast::Editability::NotEditable
-                    } else {
+                    }else {
                         crate::parser::ast::Editability::Editable
                     },
                     settings: std::collections::HashSet::new(),
@@ -295,7 +298,7 @@ impl SemanticAnalyzer {
                     for field in fields {
                         let field_info = SymbolInfo {
                             name: field.name.clone(),
-                            type_sized: field.type_sized.clone(),
+                            type_node: field.type_node.clone(),
                             visibility: field.visibility.clone(),
                             editability: field.editability.clone(),
                             settings: std::collections::HashSet::new(),
@@ -309,11 +312,7 @@ impl SemanticAnalyzer {
                 for p in params {
                     let param_info = SymbolInfo {
                         name: p.name.clone(),
-                        type_sized: Some(crate::parser::ast::TypeRef {
-                            base_type: p.base_type.clone(),
-                            size: p.size,
-                            generics: Vec::new(),
-                        }),
+                        type_node: p.type_node.clone(),
                         visibility: crate::parser::ast::Visibility::Public,
                         editability: crate::parser::ast::Editability::Editable,
                         settings: std::collections::HashSet::new(),
@@ -337,11 +336,7 @@ impl SemanticAnalyzer {
                     for param in &constructor.params {
                         let param_info = SymbolInfo {
                             name: param.name.clone(),
-                            type_sized: Some(crate::parser::ast::TypeRef {
-                                base_type: param.base_type.clone(),
-                                size: param.size,
-                                generics: Vec::new(),
-                            }),
+                            type_node: param.type_node.clone(),
                             visibility: if false {
                                 crate::parser::ast::Visibility::Public
                             } else {
@@ -368,6 +363,34 @@ impl SemanticAnalyzer {
                 }
                 self.leave_scope();
 
+                let allowed_handle_names = [
+                    "index_access",
+                    "display",
+                    "add",
+                    "sub",
+                    "mul",
+                    "div",
+                    "mod",
+                    "iterator",
+                    "next",
+                    "length",
+                ];
+                for s in handle_block {
+                    if let Stmt::ScopeDecl {
+                        scope_type: crate::parser::ast::ScopeType::Fn,
+                        name: fn_name,
+                        ..
+                    } = s
+                    {
+                        if !allowed_handle_names.contains(&fn_name.as_str()) {
+                            return Err(format!("Semantic Error: Invalid handle function name '{}'. Allowed names are: {:?}", fn_name, allowed_handle_names));
+                        }
+                    } else {
+                        return Err("Semantic Error: Only function declarations (fn) are allowed inside a handle block.".to_string());
+                    }
+                    self.visit_statement(s)?;
+                }
+
                 self.active_flags = prev_flags;
                 self.active_return_type = prev_return_type;
                 self.in_statement_scope = prev_in_stmt;
@@ -384,11 +407,12 @@ impl SemanticAnalyzer {
             } => {
                 let info = SymbolInfo {
                     name: name.clone(),
-                    type_sized: Some(crate::parser::ast::TypeRef {
-                        base_type: "blueprint".to_string(),
-                        size: None,
-                        generics: Vec::new(),
-                    }),
+                    type_node: Some(crate::parser::ast::TypeNode::Simple(
+                        crate::parser::ast::TypeRef {
+                            base_type: "blueprint".to_string(),
+                            size: None,
+                        },
+                    )),
                     visibility: if *is_exported {
                         crate::parser::ast::Visibility::Public
                     } else {
@@ -426,11 +450,7 @@ impl SemanticAnalyzer {
                     for p in &c.params {
                         let param_info = SymbolInfo {
                             name: p.name.clone(),
-                            type_sized: Some(crate::parser::ast::TypeRef {
-                                base_type: p.base_type.clone(),
-                                size: p.size,
-                                generics: Vec::new(),
-                            }),
+                            type_node: p.type_node.clone(),
                             visibility: if false {
                                 crate::parser::ast::Visibility::Public
                             } else {
@@ -467,11 +487,12 @@ impl SemanticAnalyzer {
             } => {
                 let info = SymbolInfo {
                     name: name.clone(),
-                    type_sized: Some(crate::parser::ast::TypeRef {
-                        base_type: "blueprint".to_string(),
-                        size: None,
-                        generics: Vec::new(),
-                    }),
+                    type_node: Some(crate::parser::ast::TypeNode::Simple(
+                        crate::parser::ast::TypeRef {
+                            base_type: "blueprint".to_string(),
+                            size: None,
+                        },
+                    )),
                     visibility: if *is_exported {
                         crate::parser::ast::Visibility::Public
                     } else {
@@ -503,11 +524,7 @@ impl SemanticAnalyzer {
                     for p in &c.params {
                         let param_info = SymbolInfo {
                             name: p.name.clone(),
-                            type_sized: Some(crate::parser::ast::TypeRef {
-                                base_type: p.base_type.clone(),
-                                size: p.size,
-                                generics: Vec::new(),
-                            }),
+                            type_node: p.type_node.clone(),
                             visibility: if false {
                                 crate::parser::ast::Visibility::Public
                             } else {
@@ -634,9 +651,22 @@ impl SemanticAnalyzer {
                 if let Some(expected_type) = &self.active_return_type {
                     // Allow 'list' literal to be assigned to 'array<...>'
                     let mut mismatch = actual_type != "unknown"
-                        && expected_type.base_type != "unknown"
-                        && actual_type != expected_type.base_type;
-                    if actual_type == "list" && expected_type.base_type.starts_with("array<") {
+                        && match expected_type {
+                            crate::parser::ast::TypeNode::Simple(r) => &r.base_type,
+                            crate::parser::ast::TypeNode::Generic(g) => &g.base_type,
+                        } != "unknown"
+                        && actual_type
+                            != *match expected_type {
+                                crate::parser::ast::TypeNode::Simple(r) => &r.base_type,
+                                crate::parser::ast::TypeNode::Generic(g) => &g.base_type,
+                            };
+                    if actual_type == "list"
+                        && match expected_type {
+                            crate::parser::ast::TypeNode::Simple(r) => &r.base_type,
+                            crate::parser::ast::TypeNode::Generic(g) => &g.base_type,
+                        }
+                        .starts_with("array<")
+                    {
                         mismatch = false;
                     }
 
@@ -674,11 +704,12 @@ impl SemanticAnalyzer {
                 self.enter_scope();
                 let info = SymbolInfo {
                     name: catch_param.clone(),
-                    type_sized: Some(crate::parser::ast::TypeRef {
-                        base_type: "error".to_string(),
-                        size: None,
-                        generics: Vec::new(),
-                    }),
+                    type_node: Some(crate::parser::ast::TypeNode::Simple(
+                        crate::parser::ast::TypeRef {
+                            base_type: "error".to_string(),
+                            size: None,
+                        },
+                    )),
                     visibility: if false {
                         crate::parser::ast::Visibility::Public
                     } else {
@@ -733,8 +764,11 @@ impl SemanticAnalyzer {
                 println!("DEBUG: Checking identifier '{}', len: {}", name, name.len());
                 match self.current_env.borrow().lookup(name) {
                     Some(info) => Ok(info
-                        .type_sized
-                        .map(|t| t.base_type)
+                        .type_node
+                        .map(|t| match t {
+                            crate::parser::ast::TypeNode::Simple(r) => r.base_type.clone(),
+                            crate::parser::ast::TypeNode::Generic(g) => g.base_type.clone(),
+                        })
                         .unwrap_or_else(|| "unknown".to_string())),
                     None => Err(format!(
                         "Semantic Error: Variable '{}' is not defined in this scope.",
@@ -807,8 +841,11 @@ impl SemanticAnalyzer {
                     }
                     return lookup_res
                         .map(|info| {
-                            info.type_sized
-                                .map(|t| t.base_type)
+                            info.type_node
+                                .map(|t| match t {
+                                    crate::parser::ast::TypeNode::Simple(r) => r.base_type.clone(),
+                                    crate::parser::ast::TypeNode::Generic(g) => g.base_type.clone(),
+                                })
                                 .unwrap_or_else(|| "unknown".to_string())
                         })
                         .ok_or_else(|| {
@@ -832,11 +869,13 @@ impl SemanticAnalyzer {
                 if let Expr::Identifier(name) = &**callee {
                     println!("DEBUG: Expr::Call callee is {}", name);
                     if let Some(info) = self.current_env.borrow().lookup(name) {
-                        println!("DEBUG: Found callee in env: {:?}", info.type_sized);
-                        if let Some(type_ref) = &info.type_sized {
-                            if type_ref.base_type == "type"
-                                || type_ref.base_type.starts_with("type<")
-                            {
+                        println!("DEBUG: Found callee in env: {:?}", info.type_node);
+                        if let Some(type_ref) = &info.type_node {
+                            let base = match type_ref {
+                                crate::parser::ast::TypeNode::Simple(r) => &r.base_type,
+                                crate::parser::ast::TypeNode::Generic(g) => &g.base_type,
+                            };
+                            if base == "type" || base.starts_with("type<") {
                                 // It's a type instantiation (e.g. T(size))
                                 // Don't visit arguments as normal expressions
                                 return Ok(name.clone());
@@ -903,7 +942,11 @@ impl SemanticAnalyzer {
         actual == "unknown" || expected == actual || (expected == "string" && actual == "str")
     }
 
-    fn format_type(type_ref: &TypeRef) -> String {
+    fn format_type(type_node: &crate::parser::ast::TypeNode) -> String {
+        let type_ref = match type_node {
+            crate::parser::ast::TypeNode::Simple(r) => r,
+            crate::parser::ast::TypeNode::Generic(g) => return format!("{}<...>", g.base_type),
+        };
         match type_ref.size {
             Some(size) => format!("{}({})", type_ref.base_type, size),
             None => type_ref.base_type.clone(),
@@ -925,7 +968,6 @@ mod tests {
             type_sized: Some(TypeRef {
                 base_type: "int".to_string(),
                 size: Some(32),
-                generics: Vec::new(),
             }),
             name: name.to_string(),
             value: None,
@@ -943,7 +985,6 @@ mod tests {
             return_type: Some(TypeRef {
                 base_type: "int".to_string(),
                 size: Some(32),
-                generics: Vec::new(),
             }),
             flags: Vec::new(),
             settings: Vec::new(),

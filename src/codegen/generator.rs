@@ -1,4 +1,4 @@
-use crate::parser::ast::{Expr, EitherBlock, Stmt};
+use crate::parser::ast::{EitherBlock, Expr, Stmt};
 
 pub struct CodeGenerator {
     pub(crate) output: String,
@@ -49,8 +49,16 @@ impl CodeGenerator {
                 Stmt::VarDecl { .. } => {
                     self.visit_statement(stmt);
                 }
-                Stmt::ScopeDecl { .. } => {
-                    // All top-level scopes (fn, block, etc.) become C++ functions
+                Stmt::CustomDecl { .. } => {
+                    self.visit_statement(stmt);
+                }
+                Stmt::StructDecl { .. } => {
+                    self.visit_statement(stmt);
+                }
+                Stmt::EnumDecl { .. } => {
+                    self.visit_statement(stmt);
+                }
+                Stmt::FnDecl { .. } => {
                     self.visit_statement(stmt);
                 }
                 Stmt::Use {
@@ -75,7 +83,7 @@ impl CodeGenerator {
         if wrap_in_main {
             // Find a ScopeDecl named 'main' or fall back to wrapping everything in main
             let has_main_scope = ast.iter().any(|s| {
-                if let Stmt::ScopeDecl { name, .. } = s {
+                if let Stmt::FnDecl { name, .. } = s {
                     name == "main"
                 } else {
                     false
@@ -91,7 +99,10 @@ impl CodeGenerator {
                         Stmt::ClassDecl { .. }
                         | Stmt::StructDecl { .. }
                         | Stmt::VarDecl { .. }
-                        | Stmt::ScopeDecl { .. }
+                        | Stmt::BlockDecl { .. }
+                        | Stmt::CustomDecl { .. }
+                        | Stmt::EnumDecl { .. }
+                        | Stmt::FnDecl { .. }
                         | Stmt::Use { .. } => {}
                         _ => {
                             self.visit_statement(stmt);

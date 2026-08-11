@@ -112,7 +112,8 @@ impl Scanner {
             "type" => Some(TokenKind::TypeType),
             "event" => Some(TokenKind::TypeEvent),
             "handle" => Some(TokenKind::TypeHandle),
-
+            "keywords" => Some(TokenKind::TypeKeyword),
+            "variants" => Some(TokenKind::TypeVariants),
             "public" => Some(TokenKind::TypePublic),
             "private" => Some(TokenKind::TypePrivate),
 
@@ -121,7 +122,7 @@ impl Scanner {
             // for list and string types
             "size" => Some(TokenKind::TypeSize),
             "length" => Some(TokenKind::TypeLength),
-
+            "data" => Some(TokenKind::TypeData),
             // memory / instances
             "modify" => Some(TokenKind::Modify),
             "this" => Some(TokenKind::This),
@@ -138,11 +139,17 @@ impl Scanner {
             // scope impl / unrestricted type
             "statement" => Some(TokenKind::TypeStatement),
             "custom" => Some(TokenKind::TypeCustom),
-
+            // for custom
+            "index_access" => Some(TokenKind::CustomIndexAccess),
+            "display" => Some(TokenKind::CustomDisplay),
+            "iterator" => Some(TokenKind::CustomIterator),
+            "operators" => Some(TokenKind::CustomOperators),
+            "custom_keyword" => Some(TokenKind::CustomKeyword),
+            "custom_generic" => Some(TokenKind::CustomGeneric),
+            "constructor" => Some(TokenKind::CustomConstructor),
             // context / magic types
             "name" => Some(TokenKind::TypeName),
             "void" => Some(TokenKind::TypeVoid),
-            "string" => Some(TokenKind::TypeString),
             "object" => Some(TokenKind::TypeObject),
             "block" => Some(TokenKind::TypeBlock),
 
@@ -188,7 +195,7 @@ impl Scanner {
                         break;
                     }
                 }
-                Self::check_keyword(&word).unwrap_or(TokenKind::Identifier(word))
+                Self::check_keyword(&word).unwrap_or(TokenKind::Identifier(&word))
             }
 
             '0'..='9' => {

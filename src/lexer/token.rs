@@ -1,11 +1,12 @@
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
+
 pub enum TokenKind {
     // 1. Data Types
     Int(i64),
     Float(f64),
-    String(String),
+    String(&'static str),
     Char(char),
-    Identifier(String),
+    Identifier(&'static str),
     Bool(bool),
     // 2. Keywords
     Let,      // let
@@ -61,18 +62,19 @@ pub enum TokenKind {
     // Context Types
     TypeScope,     // scope
     TypeStruct,    // struct
-    TypeString,    // string
     TypeBlock,     // block
     TypeError,     // error
-    TypeLength,    // length   //* with  list and string  and str
-    TypeSize,      // size     //* with  list and string  and str
+    TypeLength,    // length   //* with  array and str
+    TypeSize,      // size     //* with  array and str
+    TypeData,      // data     //* with  array and str
+    TypeKeyword,   // keyword  //* with  array and str and oop scopes and custom
     TypeParam,     // param    //*  with  scope and fn and custom and init
-    TypeInit,      // init for getting constructor   //* with  class and struct and custom
+    TypeInit,      // init for getting constructor   //* with  oop scopes and custom
     TypeBluePrint, // blueprint  //* with objects
     TypeGeneric,   // generic    //* for custom generics
-    TypeObject,    // object    //* with class and struct and custom
+    TypeObject,    // object    //* with oop scopes and custom
     TypeFlag,      // flag      //* with  scope and fn and looped and block and custom
-    TypeStatic,    // static    //* with  class and struct and custom
+    TypeStatic,    // static    //* with  oop scopes and custom
     TypePublic,    // public    //* with  class and struct and  custom and scope
     TypePrivate,   // private   //* with  class and struct and  custom and scope
     TypeType,      // type      //* with all type declaration
@@ -83,8 +85,17 @@ pub enum TokenKind {
     TypeCustom,    // custom
 
     TypeClass, // class
-    TypeEnum,  // enum
 
+    TypeEnum, // enum
+    TypeVariants,
+    // for custom
+    CustomIndexAccess, // index_access
+    CustomConstructor, // constructor
+    CustomKeyword,     // custom_keyword
+    CustomGeneric,     // custom_generic
+    CustomIterator,    // iterator
+    CustomDisplay,     // display
+    CustomOperators,   // operators
     // 4. Operators / punctuation
     Assign,   // =
     Arrow,    // ->
@@ -131,10 +142,104 @@ pub enum TokenKind {
     EOF,
     Default, // legacy catch-all, no longer emitted by the scanner (kept so nothing
     // downstream that matches on it breaks); prefer Error(String) instead.
-    Error(String), // lexical error with a human-readable message; scanning continues
-                   // afterward so the parser can still synchronize() and report more errors.
+    Error(&'static str), // lexical error with a human-readable message; scanning continues
+                         // afterward so the parser can still synchronize() and report more errors.
 }
-
+impl TokenKind {
+    pub fn as_str(&self) -> &str {
+        match self {
+            TokenKind::Int(_) => "int",
+            TokenKind::Float(_) => "float",
+            TokenKind::String(_) => "str",
+            TokenKind::Char(_) => "char",
+            TokenKind::Identifier(v) => v,
+            TokenKind::Bool(_) => "bool",
+            TokenKind::Let => "let",
+            TokenKind::Const => "const",
+            TokenKind::Set => "set",
+            TokenKind::Log => "log",
+            TokenKind::If => "if",
+            TokenKind::Else => "else",
+            TokenKind::Switch => "switch",
+            TokenKind::Loop => "loop",
+            TokenKind::While => "while",
+            TokenKind::Break => "break",
+            TokenKind::Continue => "continue",
+            TokenKind::Return => "return",
+            TokenKind::Fn => "fn",
+            TokenKind::Del => "del",
+            TokenKind::Extends => "extends",
+            TokenKind::Super => "super",
+            TokenKind::Use => "use",
+            TokenKind::Export => "export",
+            TokenKind::New => "new",
+            TokenKind::Copy => "copy",
+            TokenKind::Modify => "modify",
+            TokenKind::This => "this",
+            TokenKind::Global => "global",
+            TokenKind::Try => "try",
+            TokenKind::Catch => "catch",
+            TokenKind::Throw => "throw",
+            TokenKind::Enable => "enable",
+            TokenKind::Disable => "disable",
+            TokenKind::All => "all",
+            TokenKind::TypeClass => "class",
+            TokenKind::TypeEnum => "enum",
+            TokenKind::TypeError => "error",
+            TokenKind::TypeEvent => "event",
+            TokenKind::TypeHandle => "handle",
+            TokenKind::TypeName => "name",
+            TokenKind::TypeCustom => "custom",
+            TokenKind::TypePrivate => "private",
+            TokenKind::TypePublic => "public",
+            TokenKind::TypeStatic => "static",
+            TokenKind::TypeLength => "length",
+            TokenKind::TypeSize => "size",
+            TokenKind::TypeData => "data",
+            TokenKind::TypeStatement => "statement",
+            TokenKind::CustomConstructor => "constructor",
+            TokenKind::CustomKeyword => "keyword",
+            TokenKind::CustomGeneric => "generic",
+            TokenKind::CustomIterator => "iterator",
+            TokenKind::CustomDisplay => "display",
+            TokenKind::CustomOperators => "operators",
+            TokenKind::TypeParam => "param",
+            TokenKind::TypeInit => "init",
+            TokenKind::TypeBluePrint => "blueprint",
+            TokenKind::TypeFlag => "flag",
+            TokenKind::TypeType => "type",
+            TokenKind::Assign => "=",
+            TokenKind::Arrow => "->",
+            TokenKind::FatArrow => "=>",
+            TokenKind::Dot => ".",
+            TokenKind::Not => "!",
+            TokenKind::Plus => "+",
+            TokenKind::Minus => "-",
+            TokenKind::Multiply => "*",
+            TokenKind::Divide => "/",
+            TokenKind::Mod => "%",
+            TokenKind::LBrace => "{",
+            TokenKind::RBrace => "}",
+            TokenKind::LBracket => "[",
+            TokenKind::RBracket => "]",
+            TokenKind::LParen => "(",
+            TokenKind::RParen => ")",
+            TokenKind::Eq => "==",
+            TokenKind::NotEq => "!=",
+            TokenKind::Less => "<",
+            TokenKind::Greater => ">",
+            TokenKind::GreaterEq => ">=",
+            TokenKind::LessEq => "<=",
+            TokenKind::And => "and",
+            TokenKind::Or => "or",
+            TokenKind::Underscore => "_",
+            TokenKind::Comma => ",",
+            TokenKind::SemiColon => ";",
+            TokenKind::Error(v) => v,
+            _ => "error",
+        }
+    }
+}
 /// A token plus the source position where it *starts*. Position is captured
 /// before any of the token's characters are consumed, so it points at the
 /// first character of the lexeme, not the character after it.

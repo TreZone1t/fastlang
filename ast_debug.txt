@@ -1,75 +1,946 @@
 [
+    Use {
+        module_path: [
+            "std",
+        ],
+        imports: None,
+    },
     ScopeDecl {
         is_exported: false,
         is_const: false,
-        name: "main",
-        scope_type: Fn,
+        name: "Node",
+        scope_type: Custom,
         custom_keyword: None,
         params: [],
         return_type: None,
         flags: [],
         settings: [
-            Statement,
-            Return,
-            Param,
+            Private,
+            Public,
+            Custom(
+                "init",
+            ),
+            CustomKeyword,
+            CustomGeneric,
         ],
         events: [],
         handle_block: [],
-        statements: [
-            VarDecl {
-                visibility: Private,
-                editability: Editable,
-                type_sized: Some(
-                    TypeRef {
-                        base_type: "array<int(32)>",
-                        size: Some(
-                            3,
+        statements: [],
+        public_block: [
+            ScopeDecl {
+                is_exported: false,
+                is_const: false,
+                name: "set_next",
+                scope_type: Fn,
+                custom_keyword: None,
+                params: [
+                    Param {
+                        name: "node",
+                        type_node: Some(
+                            Simple(
+                                TypeRef {
+                                    base_type: "name",
+                                    size: None,
+                                },
+                            ),
                         ),
                     },
+                ],
+                return_type: Some(
+                    Simple(
+                        TypeRef {
+                            base_type: "void",
+                            size: None,
+                        },
+                    ),
                 ),
-                name: "arr1",
-                value: ArrayLiteral(
-                    [
-                        LiteralInt(
-                            1,
-                        ),
-                        LiteralInt(
-                            2,
-                        ),
-                        LiteralInt(
-                            3,
-                        ),
-                    ],
-                ),
-            },
-            VarDecl {
-                visibility: Private,
-                editability: Editable,
-                type_sized: Some(
-                    TypeRef {
-                        base_type: "int",
-                        size: Some(
-                            32,
+                flags: [
+                    IsReturn,
+                ],
+                settings: [],
+                events: [],
+                handle_block: [],
+                statements: [
+                    ReassignStmt {
+                        target: PropertyAccess {
+                            object: This,
+                            property: "next",
+                        },
+                        value: Identifier(
+                            "node",
                         ),
                     },
-                ),
-                name: "y",
-                value: LiteralInt(
-                    10,
-                ),
+                ],
+                public_block: [],
+                fields: [],
+                private_block: [],
+                generic_block: [],
+                static_block: [],
+                return_value: None,
+                constructor: None,
             },
             ScopeDecl {
                 is_exported: false,
                 is_const: false,
-                name: "test_magic",
+                name: "get_next",
                 scope_type: Fn,
                 custom_keyword: None,
                 params: [],
                 return_type: Some(
-                    TypeRef {
-                        base_type: "void",
-                        size: None,
+                    Simple(
+                        TypeRef {
+                            base_type: "name",
+                            size: None,
+                        },
+                    ),
+                ),
+                flags: [
+                    IsReturn,
+                ],
+                settings: [],
+                events: [],
+                handle_block: [],
+                statements: [
+                    ReturnStmt(
+                        PropertyAccess {
+                            object: This,
+                            property: "next",
+                        },
+                    ),
+                ],
+                public_block: [],
+                fields: [],
+                private_block: [],
+                generic_block: [],
+                static_block: [],
+                return_value: None,
+                constructor: None,
+            },
+            ScopeDecl {
+                is_exported: false,
+                is_const: false,
+                name: "set_value",
+                scope_type: Fn,
+                custom_keyword: None,
+                params: [
+                    Param {
+                        name: "value",
+                        type_node: Some(
+                            Simple(
+                                TypeRef {
+                                    base_type: "T",
+                                    size: None,
+                                },
+                            ),
+                        ),
                     },
+                ],
+                return_type: Some(
+                    Simple(
+                        TypeRef {
+                            base_type: "void",
+                            size: None,
+                        },
+                    ),
+                ),
+                flags: [
+                    IsReturn,
+                ],
+                settings: [],
+                events: [],
+                handle_block: [],
+                statements: [
+                    ReassignStmt {
+                        target: PropertyAccess {
+                            object: This,
+                            property: "value",
+                        },
+                        value: Identifier(
+                            "value",
+                        ),
+                    },
+                ],
+                public_block: [],
+                fields: [],
+                private_block: [],
+                generic_block: [],
+                static_block: [],
+                return_value: None,
+                constructor: None,
+            },
+            ScopeDecl {
+                is_exported: false,
+                is_const: false,
+                name: "get_value",
+                scope_type: Fn,
+                custom_keyword: None,
+                params: [],
+                return_type: Some(
+                    Simple(
+                        TypeRef {
+                            base_type: "T",
+                            size: None,
+                        },
+                    ),
+                ),
+                flags: [
+                    IsReturn,
+                ],
+                settings: [],
+                events: [],
+                handle_block: [],
+                statements: [
+                    ReturnStmt(
+                        PropertyAccess {
+                            object: This,
+                            property: "value",
+                        },
+                    ),
+                ],
+                public_block: [],
+                fields: [],
+                private_block: [],
+                generic_block: [],
+                static_block: [],
+                return_value: None,
+                constructor: None,
+            },
+        ],
+        fields: [],
+        private_block: [
+            VarDecl {
+                visibility: Public,
+                editability: Editable,
+                type_node: Some(
+                    Simple(
+                        TypeRef {
+                            base_type: "T",
+                            size: None,
+                        },
+                    ),
+                ),
+                name: "value",
+                value: Identifier(
+                    "__param__",
+                ),
+            },
+            VarDecl {
+                visibility: Private,
+                editability: Editable,
+                type_node: Some(
+                    Simple(
+                        TypeRef {
+                            base_type: "name",
+                            size: None,
+                        },
+                    ),
+                ),
+                name: "next",
+                value: Identifier(
+                    "null",
+                ),
+            },
+        ],
+        generic_block: [
+            VarDecl {
+                visibility: Private,
+                editability: Editable,
+                type_node: Some(
+                    Generic(
+                        TypeGeneric {
+                            base_type: "type",
+                            generics: [
+                                Simple(
+                                    TypeRef {
+                                        base_type: "size",
+                                        size: None,
+                                    },
+                                ),
+                            ],
+                        },
+                    ),
+                ),
+                name: "T",
+                value: Identifier(
+                    "__param__",
+                ),
+            },
+        ],
+        static_block: [],
+        return_value: None,
+        constructor: Some(
+            ConstructorDecl {
+                params: [
+                    Param {
+                        name: "value",
+                        type_node: Some(
+                            Simple(
+                                TypeRef {
+                                    base_type: "T",
+                                    size: None,
+                                },
+                            ),
+                        ),
+                    },
+                ],
+                expected_types: [],
+                body: [
+                    ReassignStmt {
+                        target: PropertyAccess {
+                            object: This,
+                            property: "value",
+                        },
+                        value: Identifier(
+                            "value",
+                        ),
+                    },
+                    ReassignStmt {
+                        target: PropertyAccess {
+                            object: This,
+                            property: "next",
+                        },
+                        value: Identifier(
+                            "null",
+                        ),
+                    },
+                ],
+            },
+        ),
+    },
+    ScopeDecl {
+        is_exported: true,
+        is_const: false,
+        name: "LinkedList",
+        scope_type: Custom,
+        custom_keyword: None,
+        params: [],
+        return_type: None,
+        flags: [],
+        settings: [
+            Private,
+            Public,
+            CustomIndexAccess,
+            Handle,
+            CustomGeneric,
+            CustomKeyword,
+            Length,
+        ],
+        events: [],
+        handle_block: [
+            ScopeDecl {
+                is_exported: false,
+                is_const: false,
+                name: "index_access",
+                scope_type: Fn,
+                custom_keyword: None,
+                params: [
+                    Param {
+                        name: "index",
+                        type_node: Some(
+                            Simple(
+                                TypeRef {
+                                    base_type: "int",
+                                    size: Some(
+                                        32,
+                                    ),
+                                },
+                            ),
+                        ),
+                    },
+                ],
+                return_type: Some(
+                    Generic(
+                        TypeGeneric {
+                            base_type: "Option",
+                            generics: [
+                                Simple(
+                                    TypeRef {
+                                        base_type: "T",
+                                        size: None,
+                                    },
+                                ),
+                            ],
+                        },
+                    ),
+                ),
+                flags: [
+                    IsReturn,
+                ],
+                settings: [],
+                events: [],
+                handle_block: [],
+                statements: [
+                    IfStmt {
+                        condition: BinaryOp {
+                            left: Identifier(
+                                "index",
+                            ),
+                            operator: "<",
+                            right: LiteralInt(
+                                0,
+                            ),
+                        },
+                        then_block: [
+                            ReassignStmt {
+                                target: BinaryOp {
+                                    left: BinaryOp {
+                                        left: Identifier(
+                                            "Option",
+                                        ),
+                                        operator: "<",
+                                        right: Identifier(
+                                            "T",
+                                        ),
+                                    },
+                                    operator: ">",
+                                    right: Identifier(
+                                        "res",
+                                    ),
+                                },
+                                value: Instantiate {
+                                    target: Identifier(
+                                        "Option",
+                                    ),
+                                    args: [],
+                                },
+                            },
+                            ReturnStmt(
+                                Identifier(
+                                    "res",
+                                ),
+                            ),
+                        ],
+                        else_block: None,
+                    },
+                    VarDecl {
+                        visibility: Private,
+                        editability: Editable,
+                        type_node: Some(
+                            Simple(
+                                TypeRef {
+                                    base_type: "unknown",
+                                    size: None,
+                                },
+                            ),
+                        ),
+                        name: "temp",
+                        value: PropertyAccess {
+                            object: This,
+                            property: "head",
+                        },
+                    },
+                    ForStmt {
+                        init: Some(
+                            VarDecl {
+                                visibility: Private,
+                                editability: Editable,
+                                type_node: Some(
+                                    Simple(
+                                        TypeRef {
+                                            base_type: "unknown",
+                                            size: None,
+                                        },
+                                    ),
+                                ),
+                                name: "i",
+                                value: LiteralInt(
+                                    0,
+                                ),
+                            },
+                        ),
+                        condition: Some(
+                            BinaryOp {
+                                left: Identifier(
+                                    "i",
+                                ),
+                                operator: "<",
+                                right: Identifier(
+                                    "index",
+                                ),
+                            },
+                        ),
+                        increment: Some(
+                            PostfixUpdate {
+                                left: Identifier(
+                                    "i",
+                                ),
+                                operator: "++",
+                            },
+                        ),
+                        body: Inline(
+                            [
+                                IfStmt {
+                                    condition: BinaryOp {
+                                        left: Identifier(
+                                            "temp",
+                                        ),
+                                        operator: "!=",
+                                        right: Identifier(
+                                            "null",
+                                        ),
+                                    },
+                                    then_block: [
+                                        ReassignStmt {
+                                            target: Identifier(
+                                                "temp",
+                                            ),
+                                            value: Call {
+                                                callee: PropertyAccess {
+                                                    object: Identifier(
+                                                        "temp",
+                                                    ),
+                                                    property: "get_next",
+                                                },
+                                                args: [],
+                                            },
+                                        },
+                                    ],
+                                    else_block: None,
+                                },
+                            ],
+                        ),
+                    },
+                    IfStmt {
+                        condition: BinaryOp {
+                            left: Identifier(
+                                "temp",
+                            ),
+                            operator: "!=",
+                            right: Identifier(
+                                "null",
+                            ),
+                        },
+                        then_block: [
+                            ReassignStmt {
+                                target: BinaryOp {
+                                    left: BinaryOp {
+                                        left: Identifier(
+                                            "Option",
+                                        ),
+                                        operator: "<",
+                                        right: Identifier(
+                                            "T",
+                                        ),
+                                    },
+                                    operator: ">",
+                                    right: Identifier(
+                                        "res",
+                                    ),
+                                },
+                                value: Instantiate {
+                                    target: Identifier(
+                                        "Option",
+                                    ),
+                                    args: [],
+                                },
+                            },
+                            ExpressionStmt(
+                                Call {
+                                    callee: PropertyAccess {
+                                        object: Identifier(
+                                            "res",
+                                        ),
+                                        property: "set_value",
+                                    },
+                                    args: [
+                                        Call {
+                                            callee: PropertyAccess {
+                                                object: Identifier(
+                                                    "temp",
+                                                ),
+                                                property: "get_value",
+                                            },
+                                            args: [],
+                                        },
+                                    ],
+                                },
+                            ),
+                            ReturnStmt(
+                                Identifier(
+                                    "res",
+                                ),
+                            ),
+                        ],
+                        else_block: Some(
+                            [
+                                ReassignStmt {
+                                    target: BinaryOp {
+                                        left: BinaryOp {
+                                            left: Identifier(
+                                                "Option",
+                                            ),
+                                            operator: "<",
+                                            right: Identifier(
+                                                "T",
+                                            ),
+                                        },
+                                        operator: ">",
+                                        right: Identifier(
+                                            "res",
+                                        ),
+                                    },
+                                    value: Instantiate {
+                                        target: Identifier(
+                                            "Option",
+                                        ),
+                                        args: [],
+                                    },
+                                },
+                                ReturnStmt(
+                                    Identifier(
+                                        "res",
+                                    ),
+                                ),
+                            ],
+                        ),
+                    },
+                ],
+                public_block: [],
+                fields: [],
+                private_block: [],
+                generic_block: [],
+                static_block: [],
+                return_value: None,
+                constructor: None,
+            },
+            ScopeDecl {
+                is_exported: false,
+                is_const: false,
+                name: "length",
+                scope_type: Fn,
+                custom_keyword: None,
+                params: [],
+                return_type: Some(
+                    Simple(
+                        TypeRef {
+                            base_type: "int",
+                            size: Some(
+                                32,
+                            ),
+                        },
+                    ),
+                ),
+                flags: [
+                    IsReturn,
+                ],
+                settings: [],
+                events: [],
+                handle_block: [],
+                statements: [
+                    ReturnStmt(
+                        PropertyAccess {
+                            object: This,
+                            property: "length",
+                        },
+                    ),
+                ],
+                public_block: [],
+                fields: [],
+                private_block: [],
+                generic_block: [],
+                static_block: [],
+                return_value: None,
+                constructor: None,
+            },
+        ],
+        statements: [
+            ReassignStmt {
+                target: Identifier(
+                    "keyword",
+                ),
+                value: LiteralString(
+                    "list",
+                ),
+            },
+        ],
+        public_block: [
+            ScopeDecl {
+                is_exported: false,
+                is_const: false,
+                name: "set_head",
+                scope_type: Fn,
+                custom_keyword: None,
+                params: [
+                    Param {
+                        name: "node",
+                        type_node: Some(
+                            Simple(
+                                TypeRef {
+                                    base_type: "name",
+                                    size: None,
+                                },
+                            ),
+                        ),
+                    },
+                ],
+                return_type: Some(
+                    Simple(
+                        TypeRef {
+                            base_type: "void",
+                            size: None,
+                        },
+                    ),
+                ),
+                flags: [
+                    IsReturn,
+                ],
+                settings: [],
+                events: [],
+                handle_block: [],
+                statements: [
+                    ReassignStmt {
+                        target: PropertyAccess {
+                            object: This,
+                            property: "head",
+                        },
+                        value: Identifier(
+                            "node",
+                        ),
+                    },
+                    ReassignStmt {
+                        target: PropertyAccess {
+                            object: This,
+                            property: "length",
+                        },
+                        value: BinaryOp {
+                            left: PropertyAccess {
+                                object: This,
+                                property: "length",
+                            },
+                            operator: "+",
+                            right: LiteralInt(
+                                1,
+                            ),
+                        },
+                    },
+                ],
+                public_block: [],
+                fields: [],
+                private_block: [],
+                generic_block: [],
+                static_block: [],
+                return_value: None,
+                constructor: None,
+            },
+            ScopeDecl {
+                is_exported: false,
+                is_const: false,
+                name: "get_head",
+                scope_type: Fn,
+                custom_keyword: None,
+                params: [],
+                return_type: Some(
+                    Simple(
+                        TypeRef {
+                            base_type: "name",
+                            size: None,
+                        },
+                    ),
+                ),
+                flags: [
+                    IsReturn,
+                ],
+                settings: [],
+                events: [],
+                handle_block: [],
+                statements: [
+                    ReturnStmt(
+                        PropertyAccess {
+                            object: This,
+                            property: "head",
+                        },
+                    ),
+                ],
+                public_block: [],
+                fields: [],
+                private_block: [],
+                generic_block: [],
+                static_block: [],
+                return_value: None,
+                constructor: None,
+            },
+            ScopeDecl {
+                is_exported: false,
+                is_const: false,
+                name: "push",
+                scope_type: Fn,
+                custom_keyword: None,
+                params: [
+                    Param {
+                        name: "item",
+                        type_node: Some(
+                            Simple(
+                                TypeRef {
+                                    base_type: "T",
+                                    size: None,
+                                },
+                            ),
+                        ),
+                    },
+                ],
+                return_type: Some(
+                    Simple(
+                        TypeRef {
+                            base_type: "void",
+                            size: None,
+                        },
+                    ),
+                ),
+                flags: [
+                    IsReturn,
+                ],
+                settings: [],
+                events: [],
+                handle_block: [],
+                statements: [
+                    IfStmt {
+                        condition: BinaryOp {
+                            left: PropertyAccess {
+                                object: This,
+                                property: "head",
+                            },
+                            operator: "==",
+                            right: Identifier(
+                                "null",
+                            ),
+                        },
+                        then_block: [
+                            ReassignStmt {
+                                target: PropertyAccess {
+                                    object: This,
+                                    property: "head",
+                                },
+                                value: Instantiate {
+                                    target: Identifier(
+                                        "Node",
+                                    ),
+                                    args: [
+                                        Identifier(
+                                            "item",
+                                        ),
+                                    ],
+                                },
+                            },
+                            ReassignStmt {
+                                target: PropertyAccess {
+                                    object: This,
+                                    property: "length",
+                                },
+                                value: BinaryOp {
+                                    left: PropertyAccess {
+                                        object: This,
+                                        property: "length",
+                                    },
+                                    operator: "+",
+                                    right: LiteralInt(
+                                        1,
+                                    ),
+                                },
+                            },
+                        ],
+                        else_block: Some(
+                            [
+                                ReassignStmt {
+                                    target: BinaryOp {
+                                        left: BinaryOp {
+                                            left: Identifier(
+                                                "Node",
+                                            ),
+                                            operator: "<",
+                                            right: Identifier(
+                                                "T",
+                                            ),
+                                        },
+                                        operator: ">",
+                                        right: Identifier(
+                                            "new_node",
+                                        ),
+                                    },
+                                    value: Instantiate {
+                                        target: Identifier(
+                                            "Node",
+                                        ),
+                                        args: [
+                                            Identifier(
+                                                "item",
+                                            ),
+                                        ],
+                                    },
+                                },
+                                ExpressionStmt(
+                                    Call {
+                                        callee: PropertyAccess {
+                                            object: Identifier(
+                                                "new_node",
+                                            ),
+                                            property: "set_next",
+                                        },
+                                        args: [
+                                            PropertyAccess {
+                                                object: This,
+                                                property: "head",
+                                            },
+                                        ],
+                                    },
+                                ),
+                                ReassignStmt {
+                                    target: PropertyAccess {
+                                        object: This,
+                                        property: "head",
+                                    },
+                                    value: Identifier(
+                                        "new_node",
+                                    ),
+                                },
+                                ReassignStmt {
+                                    target: PropertyAccess {
+                                        object: This,
+                                        property: "length",
+                                    },
+                                    value: BinaryOp {
+                                        left: PropertyAccess {
+                                            object: This,
+                                            property: "length",
+                                        },
+                                        operator: "+",
+                                        right: LiteralInt(
+                                            1,
+                                        ),
+                                    },
+                                },
+                            ],
+                        ),
+                    },
+                ],
+                public_block: [],
+                fields: [],
+                private_block: [],
+                generic_block: [],
+                static_block: [],
+                return_value: None,
+                constructor: None,
+            },
+            ScopeDecl {
+                is_exported: false,
+                is_const: false,
+                name: "pop",
+                scope_type: Fn,
+                custom_keyword: None,
+                params: [],
+                return_type: Some(
+                    Generic(
+                        TypeGeneric {
+                            base_type: "Option",
+                            generics: [
+                                Simple(
+                                    TypeRef {
+                                        base_type: "T",
+                                        size: None,
+                                    },
+                                ),
+                            ],
+                        },
+                    ),
                 ),
                 flags: [
                     IsReturn,
@@ -81,160 +952,393 @@
                     VarDecl {
                         visibility: Private,
                         editability: Editable,
-                        type_sized: Some(
-                            TypeRef {
-                                base_type: "name",
-                                size: None,
-                            },
-                        ),
-                        name: "x",
-                        value: Modify {
-                            target: Identifier(
-                                "y",
-                            ),
-                        },
-                    },
-                    ExpressionStmt(
-                        Call {
-                            callee: Identifier(
-                                "log",
-                            ),
-                            args: [
-                                UnaryOp {
-                                    operator: "&",
-                                    operand: Identifier(
-                                        "x",
-                                    ),
+                        type_node: Some(
+                            Simple(
+                                TypeRef {
+                                    base_type: "unknown",
+                                    size: None,
                                 },
-                            ],
-                        },
-                    ),
-                    VarDecl {
-                        visibility: Private,
-                        editability: Editable,
-                        type_sized: Some(
-                            TypeRef {
-                                base_type: "array<int(32)>",
-                                size: Some(
-                                    3,
-                                ),
-                            },
-                        ),
-                        name: "arr2",
-                        value: Copy {
-                            target: Identifier(
-                                "arr1",
                             ),
+                        ),
+                        name: "temp",
+                        value: PropertyAccess {
+                            object: This,
+                            property: "head",
                         },
                     },
-                    StructDecl {
-                        is_exported: false,
-                        name: "Node",
-                        public_block: [
+                    IfStmt {
+                        condition: BinaryOp {
+                            left: Identifier(
+                                "temp",
+                            ),
+                            operator: "!=",
+                            right: Identifier(
+                                "null",
+                            ),
+                        },
+                        then_block: [
+                            ReassignStmt {
+                                target: PropertyAccess {
+                                    object: This,
+                                    property: "head",
+                                },
+                                value: Call {
+                                    callee: PropertyAccess {
+                                        object: Identifier(
+                                            "temp",
+                                        ),
+                                        property: "get_next",
+                                    },
+                                    args: [],
+                                },
+                            },
                             VarDecl {
                                 visibility: Private,
                                 editability: Editable,
-                                type_sized: Some(
-                                    TypeRef {
-                                        base_type: "int",
-                                        size: Some(
-                                            32,
-                                        ),
-                                    },
-                                ),
-                                name: "value",
-                                value: Identifier(
-                                    "__param__",
-                                ),
-                            },
-                        ],
-                        private_block: [],
-                        static_block: [],
-                        constructor: Some(
-                            ConstructorDecl {
-                                params: [
-                                    Param {
-                                        name: "value",
-                                        base_type: "int",
-                                        size: Some(
-                                            32,
-                                        ),
-                                    },
-                                ],
-                                expected_types: [],
-                                body: [
-                                    ReassignStmt {
-                                        target: PropertyAccess {
-                                            object: This,
-                                            property: "value",
+                                type_node: Some(
+                                    Simple(
+                                        TypeRef {
+                                            base_type: "unknown",
+                                            size: None,
                                         },
-                                        value: Identifier(
-                                            "value",
-                                        ),
-                                    },
-                                ],
-                            },
-                        ),
-                    },
-                    VarDecl {
-                        visibility: Private,
-                        editability: Editable,
-                        type_sized: Some(
-                            TypeRef {
-                                base_type: "int",
-                                size: Some(
-                                    32,
+                                    ),
                                 ),
+                                name: "val",
+                                value: Call {
+                                    callee: PropertyAccess {
+                                        object: Identifier(
+                                            "temp",
+                                        ),
+                                        property: "get_value",
+                                    },
+                                    args: [],
+                                },
                             },
-                        ),
-                        name: "temp",
-                        value: LiteralInt(
-                            10,
-                        ),
-                    },
-                    VarDecl {
-                        visibility: Public,
-                        editability: Editable,
-                        type_sized: Some(
-                            TypeRef {
-                                base_type: "Node",
-                                size: None,
-                            },
-                        ),
-                        name: "n",
-                        value: Instantiate {
-                            target: Identifier(
-                                "Node",
-                            ),
-                            args: [
+                            DelStmt(
                                 Identifier(
                                     "temp",
                                 ),
+                            ),
+                            ReassignStmt {
+                                target: PropertyAccess {
+                                    object: This,
+                                    property: "length",
+                                },
+                                value: BinaryOp {
+                                    left: PropertyAccess {
+                                        object: This,
+                                        property: "length",
+                                    },
+                                    operator: "-",
+                                    right: LiteralInt(
+                                        1,
+                                    ),
+                                },
+                            },
+                            ReassignStmt {
+                                target: BinaryOp {
+                                    left: BinaryOp {
+                                        left: Identifier(
+                                            "Option",
+                                        ),
+                                        operator: "<",
+                                        right: Identifier(
+                                            "T",
+                                        ),
+                                    },
+                                    operator: ">",
+                                    right: Identifier(
+                                        "result",
+                                    ),
+                                },
+                                value: Instantiate {
+                                    target: Identifier(
+                                        "Option",
+                                    ),
+                                    args: [],
+                                },
+                            },
+                            ExpressionStmt(
+                                Call {
+                                    callee: PropertyAccess {
+                                        object: Identifier(
+                                            "result",
+                                        ),
+                                        property: "set_value",
+                                    },
+                                    args: [
+                                        Identifier(
+                                            "val",
+                                        ),
+                                    ],
+                                },
+                            ),
+                            ReturnStmt(
+                                Identifier(
+                                    "result",
+                                ),
+                            ),
+                        ],
+                        else_block: Some(
+                            [
+                                ReassignStmt {
+                                    target: BinaryOp {
+                                        left: BinaryOp {
+                                            left: Identifier(
+                                                "Option",
+                                            ),
+                                            operator: "<",
+                                            right: Identifier(
+                                                "T",
+                                            ),
+                                        },
+                                        operator: ">",
+                                        right: Identifier(
+                                            "result",
+                                        ),
+                                    },
+                                    value: Instantiate {
+                                        target: Identifier(
+                                            "Option",
+                                        ),
+                                        args: [],
+                                    },
+                                },
+                                ReturnStmt(
+                                    Identifier(
+                                        "result",
+                                    ),
+                                ),
                             ],
-                        },
+                        ),
                     },
                 ],
                 public_block: [],
                 fields: [],
                 private_block: [],
+                generic_block: [],
                 static_block: [],
                 return_value: None,
                 constructor: None,
             },
-            ExpressionStmt(
-                Call {
-                    callee: Identifier(
-                        "test_magic",
+            ScopeDecl {
+                is_exported: false,
+                is_const: false,
+                name: "extend_from_array",
+                scope_type: Fn,
+                custom_keyword: None,
+                params: [
+                    Param {
+                        name: "arr",
+                        type_node: Some(
+                            Generic(
+                                TypeGeneric {
+                                    base_type: "array",
+                                    generics: [
+                                        Simple(
+                                            TypeRef {
+                                                base_type: "T",
+                                                size: None,
+                                            },
+                                        ),
+                                    ],
+                                },
+                            ),
+                        ),
+                    },
+                ],
+                return_type: Some(
+                    Simple(
+                        TypeRef {
+                            base_type: "void",
+                            size: None,
+                        },
                     ),
-                    args: [],
-                },
-            ),
+                ),
+                flags: [
+                    IsReturn,
+                ],
+                settings: [],
+                events: [],
+                handle_block: [],
+                statements: [
+                    ForStmt {
+                        init: Some(
+                            VarDecl {
+                                visibility: Private,
+                                editability: Editable,
+                                type_node: Some(
+                                    Simple(
+                                        TypeRef {
+                                            base_type: "unknown",
+                                            size: None,
+                                        },
+                                    ),
+                                ),
+                                name: "i",
+                                value: LiteralInt(
+                                    0,
+                                ),
+                            },
+                        ),
+                        condition: Some(
+                            BinaryOp {
+                                left: Identifier(
+                                    "i",
+                                ),
+                                operator: "<",
+                                right: PropertyAccess {
+                                    object: Identifier(
+                                        "arr",
+                                    ),
+                                    property: "size",
+                                },
+                            },
+                        ),
+                        increment: Some(
+                            PostfixUpdate {
+                                left: Identifier(
+                                    "i",
+                                ),
+                                operator: "++",
+                            },
+                        ),
+                        body: Inline(
+                            [
+                                ExpressionStmt(
+                                    Call {
+                                        callee: PropertyAccess {
+                                            object: This,
+                                            property: "push",
+                                        },
+                                        args: [
+                                            IndexAccess {
+                                                object: Identifier(
+                                                    "arr",
+                                                ),
+                                                index: Identifier(
+                                                    "i",
+                                                ),
+                                            },
+                                        ],
+                                    },
+                                ),
+                            ],
+                        ),
+                    },
+                ],
+                public_block: [],
+                fields: [],
+                private_block: [],
+                generic_block: [],
+                static_block: [],
+                return_value: None,
+                constructor: None,
+            },
         ],
-        public_block: [],
         fields: [],
-        private_block: [],
+        private_block: [
+            VarDecl {
+                visibility: Private,
+                editability: Editable,
+                type_node: Some(
+                    Simple(
+                        TypeRef {
+                            base_type: "name",
+                            size: None,
+                        },
+                    ),
+                ),
+                name: "head",
+                value: Identifier(
+                    "null",
+                ),
+            },
+            VarDecl {
+                visibility: Private,
+                editability: Editable,
+                type_node: Some(
+                    Simple(
+                        TypeRef {
+                            base_type: "int",
+                            size: Some(
+                                32,
+                            ),
+                        },
+                    ),
+                ),
+                name: "length",
+                value: LiteralInt(
+                    0,
+                ),
+            },
+        ],
+        generic_block: [
+            VarDecl {
+                visibility: Private,
+                editability: Editable,
+                type_node: Some(
+                    Generic(
+                        TypeGeneric {
+                            base_type: "type",
+                            generics: [
+                                Simple(
+                                    TypeRef {
+                                        base_type: "size",
+                                        size: None,
+                                    },
+                                ),
+                            ],
+                        },
+                    ),
+                ),
+                name: "T",
+                value: Identifier(
+                    "__param__",
+                ),
+            },
+        ],
         static_block: [],
         return_value: None,
-        constructor: None,
+        constructor: Some(
+            ConstructorDecl {
+                params: [
+                    Param {
+                        name: "arr",
+                        type_node: Some(
+                            Generic(
+                                TypeGeneric {
+                                    base_type: "array",
+                                    generics: [
+                                        Simple(
+                                            TypeRef {
+                                                base_type: "T",
+                                                size: None,
+                                            },
+                                        ),
+                                    ],
+                                },
+                            ),
+                        ),
+                    },
+                ],
+                expected_types: [],
+                body: [
+                    ExpressionStmt(
+                        Call {
+                            callee: PropertyAccess {
+                                object: This,
+                                property: "extend_from_array",
+                            },
+                            args: [
+                                Identifier(
+                                    "arr",
+                                ),
+                            ],
+                        },
+                    ),
+                ],
+            },
+        ),
     },
 ]

@@ -28,10 +28,10 @@ impl Parser {
             | TokenKind::TypeCustom
             | TokenKind::TypeStruct
             | TokenKind::TypeVoid
-            | TokenKind::TypeString
+            | TokenKind::TypeStr
             | TokenKind::TypeBlock
             | TokenKind::TypeObject => true,
-                        TokenKind::Identifier(n) => self.custom_keywords.contains(n),
+            TokenKind::Identifier(n) => self.custom_keywords.contains(n),
             _ => false,
         }
     }
@@ -43,7 +43,7 @@ impl Parser {
     ///                        type, blueprint, init, static, public, private,
     ///                        event, handle, custom
     /// يرجع None لو الـ token الحالي مش type أصلاً.
-    pub(crate) fn parse_type(&mut self) -> Result<(String, Option<i64>), String> {
+    pub(crate) fn parse_type(&mut self) -> Result<crate::parser::ast::TypeNode, String> {
         let result = match &self.peek().kind {
             TokenKind::TypeInt => "int".to_string(),
             TokenKind::TypeFloat => "float".to_string(),
@@ -68,7 +68,7 @@ impl Parser {
             TokenKind::TypeCustom => "custom".to_string(),
             TokenKind::TypeStruct => "struct".to_string(),
             TokenKind::TypeVoid => "void".to_string(),
-            TokenKind::TypeString => "string".to_string(),
+            TokenKind::TypeStr => "str".to_string(),
             TokenKind::TypeBlock => "block".to_string(),
             TokenKind::TypeObject => "object".to_string(),
             TokenKind::Identifier(n) => n.clone(),
@@ -76,9 +76,7 @@ impl Parser {
         };
         self.advance();
 
-        // Enforce sizes for int, float, str, string, and array
         let mut size = None;
-        let mut final_result = result.clone();
 
         if result == "int" || result == "float" || result == "str" || result == "string" {
             if self.peek().kind == TokenKind::LParen {
@@ -113,16 +111,22 @@ impl Parser {
                     ));
                 }
             }
-        } else if result == "array" {
-            if self.peek().kind == TokenKind::LParen {
+            return Ok(crate::parser::ast::TypeNode::Simple(
+                crate::parser::ast::TypeRef {
+                    base_type: result,
+                    size,
+                },
+            ));
+        }
+
+        let mut generics = Vec::new();
+
+        if result == "array" {
+            if self.peek().kind == TokenKind::LParen || self.peek().kind == TokenKind::Less {
+                let is_paren = self.peek().kind == TokenKind::LParen;
                 self.advance();
-                let (inner_type, inner_size) = self.parse_type()?;
-                let formatted_inner = if let Some(s) = inner_size {
-                    format!("{}({})", inner_type, s)
-                } else {
-                    inner_type
-                };
-                final_result = format!("array<{}>", formatted_inner);
+                let inner_type = self.parse_type()?;
+                generics.push(inner_type);
 
                 if self.peek().kind == TokenKind::Comma {
                     self.advance();
@@ -132,40 +136,46 @@ impl Parser {
                     } else if self.peek().kind == TokenKind::TypeSize
                         || matches!(self.peek().kind, TokenKind::Identifier(_))
                     {
-                        size = Some(-1); // Dynamic size
+                        size = Some(-1);
                         self.advance();
                     } else {
                         return Err("Syntax Error: Expected integer size for array".to_string());
                     }
                 }
-                self.consume(
-                    TokenKind::RParen,
-                    "Expected ')' after array inner type or size",
-                )?;
+                if is_paren {
+                    self.consume(
+                        TokenKind::RParen,
+                        "Expected ')' after array inner type or size",
+                    )?;
+                } else {
+                    self.consume(
+                        TokenKind::Greater,
+                        "Expected '>' after array inner type or size",
+                    )?;
+                }
             } else {
-                return Err("Syntax Error: Type 'array' requires an inner type, e.g., array(int(32)) or array(int(32), 10)".to_string());
+                return Err("Syntax Error: Type 'array' requires an inner type, e.g., array(int(32)) or array<int(32)>".to_string());
             }
-        } else if self.peek().kind == TokenKind::LParen {
-            // Optional size or generic type argument
+        } else if self.peek().kind == TokenKind::LParen || self.peek().kind == TokenKind::Less {
+            let is_paren = self.peek().kind == TokenKind::LParen;
             self.advance();
+
+            // Try parsing it as an inner type or size
             if let TokenKind::Int(s) = self.peek().kind {
                 size = Some(s);
                 self.advance();
-                self.consume(TokenKind::RParen, "Expected ')' after type size")?;
+                if is_paren {
+                    self.consume(TokenKind::RParen, "Expected ')' after type size")?;
+                } else {
+                    self.consume(TokenKind::Greater, "Expected '>' after type size")?;
+                }
             } else {
-                // Try parsing it as an inner type
                 let old_pos = self.current;
-                if let Ok((inner_type, inner_size)) = self.parse_type() {
-                    if self.peek().kind == TokenKind::RParen {
-                        self.advance(); // consume ')'
-                        let formatted_inner = if let Some(s) = inner_size {
-                            format!("{}({})", inner_type, s)
-                        } else {
-                            inner_type
-                        };
-                        final_result = format!("{}<{}>", final_result, formatted_inner);
-                    } else if self.peek().kind == TokenKind::Comma {
-                        self.advance(); // consume ','
+                if let Ok(inner_type) = self.parse_type() {
+                    generics.push(inner_type);
+
+                    while self.peek().kind == TokenKind::Comma {
+                        self.advance();
                         if let TokenKind::Int(s) = self.peek().kind {
                             size = Some(s);
                             self.advance();
@@ -175,25 +185,24 @@ impl Parser {
                             size = Some(-1);
                             self.advance();
                         } else {
-                            return Err("Syntax Error: Expected integer size for array".to_string());
+                            if let Ok(another_inner) = self.parse_type() {
+                                generics.push(another_inner);
+                            } else {
+                                return Err(
+                                    "Syntax Error: Expected integer size or type for generic"
+                                        .to_string(),
+                                );
+                            }
                         }
+                    }
+
+                    if is_paren {
                         self.consume(TokenKind::RParen, "Expected ')' after generic type or size")?;
-                        let formatted_inner = if let Some(s) = inner_size {
-                            format!("{}({})", inner_type, s)
-                        } else {
-                            inner_type
-                        };
-                        final_result = format!("{}<{}>", final_result, formatted_inner);
                     } else {
-                        // Not a valid generic syntax, fallback to dynamic size marker
-                        self.current = old_pos;
-                        if self.peek().kind == TokenKind::TypeSize
-                            || matches!(self.peek().kind, TokenKind::Identifier(_))
-                        {
-                            size = Some(-1);
-                            self.advance();
-                        }
-                        self.consume(TokenKind::RParen, "Expected ')' after type size")?;
+                        self.consume(
+                            TokenKind::Greater,
+                            "Expected '>' after generic type or size",
+                        )?;
                     }
                 } else {
                     self.current = old_pos;
@@ -203,37 +212,31 @@ impl Parser {
                         size = Some(-1);
                         self.advance();
                     }
-                    self.consume(TokenKind::RParen, "Expected ')' after type size")?;
+                    if is_paren {
+                        self.consume(TokenKind::RParen, "Expected ')' after type size")?;
+                    } else {
+                        self.consume(TokenKind::Greater, "Expected '>' after type size")?;
+                    }
                 }
             }
-        } else if self.peek().kind == TokenKind::Less {
-            // Generics: Option<name>
-            self.advance(); // consume '<'
-            let (inner_type, _) = self.parse_type()?;
-            self.consume(TokenKind::Greater, "Expected '>' after generic type")?;
-            final_result = format!("{}<{}>", final_result, inner_type);
         }
 
-        Ok((final_result, size))
+        if !generics.is_empty() {
+            return Ok(crate::parser::ast::TypeNode::Generic(
+                crate::parser::ast::TypeGeneric {
+                    base_type: result,
+                    generics,
+                },
+            ));
+        } else {
+            return Ok(crate::parser::ast::TypeNode::Simple(
+                crate::parser::ast::TypeRef {
+                    base_type: result,
+                    size,
+                },
+            ));
+        }
     }
-
-    // ====================================================
-    // Expression Parser — Pratt / Top-Down Operator Precedence
-    // ====================================================
-    //
-    // فكرة Pratt: كل operator ليه "binding power" (قوة ربط).
-    // parse_expr(min_bp) بتاكل operators طالما قوتها أكبر من min_bp.
-    // ده بيحل مشكلة الـ precedence بشكل طبيعي.
-    //
-    // المستويات:
-    //   or/||       -> 1
-    //   and/&&      -> 2
-    //   == / !=     -> 3
-    //   < / >       -> 4
-    //   + / -       -> 5
-    //   * / / / %   -> 6
-    //   Unary ! -   -> prefix, right-associative (bp = 7)
-    //   . () []     -> postfix, left-associative (bp = 8)
 
     pub(crate) fn parse_expression(&mut self) -> Result<Expr, String> {
         self.parse_expr(0)
@@ -378,7 +381,7 @@ impl Parser {
             // --- Instantiate: new Target(args) ---
             TokenKind::New => {
                 self.advance();
-                let target = self.parse_expr(9)?; 
+                let target = self.parse_expr(9)?;
                 let mut args = Vec::new();
                 if self.peek().kind == TokenKind::LParen {
                     self.advance();
@@ -399,7 +402,6 @@ impl Parser {
                     args,
                 })
             }
-
 
             // --- Copy: copy Target ---
             TokenKind::Copy => {
