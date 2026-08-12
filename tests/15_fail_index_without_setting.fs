@@ -1,8 +1,7 @@
 scope NoIndex -> {
-    enable [keyword];
-    type -> custom("NoIndex");
-    // index_access not enabled
-    add int(32) val;
+    type -> custom;
+    enable [custom_keyword];
+    keyword -> "NoIndex";
 }
 fn main() -> int(32) {
     let NoIndex ni;  // error:  you should enable keyword to NoIndex to use it as type and add a string in custom()

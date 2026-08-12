@@ -1,38 +1,33 @@
-use crate::lexer::token::{Token, TokenKind};
+use crate::lexer::token::TokenKind;
 use crate::parser::ast::*;
 use crate::parser::parser::Parser;
-
+use crate::parser::scope::{builtins, class, custom, enum_decl, struct_decl};
 impl Parser {
     pub(crate) fn is_type_token(&self, kind: &TokenKind) -> bool {
         match kind {
+            // Primitives — always valid as types
             TokenKind::TypeInt
             | TokenKind::TypeFloat
-            | TokenKind::TypeStr
-            | TokenKind::TypeArray
             | TokenKind::TypeBool
             | TokenKind::TypeChar
             | TokenKind::TypeName
-            | TokenKind::TypeLength
-            | TokenKind::TypeSize
-            | TokenKind::TypeScope
-            | TokenKind::TypeFlag
-            | TokenKind::TypeParam
-            | TokenKind::TypeType
-            | TokenKind::TypeBluePrint
-            | TokenKind::TypeInit
-            | TokenKind::TypeStatic
-            | TokenKind::TypePublic
-            | TokenKind::TypePrivate
-            | TokenKind::TypeEvent
-            | TokenKind::TypeHandle
-            | TokenKind::TypeCustom
-            | TokenKind::TypeStruct
-            | TokenKind::TypeVoid
-            | TokenKind::TypeStr
-            | TokenKind::TypeBlock
-            | TokenKind::TypeObject => true,
-            TokenKind::Identifier(n) => self.custom_keywords.contains(&n.to_string()),
-            _ => false,
+            | TokenKind::TypeVoid => true,
+
+            // Built-in scope-backed types — always valid (array/str are first-class type keywords)
+            TokenKind::TypeArray | TokenKind::TypeStr => true,
+
+            // `scope` is the general type for any scope value
+            // (only custom and block scopes can be passed this way)
+            TokenKind::TypeScope => true,
+
+            // Custom keywords registered dynamically via `keyword -> "...";` in scope bodies
+            // OR any registered built-in type token (for future use when std is fully external)
+            t => {
+                self.registered_builtin_type_tokens
+                    .iter()
+                    .any(|r| core::mem::discriminant(r) == core::mem::discriminant(t))
+                    || matches!(t, TokenKind::Identifier(n) if self.custom_keywords.contains(n))
+            }
         }
     }
 
@@ -43,40 +38,61 @@ impl Parser {
     ///                        type, blueprint, init, static, public, private,
     ///                        event, handle, custom
     /// يرجع None لو الـ token الحالي مش type أصلاً.
+    fn parse_generic_list(
+        &mut self,
+        generics: &mut Vec<crate::parser::ast::TypeNode>,
+        size: &mut Option<i64>,
+        is_array: bool,
+    ) -> Result<(), String> {
+        if self.peek().kind != TokenKind::Greater {
+            generics.push(self.parse_type()?);
+
+            while self.peek().kind == TokenKind::Comma {
+                self.advance();
+                if is_array && generics.len() == 1 {
+                    if let TokenKind::Int(s) = self.peek().kind {
+                        *size = Some(s);
+                        self.advance();
+                        break;
+                    }
+                }
+                generics.push(self.parse_type()?);
+            }
+        }
+        self.consume(TokenKind::Greater, "Expected '>' after type parameters")?;
+        Ok(())
+    }
+
     pub(crate) fn parse_type(&mut self) -> Result<crate::parser::ast::TypeNode, String> {
         let result = match &self.peek().kind {
+            // Primitives
             TokenKind::TypeInt => "int".to_string(),
             TokenKind::TypeFloat => "float".to_string(),
-            TokenKind::TypeStr => "str".to_string(),
-            TokenKind::TypeArray => "array".to_string(),
             TokenKind::TypeBool => "bool".to_string(),
             TokenKind::TypeChar => "char".to_string(),
+            // Magic value types
             TokenKind::TypeName => "name".to_string(),
-            TokenKind::TypeLength => "length".to_string(),
-            TokenKind::TypeSize => "size".to_string(),
-            TokenKind::TypeScope => "scope".to_string(),
-            TokenKind::TypeFlag => "flag".to_string(),
-            TokenKind::TypeParam => "param".to_string(),
-            TokenKind::TypeType => "type".to_string(),
-            TokenKind::TypeBluePrint => "blueprint".to_string(),
-            TokenKind::TypeInit => "init".to_string(),
-            TokenKind::TypeStatic => "static".to_string(),
-            TokenKind::TypePublic => "public".to_string(),
-            TokenKind::TypePrivate => "private".to_string(),
-            TokenKind::TypeEvent => "event".to_string(),
-            TokenKind::TypeHandle => "handle".to_string(),
-            TokenKind::TypeCustom => "custom".to_string(),
-            TokenKind::TypeStruct => "struct".to_string(),
             TokenKind::TypeVoid => "void".to_string(),
+            // `scope` as a type — represents any scope value
+            TokenKind::TypeScope => "scope".to_string(),
+            // Built-in scope-backed types: always valid as first-class type keywords
+            TokenKind::TypeArray => "array".to_string(),
             TokenKind::TypeStr => "str".to_string(),
-            TokenKind::TypeBlock => "block".to_string(),
-            TokenKind::TypeObject => "object".to_string(),
+            // Custom scope keywords — registered dynamically via `keyword -> "...";`
+            TokenKind::Identifier(n) if self.custom_keywords.contains(n) => n.to_string(),
+            // User-defined type names (struct/class instances) via bare Identifier
             TokenKind::Identifier(n) => n.to_string(),
-            _ => return Err("Expected a type".to_string()),
+            _ => {
+                return Err(format!(
+                    "Syntax Error: Expected a type, found '{}'.",
+                    self.peek().kind.as_str()
+                ))
+            }
         };
         self.advance();
 
         let mut size = None;
+        let mut generics = Vec::new();
 
         if result == "int" || result == "float" || result == "str" || result == "string" {
             if self.peek().kind == TokenKind::LParen {
@@ -103,14 +119,13 @@ impl Parser {
                     ));
                 }
                 self.consume(TokenKind::RParen, "Expected ')' after type size")?;
-            } else {
-                if result == "int" || result == "float" {
-                    return Err(format!(
-                        "Syntax Error: Type '{}' requires a size, e.g., {}(32)",
-                        result, result
-                    ));
-                }
+            } else if result == "int" || result == "float" {
+                return Err(format!(
+                    "Syntax Error: Type '{}' requires a size, e.g., {}(32)",
+                    result, result
+                ));
             }
+
             return Ok(crate::parser::ast::TypeNode::Simple(
                 crate::parser::ast::TypeRef {
                     base_type: result,
@@ -118,107 +133,9 @@ impl Parser {
                 },
             ));
         }
-
-        let mut generics = Vec::new();
-
-        if result == "array" {
-            if self.peek().kind == TokenKind::LParen || self.peek().kind == TokenKind::Less {
-                let is_paren = self.peek().kind == TokenKind::LParen;
-                self.advance();
-                let inner_type = self.parse_type()?;
-                generics.push(inner_type);
-
-                if self.peek().kind == TokenKind::Comma {
-                    self.advance();
-                    if let TokenKind::Int(s) = self.peek().kind {
-                        size = Some(s);
-                        self.advance();
-                    } else if self.peek().kind == TokenKind::TypeSize
-                        || matches!(self.peek().kind, TokenKind::Identifier(_))
-                    {
-                        size = Some(-1);
-                        self.advance();
-                    } else {
-                        return Err("Syntax Error: Expected integer size for array".to_string());
-                    }
-                }
-                if is_paren {
-                    self.consume(
-                        TokenKind::RParen,
-                        "Expected ')' after array inner type or size",
-                    )?;
-                } else {
-                    self.consume(
-                        TokenKind::Greater,
-                        "Expected '>' after array inner type or size",
-                    )?;
-                }
-            } else {
-                return Err("Syntax Error: Type 'array' requires an inner type, e.g., array(int(32)) or array<int(32)>".to_string());
-            }
-        } else if self.peek().kind == TokenKind::LParen || self.peek().kind == TokenKind::Less {
-            let is_paren = self.peek().kind == TokenKind::LParen;
+        if self.peek().kind == TokenKind::Less {
             self.advance();
-
-            // Try parsing it as an inner type or size
-            if let TokenKind::Int(s) = self.peek().kind {
-                size = Some(s);
-                self.advance();
-                if is_paren {
-                    self.consume(TokenKind::RParen, "Expected ')' after type size")?;
-                } else {
-                    self.consume(TokenKind::Greater, "Expected '>' after type size")?;
-                }
-            } else {
-                let old_pos = self.current;
-                if let Ok(inner_type) = self.parse_type() {
-                    generics.push(inner_type);
-
-                    while self.peek().kind == TokenKind::Comma {
-                        self.advance();
-                        if let TokenKind::Int(s) = self.peek().kind {
-                            size = Some(s);
-                            self.advance();
-                        } else if self.peek().kind == TokenKind::TypeSize
-                            || matches!(self.peek().kind, TokenKind::Identifier(_))
-                        {
-                            size = Some(-1);
-                            self.advance();
-                        } else {
-                            if let Ok(another_inner) = self.parse_type() {
-                                generics.push(another_inner);
-                            } else {
-                                return Err(
-                                    "Syntax Error: Expected integer size or type for generic"
-                                        .to_string(),
-                                );
-                            }
-                        }
-                    }
-
-                    if is_paren {
-                        self.consume(TokenKind::RParen, "Expected ')' after generic type or size")?;
-                    } else {
-                        self.consume(
-                            TokenKind::Greater,
-                            "Expected '>' after generic type or size",
-                        )?;
-                    }
-                } else {
-                    self.current = old_pos;
-                    if self.peek().kind == TokenKind::TypeSize
-                        || matches!(self.peek().kind, TokenKind::Identifier(_))
-                    {
-                        size = Some(-1);
-                        self.advance();
-                    }
-                    if is_paren {
-                        self.consume(TokenKind::RParen, "Expected ')' after type size")?;
-                    } else {
-                        self.consume(TokenKind::Greater, "Expected '>' after type size")?;
-                    }
-                }
-            }
+            self.parse_generic_list(&mut generics, &mut size, result == "array")?;
         }
 
         if !generics.is_empty() {
@@ -228,17 +145,20 @@ impl Parser {
                     generics,
                 },
             ));
-        } else {
-            return Ok(crate::parser::ast::TypeNode::Simple(
-                crate::parser::ast::TypeRef {
-                    base_type: result,
-                    size,
-                },
-            ));
         }
-    }
 
+        Ok(crate::parser::ast::TypeNode::Simple(
+            crate::parser::ast::TypeRef {
+                base_type: result,
+                size,
+            },
+        ))
+    }
     pub(crate) fn parse_expression(&mut self) -> Result<Expr, String> {
+        println!(
+            "DEBUG: Successfully parsed array. Next token is: {:?}",
+            self.peek().kind
+        );
         self.parse_expr(0)
     }
 
@@ -256,6 +176,10 @@ impl Parser {
                     break;
                 }
                 lhs = self.parse_postfix(lhs)?;
+                println!(
+                    "DEBUG: Successfully parsed array. Next token is: {:?}",
+                    self.peek().kind
+                );
                 continue;
             }
 
@@ -267,6 +191,10 @@ impl Parser {
                 let op_str = self.current_op_str();
                 self.advance(); // نتخطى الـ operator
                 let rhs = self.parse_expr(right_bp)?;
+                println!(
+                    "DEBUG: Successfully parsed array. Next token is: {:?}",
+                    self.peek().kind
+                );
                 lhs = Expr::BinaryOp {
                     left: Box::new(lhs),
                     operator: op_str,
@@ -303,26 +231,46 @@ impl Parser {
             TokenKind::Int(v) => {
                 let val = *v;
                 self.advance();
+                println!(
+                    "DEBUG: Successfully parsed array. Next token is: {:?}",
+                    self.peek().kind
+                );
                 Ok(Expr::LiteralInt(val))
             }
             TokenKind::Float(v) => {
                 let val = *v;
                 self.advance();
+                println!(
+                    "DEBUG: Successfully parsed array. Next token is: {:?}",
+                    self.peek().kind
+                );
                 Ok(Expr::LiteralFloat(val))
             }
             TokenKind::String(s) => {
                 let val = s.clone();
                 self.advance();
+                println!(
+                    "DEBUG: Successfully parsed array. Next token is: {:?}",
+                    self.peek().kind
+                );
                 Ok(Expr::LiteralString(val.to_string()))
             }
             TokenKind::Char(c) => {
                 let val = *c;
                 self.advance();
+                println!(
+                    "DEBUG: Successfully parsed array. Next token is: {:?}",
+                    self.peek().kind
+                );
                 Ok(Expr::LiteralChar(val))
             }
             TokenKind::Bool(b) => {
                 let val = *b;
                 self.advance();
+                println!(
+                    "DEBUG: Successfully parsed array. Next token is: {:?}",
+                    self.peek().kind
+                );
                 Ok(Expr::LiteralBool(val))
             }
 
@@ -330,6 +278,10 @@ impl Parser {
             TokenKind::Identifier(name) => {
                 let val = name.clone();
                 self.advance();
+                println!(
+                    "DEBUG: Successfully parsed array. Next token is: {:?}",
+                    self.peek().kind
+                );
                 Ok(Expr::Identifier(val.to_string()))
             }
 
@@ -369,12 +321,20 @@ impl Parser {
                 let mut elements = Vec::new();
                 if self.peek().kind != TokenKind::RBracket {
                     elements.push(self.parse_expr(0)?);
+                    println!(
+                        "DEBUG: Successfully parsed array. Next token is: {:?}",
+                        self.peek().kind
+                    );
                     while self.peek().kind == TokenKind::Comma {
                         self.advance();
                         elements.push(self.parse_expr(0)?);
                     }
                 }
                 self.consume(TokenKind::RBracket, "Expected ']' to close array literal")?;
+                println!(
+                    "DEBUG: Successfully parsed array. Next token is: {:?}",
+                    self.peek().kind
+                );
                 Ok(Expr::ArrayLiteral(elements))
             }
 
@@ -441,15 +401,9 @@ impl Parser {
 
             // --- Keywords used as identifier expressions (e.g. `flag && check`) ---
             other => {
-                if let Some(kw_name) = Self::keyword_as_identifier(other) {
-                    self.advance();
-                    Ok(Expr::Identifier(kw_name))
-                } else {
-                    Err(format!(
-                        "Syntax Error: Unexpected token '{:?}' in expression at line {}, column {}",
-                        other, line, col
-                    ))
-                }
+                let kw_name = other.as_str().to_string();
+                self.advance();
+                Ok(Expr::Identifier(kw_name))
             }
         }
     }
@@ -478,17 +432,11 @@ impl Parser {
                 if let TokenKind::Identifier(name) = &self.peek().kind.clone() {
                     prop = name.to_string();
                     self.advance();
-                } else if let Some(kw_name) = Self::keyword_as_identifier(&self.peek().kind.clone())
-                {
+                } else {
+                    let kw_name = self.peek().kind.clone().as_str().to_string();
                     prop = kw_name.to_string();
                     self.advance();
-                } else {
-                    return Err(format!(
-                        "Syntax Error: Expected field name after '.' at line {}, column {}",
-                        self.peek().line,
-                        self.peek().column
-                    ));
-                };
+                }
                 Ok(Expr::PropertyAccess {
                     object: Box::new(lhs),
                     property: prop,

@@ -57,9 +57,14 @@ impl Parser {
         match result {
             Ok(stmt) => Ok(Some(stmt)),
             Err(err) => {
-                eprintln!("Syntax Error: {}", err);
+                let err_msg = if err.starts_with("Syntax Error:") {
+                    err.clone()
+                } else {
+                    format!("Syntax Error: {}", err)
+                };
+                eprintln!("{}", err_msg);
                 self.synchronize();
-                Err(format!("Syntax Error: {}", err))
+                Err(err_msg)
             }
         }
     }
@@ -69,56 +74,68 @@ impl Parser {
         let mut module_path: Vec<String> = Vec::new();
         let mut imports: Option<Vec<String>> = None;
 
-        loop {
-            let mut name = String::new();
-            if let TokenKind::Identifier(n) = &self.peek().kind.clone() {
-                name = n.to_string();
-                self.advance();
-            } else if let Some(kw) = Self::keyword_as_identifier(&self.peek().kind.clone()) {
-                name = kw.to_string();
-                self.advance();
-            } else {
-                return Err("Syntax Error: Expected module or import name in use statement".to_string());
-            }
-            module_path.push(name);
+        module_path.push(self.get_identifier("Expected module name after 'use'")?);
 
-            if self.peek().kind == TokenKind::DoubleColon {
+        while self.peek().kind == TokenKind::DoubleColon {
+            self.advance();
+
+            if self.peek().kind == TokenKind::LBrace {
                 self.advance();
-                if self.peek().kind == TokenKind::LBrace {
-                    self.advance();
-                    let mut selected: Vec<String> = Vec::new();
-                    if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        loop {
-                            let mut n = String::new();
-                            if let TokenKind::Identifier(id) = &self.peek().kind.clone() {
-                                n = id.to_string();
-                                self.advance();
-                            } else if let Some(kw) = Self::keyword_as_identifier(&self.peek().kind.clone()) {
-                                n = kw.to_string();
-                                self.advance();
-                            } else {
-                                return Err("Syntax Error: Expected imported name".to_string());
-                            }
-                            selected.push(n);
-                            if self.peek().kind == TokenKind::Comma {
-                                self.advance();
-                            } else {
-                                break;
+                let mut selected: Vec<String> = Vec::new();
+
+                if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                    loop {
+                        selected.push(self.get_identifier("Expected import name in use list")?);
+
+                        if self.peek().kind == TokenKind::Comma {
+                            self.advance();
+                            continue;
+                        }
+                        break;
+                    }
+                }
+
+                self.consume(TokenKind::RBrace, "Expected '}' after import list")?;
+
+                // Register built-in scope type tokens for known imported names.
+                // This lets us use e.g. `array<int(32)> x -> ...;` after `use std::{array};`
+                // without hardcoding std library scope names — we just map the keyword string.
+                for name in &selected {
+                    match name.as_str() {
+                        "array" | "Array" => {
+                            if !self.registered_builtin_type_tokens.iter().any(|t| {
+                                core::mem::discriminant(t)
+                                    == core::mem::discriminant(&TokenKind::TypeArray)
+                            }) {
+                                self.registered_builtin_type_tokens
+                                    .push(TokenKind::TypeArray);
                             }
                         }
+                        "str" | "Str" => {
+                            if !self.registered_builtin_type_tokens.iter().any(|t| {
+                                core::mem::discriminant(t)
+                                    == core::mem::discriminant(&TokenKind::TypeStr)
+                            }) {
+                                self.registered_builtin_type_tokens.push(TokenKind::TypeStr);
+                            }
+                        }
+                        _ => {}
                     }
-                    self.consume(TokenKind::RBrace, "Expected '}' after import list")?;
-                    imports = Some(selected);
-                    break;
                 }
-            } else {
+
+                imports = Some(selected);
                 break;
             }
-        }
-        self.consume(TokenKind::SemiColon, "Expected ';' after use statement")?;
-        Ok(Stmt::Use { module_path, imports })
-    }
 
+            module_path.push(self.get_identifier("Expected module name after '::'")?)
+        }
+
+        self.consume(TokenKind::SemiColon, "Expected ';' after use statement")?;
+        Ok(Stmt::Use {
+            module_path,
+            imports,
+        })
+    }
     pub(crate) fn parse_exported_stmt(&mut self) -> Result<Stmt, String> {
         self.advance(); // consume 'export'
 
@@ -154,64 +171,97 @@ impl Parser {
 
     // يحلل تعريف المتغير: let int : 8 a = 5; أو let a : i8 = 5; أو const ...
     pub(crate) fn parse_var_decl(&mut self) -> Result<Stmt, String> {
-        let is_const = self.peek().kind == TokenKind::Const;
-        self.advance(); // نتخطى كلمة 'let' أو 'const'
-
-        // 1. تحديد الـ Base Type والـ Size
-        let type_node = match self.parse_type() {
-            Ok(t) => Some(t),
-            Err(e) => {
-                if e == "Expected a type" {
-                    None
-                } else {
-                    return Err(e);
-                }
-            }
-        };
-
-        // 3. قراءة اسم المتغير (Identifier)
-        //    نقبل كمان بعض الـ keywords كـ identifiers في موضع الاسم (زي flag, length, etc.)
-        let mut name = String::new();
-        if let TokenKind::Identifier(n) = &self.peek().kind.clone() {
-            name = n.to_string();
-            self.advance();
-        } else if let Some(kw_name) = Self::keyword_as_identifier(&self.peek().kind.clone()) {
-            name = kw_name.to_string();
-            self.advance();
-        } else {
-            return Err(format!("Syntax Error: Expected variable name at line {}, column {}", self.peek().line, self.peek().column));
+        let mut is_const = false;
+        if self.peek().kind == TokenKind::Const {
+            //const type name -> value;
+            is_const = true;
         }
-
-        // 4. قبول التهيئة الاختيارية: let <type> <name>; أو let <type> <name> = <value>;
-        let value = if self.peek().kind == TokenKind::Assign {
-            self.advance(); // نتخطى الـ '='
-            self.parse_expression()?
-        } else {
-            if self.peek().kind == TokenKind::Arrow {
-                return Err(format!("Syntax Error: Expected '=' to assign value to '{}'. Use '->' for reassignment (set), not declaration (let).", name));
+        if self.peek().kind == TokenKind::Let {
+            //let type name = value;
+            if is_const {
+                return Err("Syntax Error: Unexpected 'let' after 'const'".to_string());
             }
-            Expr::Identifier("__param__".to_string())
-        };
-
-        // 6. التأكد من وجود الفصلة المنقوطة ';'
-        if self.peek().kind == TokenKind::SemiColon {
-            self.advance(); // نتخطى الـ ';'
-        } else {
-            return Err("Syntax Error: Missing ';' at the end of declaration".to_string());
-        }
-
-        // لو كل حاجة تمام، نرجع الـ Node بتاعة الـ AST
-        Ok(Stmt::VarDecl {
-            visibility: crate::parser::ast::Visibility::Private,
-            editability: if is_const {
-                crate::parser::ast::Editability::NotEditable
+            self.advance();
+            let type_node = self.parse_type()?;
+            let name = self.get_identifier("Expected variable name after 'let'")?;
+            let mut value = Expr::Identifier("__param__".to_string());
+            println!(
+                "DEBUG: [Let branch] Token after name '{}' is {:?}",
+                name,
+                self.peek().kind
+            );
+            if self.peek().kind == TokenKind::Assign {
+                self.advance();
+                value = self.parse_expression()?;
+                self.consume(
+                    TokenKind::SemiColon,
+                    "Expected ';' after variable declaration",
+                )?;
             } else {
-                crate::parser::ast::Editability::Editable
-            },
-            type_node,
-            name,
-            value,
-        })
+                self.consume(
+                    TokenKind::SemiColon,
+                    "Expected ';' after variable declaration",
+                )?;
+            }
+            return Ok(Stmt::VarDecl {
+                visibility: Visibility::Private,
+                editability: if is_const {
+                    Editability::NotEditable
+                } else {
+                    Editability::Editable
+                },
+                type_node: Some(type_node),
+                name,
+                value,
+            });
+        } else {
+            println!(
+                "DEBUG: [Bare branch] Token after name is {:?}",
+                self.previous(Some(2)).kind
+            );
+            let type_node = self.parse_type()?;
+            println!(
+                "DEBUG: [Bare branch] Token after name '{:?}' is {:?}",
+                type_node,
+                self.peek().kind
+            );
+            let name = self.get_identifier("Expected variable name after type")?;
+            println!(
+                "DEBUG: [Bare branch] Token after name '{}' is {:?}",
+                name,
+                self.peek().kind
+            );
+            let mut value = Expr::Identifier("__param__".to_string());
+            println!(
+                "DEBUG: [Bare branch] Token after name '{:?}' is {:?}",
+                value,
+                self.peek().kind
+            );
+            if self.peek().kind == TokenKind::Arrow {
+                self.advance();
+                value = self.parse_expression()?;
+                self.consume(
+                    TokenKind::SemiColon,
+                    "Expected ';' after variable declaration",
+                )?;
+            } else {
+                self.consume(
+                    TokenKind::SemiColon,
+                    "Expected ';' after variable declaration",
+                )?;
+            }
+            return Ok(Stmt::VarDecl {
+                visibility: Visibility::Private,
+                editability: if is_const {
+                    Editability::NotEditable
+                } else {
+                    Editability::Editable
+                },
+                type_node: Some(type_node),
+                name,
+                value,
+            });
+        }
     }
 
     // ====================================================
@@ -371,7 +421,8 @@ impl Parser {
                     };
 
                     body.push(Stmt::CaseStmt {
-                        value: Some(val),
+                        option: val,
+                        set: Expr::Identifier("void".to_string()),
                         body: case_body,
                     });
                 } else if self.peek().kind == TokenKind::Underscore {
@@ -388,7 +439,8 @@ impl Parser {
                     };
                     // todo: add SwitchDecl for future updates
                     body.push(Stmt::CaseStmt {
-                        value: None,
+                        option: Expr::Identifier("void".to_string()),
+                        set: Expr::Identifier("void".to_string()),
                         body: def_body,
                     });
                 } else {
@@ -398,20 +450,18 @@ impl Parser {
                 }
             }
             self.consume(TokenKind::RBrace, "Expected '}' to close switch block")?;
-            crate::parser::ast::EitherBlock::Inline(body)
+            body
         } else {
-            let external_scope =
-                self.get_identifier("Expected external scope name for switch cases")?;
-            self.consume(
-                TokenKind::SemiColon,
-                "Expected ';' after external scope reference in switch",
-            )?;
-            crate::parser::ast::EitherBlock::External(crate::parser::ast::Expr::Identifier(
-                external_scope,
-            ))
+            return Err(
+                "External switch scopes are not supported yet; use a switch block".to_string(),
+            );
         };
 
-        Ok(Stmt::SwitchStmt { condition, cases })
+        Ok(Stmt::SwitchStmt {
+            name: String::new(),
+            condition,
+            cases,
+        })
     }
 
     pub(crate) fn parse_del_stmt(&mut self) -> Result<Stmt, String> {
@@ -507,55 +557,56 @@ impl Parser {
         }
 
         // --- Bare declaration for user-defined types: MyClass x = 10; ---
-        // If the next token is an identifier, it means `expr` was actually the type!
-        if let TokenKind::Identifier(var_name) = &self.peek().kind.clone() {
-            let name = var_name.clone();
-            self.advance(); // consume variable name
-
-            let mut value = Expr::Identifier("__param__".to_string());
-            if self.peek().kind == TokenKind::Assign {
-                self.advance();
-                value = self.parse_expression()?;
+        // We only enter this branch when `expr` was a bare Identifier that is
+        // either a custom scope keyword OR a registered built-in type token name,
+        // AND the next token is another Identifier (the variable name).
+        // This prevents misinterpreting scope calls like `someScope(args) myVar`.
+        let expr_is_type_name = match &expr {
+            Expr::Identifier(t) => {
+                // Only treat as a type if it's a known custom keyword
+                self.custom_keywords.contains(t)
+                    // OR it's the string name of a registered built-in type token
+                    // (use type_keyword() since as_str() doesn't cover TypeArray/TypeStr)
+                    || self.registered_builtin_type_tokens.iter().any(|tok| {
+                        tok.type_keyword().map_or(false, |kw| kw == t.as_str())
+                    })
             }
+            _ => false,
+        };
 
-            if self.peek().kind == TokenKind::SemiColon {
-                self.advance();
-            }
+        if expr_is_type_name {
+            if let TokenKind::Identifier(var_name) = &self.peek().kind.clone() {
+                let name = var_name.clone();
+                self.advance(); // consume variable name
 
-            // Extract base_type and size from expr
-            let (base_type, size) = match expr {
-                Expr::Identifier(t) => (Some(t), None),
-                Expr::Call { callee, args } => {
-                    // e.g. MyClass(32) parsed as Call
-                    if let Expr::Identifier(t) = *callee {
-                        if args.len() == 1 {
-                            if let Expr::LiteralInt(s) = args[0] {
-                                (Some(t), Some(s))
-                            } else {
-                                (Some(t), None)
-                            }
-                        } else {
-                            (Some(t), None)
-                        }
-                    } else {
-                        (None, None)
-                    }
+                let mut value = Expr::Identifier("__param__".to_string());
+                if self.peek().kind == TokenKind::Assign || self.peek().kind == TokenKind::Arrow {
+                    self.advance();
+                    value = self.parse_expression()?;
                 }
-                _ => (None, None),
-            };
 
-            return Ok(Stmt::VarDecl {
-                visibility: crate::parser::ast::Visibility::Public,
-                editability: crate::parser::ast::Editability::Editable,
-                type_node: Some(crate::parser::ast::TypeNode::Simple(
-                    crate::parser::ast::TypeRef {
-                        base_type: base_type.unwrap_or_else(|| "unknown".to_string()),
-                        size,
-                    },
-                )),
-                name: name.to_string(),
-                value,
-            });
+                if self.peek().kind == TokenKind::SemiColon {
+                    self.advance();
+                }
+
+                let base_type = match &expr {
+                    Expr::Identifier(t) => t.clone(),
+                    _ => "unknown".to_string(),
+                };
+
+                return Ok(Stmt::VarDecl {
+                    visibility: crate::parser::ast::Visibility::Public,
+                    editability: crate::parser::ast::Editability::Editable,
+                    type_node: Some(crate::parser::ast::TypeNode::Simple(
+                        crate::parser::ast::TypeRef {
+                            base_type,
+                            size: None,
+                        },
+                    )),
+                    name: name.to_string(),
+                    value,
+                });
+            }
         }
 
         self.consume(
@@ -610,13 +661,9 @@ impl Parser {
             self.advance();
             return Ok(s);
         }
-        if let Some(kw) = Self::keyword_as_identifier(&self.peek().kind.clone()) {
-            let s = kw.to_string();
-            self.advance();
-            return Ok(s);
-        }
-        Err(format!("{} at line {}, column {}", err_msg, self.peek().line, self.peek().column))
+        let kw = self.peek().kind.clone().as_str().to_string();
+        let s = kw;
+        self.advance();
+        return Ok(s);
     }
 }
-
-    

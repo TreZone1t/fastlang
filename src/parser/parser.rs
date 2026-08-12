@@ -13,7 +13,14 @@ const EOF_TOKEN: Token = Token {
 pub struct Parser {
     pub(crate) tokens: Vec<Token>,
     pub(crate) current: usize,
+    /// Custom scope keywords registered at parse-time (e.g. "array", "some").
+    /// Populated when a scope with `keyword -> "...";` is parsed.
     pub(crate) custom_keywords: Vec<String>,
+    /// Built-in scope type tokens that are "activated" when a scope declares
+    /// `type -> array;` or `type -> str;`. Only these tokens are then valid
+    /// as types in variable declarations (e.g. `array<int(32)> x -> ...;`).
+    /// This avoids hardcoding std library names and keeps the system dynamic.
+    pub(crate) registered_builtin_type_tokens: Vec<TokenKind>,
 }
 
 impl Parser {
@@ -22,6 +29,7 @@ impl Parser {
             tokens,
             current: 0,
             custom_keywords: Vec::new(),
+            registered_builtin_type_tokens: Vec::new(),
         }
     }
 
@@ -31,8 +39,9 @@ impl Parser {
         self.tokens.get(self.current).unwrap_or(&EOF_TOKEN)
     }
 
-    pub(crate) fn previous(&self) -> &Token {
-        &self.tokens[self.current - 1]
+    pub(crate) fn previous(&self, n: Option<usize>) -> &Token {
+        let n = n.unwrap_or(1);
+        &self.tokens[self.current - n]
     }
 
     pub(crate) fn is_at_end(&self) -> bool {
@@ -43,42 +52,12 @@ impl Parser {
         if !self.is_at_end() {
             self.current += 1;
         }
-        self.previous()
+        self.previous(None)
     }
 
     /// Keywords that can legally appear as identifiers in name positions
     /// (variable names, field names, parameter names).
     /// e.g. `let bool flag = ...` where 'flag' is a keyword we registered.
-    pub(crate) fn keyword_as_identifier(kind: &TokenKind) -> Option<String> {
-        match kind {
-            // Context-type keywords that users can also use as names
-            TokenKind::TypeFlag => Some("flag".to_string()),
-            TokenKind::TypeLength => Some("length".to_string()),
-            TokenKind::TypeSize => Some("size".to_string()),
-            TokenKind::TypeParam => Some("param".to_string()),
-            TokenKind::TypeType => Some("type".to_string()),
-            TokenKind::TypeInit => Some("init".to_string()),
-            TokenKind::TypeEvent => Some("event".to_string()),
-            TokenKind::TypeHandle => Some("handle".to_string()),
-            TokenKind::TypeName => Some("name".to_string()),
-            TokenKind::TypeCustom => Some("custom".to_string()),
-            TokenKind::TypePrivate => Some("private".to_string()),
-            TokenKind::TypePublic => Some("public".to_string()),
-            TokenKind::TypeError => Some("error".to_string()),
-            TokenKind::TypeBlock => Some("block".to_string()),
-            TokenKind::Fn => Some("fn".to_string()),
-            TokenKind::TypeStruct => Some("struct".to_string()),
-            TokenKind::TypeClass => Some("class".to_string()),
-            TokenKind::TypeEnum => Some("enum".to_string()),
-            TokenKind::New => Some("new".to_string()), //todo
-            TokenKind::Copy => Some("copy".to_string()),
-            TokenKind::Modify => Some("modify".to_string()),
-            TokenKind::Log => Some("log".to_string()),
-            // booleans as identifiers
-            TokenKind::Bool(b) => Some(if *b { "true" } else { "false" }.to_string()),
-            _ => None,
-        }
-    }
 
     pub fn parse_program(&mut self) -> Result<Program, String> {
         let mut statements = Vec::new();
@@ -117,7 +96,7 @@ impl Parser {
         self.advance();
 
         while !self.is_at_end() {
-            if self.previous().kind == TokenKind::SemiColon {
+            if self.previous(None).kind == TokenKind::SemiColon {
                 return;
             }
 

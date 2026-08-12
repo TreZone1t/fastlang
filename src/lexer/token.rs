@@ -239,6 +239,23 @@ impl TokenKind {
             _ => "error",
         }
     }
+    /// Returns the source keyword string for type tokens.
+    /// Mirrors `as_str` but covers the built-in type variants that the main
+    /// `as_str` falls through to the `_ => "error"` arm.
+    pub fn type_keyword(&self) -> Option<&str> {
+        match self {
+            TokenKind::TypeInt => Some("int"),
+            TokenKind::TypeFloat => Some("float"),
+            TokenKind::TypeStr => Some("str"),
+            TokenKind::TypeArray => Some("array"),
+            TokenKind::TypeBool => Some("bool"),
+            TokenKind::TypeChar => Some("char"),
+            TokenKind::TypeVoid => Some("void"),
+            TokenKind::TypeScope => Some("scope"),
+            TokenKind::TypeName => Some("name"),
+            _ => None,
+        }
+    }
 }
 /// A token plus the source position where it *starts*. Position is captured
 /// before any of the token's characters are consumed, so it points at the

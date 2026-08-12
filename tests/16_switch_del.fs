@@ -1,22 +1,25 @@
 
 
-fn main() -> void {
-    // Test del statement
-    let int(32) temp = 42;
-    del temp;
-
+fn main() -> int(32) {
     // Test switch
     let int(32) value = 2;
+    let int(32) x = 0;
+    let int(32) y = 0;
+    let int(32) z = 0;
     
     switch (value) -> {
         case 1 => {
-            let int(32) x = 1;
+            set x -> 1;
         }
         case 2 => {
-            let int(32) y = 2;
+             set y -> 2;
         }
         _ => {
-            let int(32) z = 3;
+            set z -> 3;
         }
     }
+    log(x);
+    log(y);
+    log(z);
+    return 0;
 }

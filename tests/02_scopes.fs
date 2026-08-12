@@ -5,19 +5,16 @@ scope DataBuffer -> {
     type -> custom;
     
     // Settings
+
     enable [index_access, length];
-    
-    // Control flags
-    enable flag[is_break];
-    
-    // Dynamic fields
-    add int(32) size;
-    add int(32) capacity;
-    
+    private -> {
+    int(32) size;
+    int(32) capacity;
+    }
     // Constructor
-    _(int(32) initial_capacity) -> {
-        set this.capacity = initial_capacity;
-        set this.size = 0;
+    _(capacity : int(32)) -> {
+        this.capacity -> capacity;
+        this.size -> 0;
     }
     
     public -> {

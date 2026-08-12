@@ -1,6 +1,6 @@
 export scope None -> {
-    enable [custom_keyword, public];
     type -> custom;
+    enable [custom_keyword, public];
     keyword -> "none";
     public -> {
         fn is_none() -> bool {
@@ -13,8 +13,8 @@ export scope None -> {
 }
 
 export scope Some -> {
-    enable [private, public, constructor, custom_keyword, custom_generic];
     type -> custom;
+    enable [private, public, constructor, custom_keyword, custom_generic];
     keyword -> "some";
     generic -> {
         type(size) T;
@@ -42,8 +42,8 @@ export scope Some -> {
 }
 
 export scope Option -> {
-    enable [private, public, constructor, custom_keyword, custom_generic];
     type -> custom;
+    enable [private, public, constructor, custom_keyword, custom_generic];
     keyword -> "option";
     generic -> {
         type(size) T;

@@ -32,6 +32,7 @@ impl CodeGenerator {
             self.output.push_str("#include <memory>\n");
             self.output.push_str("#include <optional>\n");
             self.output.push_str("#include <stdexcept>\n\n");
+            self.output.push_str("#include <cstdint>\n");
             self.emit("using namespace std;");
             self.emit("");
             self.emit("std::ostream& operator<<(std::ostream& os, const std::exception& e) {");

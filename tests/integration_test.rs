@@ -25,8 +25,11 @@ fn run_all_fs_tests() {
                 || filename.contains("fail");
 
             println!("Running test: {}", filename);
-            let output = Command::new("cargo")
-                .args(["run", "--bin", "fast_lang", "--", path.to_str().unwrap()])
+            // Running `cargo run` from a Cargo test deadlocks on Cargo's build
+            // lock.  Cargo exposes the already-built binary to integration
+            // tests, so execute it directly instead.
+            let output = Command::new(env!("CARGO_BIN_EXE_fast_lang"))
+                .arg(path.to_str().unwrap())
                 .output()
                 .expect("failed to execute process");
 

@@ -107,41 +107,35 @@ impl CodeGenerator {
                 self.indent_level -= 1;
                 self.emit("}");
             }
-            Stmt::SwitchStmt { condition, cases } => {
+            Stmt::SwitchStmt {
+                condition, cases, ..
+            } => {
                 let cond_code = self.visit_expression(condition);
                 self.emit(&format!("switch ({}) {{", cond_code));
                 self.indent_level += 1;
-                match cases {
-                    crate::parser::ast::EitherBlock::Inline(stmts) => {
-                        for s in stmts {
-                            if let Stmt::CaseStmt { value, body } = s {
-                                if let Some(val) = value {
-                                    let val_code = self.visit_expression(val);
-                                    self.emit(&format!("case {}: {{", val_code));
-                                } else {
-                                    self.emit("default: {");
-                                }
-                                self.indent_level += 1;
-                                for case_stmt in body {
-                                    self.visit_statement(case_stmt);
-                                }
-                                // if it doesn't end with return or break, emit break
-                                let needs_break = if let Some(last) = body.last() {
-                                        !matches!(last, Stmt::ReturnStmt(_) | Stmt::BreakStmt)
-                                    } else {
-                                        true
-                                    };
-                                    if needs_break {
-                                        self.emit("break;");
-                                    }
-                                    self.indent_level -= 1;
-                                    self.emit("}");
-                                }
+                for s in cases {
+                    if let Stmt::CaseStmt { option, body, .. } = s {
+                        if matches!(option, Expr::Identifier(name) if name == "void") {
+                            self.emit("default: {");
+                        } else {
+                            let val_code = self.visit_expression(option);
+                            self.emit(&format!("case {}: {{", val_code));
                         }
-                    }
-                    crate::parser::ast::EitherBlock::External(name_expr) => {
-                        let name_code = self.visit_expression(name_expr);
-                        self.emit(&format!("// TODO: inject cases from {}", name_code));
+                        self.indent_level += 1;
+                        for case_stmt in body {
+                            self.visit_statement(case_stmt);
+                        }
+                        // if it doesn't end with return or break, emit break
+                        let needs_break = if let Some(last) = body.last() {
+                            !matches!(last, Stmt::ReturnStmt(_) | Stmt::BreakStmt)
+                        } else {
+                            true
+                        };
+                        if needs_break {
+                            self.emit("break;");
+                        }
+                        self.indent_level -= 1;
+                        self.emit("}");
                     }
                 }
                 self.indent_level -= 1;
@@ -408,6 +402,61 @@ impl CodeGenerator {
             Stmt::EnableStmt(_) | Stmt::DisableStmt(_) => {
                 // these are flag metadata nodes (if any leaked into statement body)
                 // they have no C++ runtime representation.
+            }
+            Stmt::FnDecl {
+                name,
+                params,
+                return_type,
+                body,
+                is_exported: _, // هنتجاهلها دلوقتي لحد ما نحتاجها في الـ Shared Libraries
+            } => {
+                // 1. تحديد نوع الإرجاع (Return Type)
+                let mut ret_type_str = match return_type {
+                    crate::parser::ast::TypeNode::Simple(r) => {
+                        self.map_type(Some(r.base_type.as_str()), r.size)
+                    }
+                    crate::parser::ast::TypeNode::Generic(g) => {
+                        self.map_type(Some(g.base_type.as_str()), None)
+                    }
+                };
+
+                // Edge case for C++ main function
+                if name == "main" {
+                    ret_type_str = "int".to_string();
+                }
+
+                // 2. تجميع المعاملات (Parameters)
+                let mut param_strs = Vec::new();
+                for param in params {
+                    let param_type = match &param.type_node {
+                        Some(crate::parser::ast::TypeNode::Simple(r)) => {
+                            self.map_type(Some(r.base_type.as_str()), r.size)
+                        }
+                        Some(crate::parser::ast::TypeNode::Generic(g)) => {
+                            self.map_type(Some(g.base_type.as_str()), None)
+                        }
+                        None => "auto".to_string(), // Fallback
+                    };
+                    param_strs.push(format!("{} {}", param_type, param.name));
+                }
+
+                // 3. كتابة توقيع الدالة (Function Signature)
+                self.emit(&format!(
+                    "{} {}({}) {{",
+                    ret_type_str,
+                    name,
+                    param_strs.join(", ")
+                ));
+
+                // 4. كتابة محتوى الدالة (Function Body)
+                self.indent_level += 1;
+                for s in body {
+                    self.visit_statement(s);
+                }
+                self.indent_level -= 1;
+
+                // 5. قفل الدالة
+                self.emit("}");
             }
             _ => {
                 self.emit(&format!("// TODO: unimplemented statement {:?}", stmt));

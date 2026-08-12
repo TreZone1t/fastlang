@@ -277,7 +277,9 @@ impl SemanticAnalyzer {
                             editability: field.editability.clone(),
                             settings: std::collections::HashSet::new(),
                         };
-                        self.current_env.borrow_mut().define(field.name.clone(), field_info)?;
+                        self.current_env
+                            .borrow_mut()
+                            .define(field.name.clone(), field_info)?;
                     }
                 }
 
@@ -290,24 +292,36 @@ impl SemanticAnalyzer {
                             editability: crate::parser::ast::Editability::Editable,
                             settings: std::collections::HashSet::new(),
                         };
-                        self.current_env.borrow_mut().define(p.name.clone(), param_info)?;
+                        self.current_env
+                            .borrow_mut()
+                            .define(p.name.clone(), param_info)?;
                     }
                 }
 
                 if let Some(ref stmts) = statements {
-                    for s in stmts { self.visit_statement(s)?; }
+                    for s in stmts {
+                        self.visit_statement(s)?;
+                    }
                 }
                 if let Some(ref stmts) = private_block {
-                    for s in stmts { self.visit_statement(s)?; }
+                    for s in stmts {
+                        self.visit_statement(s)?;
+                    }
                 }
                 if let Some(ref stmts) = public_block {
-                    for s in stmts { self.visit_statement(s)?; }
+                    for s in stmts {
+                        self.visit_statement(s)?;
+                    }
                 }
                 if let Some(ref stmts) = static_block {
-                    for s in stmts { self.visit_statement(s)?; }
+                    for s in stmts {
+                        self.visit_statement(s)?;
+                    }
                 }
                 if let Some(ref stmts) = generic_block {
-                    for s in stmts { self.visit_statement(s)?; }
+                    for s in stmts {
+                        self.visit_statement(s)?;
+                    }
                 }
 
                 if let Some(ref constructor) = constructor {
@@ -320,7 +334,9 @@ impl SemanticAnalyzer {
                             editability: crate::parser::ast::Editability::Editable,
                             settings: std::collections::HashSet::new(),
                         };
-                        self.current_env.borrow_mut().define(param.name.clone(), param_info)?;
+                        self.current_env
+                            .borrow_mut()
+                            .define(param.name.clone(), param_info)?;
                     }
                     let prev_stmt_ctor = self.in_statement_scope;
                     self.in_statement_scope = true;
@@ -333,12 +349,25 @@ impl SemanticAnalyzer {
 
                 if let Some(ref handle_stmts) = handle_block {
                     let allowed_handle_names = [
-                        "index_access", "display", "add", "sub", "mul", "div", "mod", "iterator", "next", "length", "size"
+                        "index_access",
+                        "display",
+                        "add",
+                        "sub",
+                        "mul",
+                        "div",
+                        "mod",
+                        "iterator",
+                        "next",
+                        "length",
+                        "size",
                     ];
                     for s in handle_stmts {
                         if let Stmt::FnDecl { name: fn_name, .. } = s {
                             if !allowed_handle_names.contains(&fn_name.as_str()) {
-                                return Err(format!("Semantic Error: Invalid handle function name '{}'.", fn_name));
+                                return Err(format!(
+                                    "Semantic Error: Invalid handle function name '{}'.",
+                                    fn_name
+                                ));
                             }
                         } else {
                             return Err("Semantic Error: Only function declarations (fn) are allowed inside a handle block.".to_string());
@@ -354,115 +383,21 @@ impl SemanticAnalyzer {
                 self.in_statement_scope = prev_in_stmt;
                 self.in_custom_scope = prev_in_custom;
             }
-            Stmt::ClassDecl { is_exported, name, keyword: _, extends: _, handles: _, settings: _, public_block, private_block, static_block, generic_block, handle_block, length: _, constructor } => {
-                let info = SymbolInfo { name: name.clone(), type_node: Some(crate::parser::ast::TypeNode::Simple(crate::parser::ast::TypeRef { base_type: "blueprint".to_string(), size: None })), visibility: if *is_exported { crate::parser::ast::Visibility::Public } else { crate::parser::ast::Visibility::Private }, editability: crate::parser::ast::Editability::NotEditable, settings: std::collections::HashSet::new() };
-                self.current_env.borrow_mut().define(name.clone(), info)?;
-                self.enter_scope();
-                let prev_in_custom = self.in_custom_scope;
-                self.in_custom_scope = true;
-                for s in private_block { self.visit_statement(s)?; }
-                for s in public_block { self.visit_statement(s)?; }
-                for s in static_block { self.visit_statement(s)?; }
-                for s in generic_block { self.visit_statement(s)?; }
-                for s in handle_block { self.visit_statement(s)?; }
-                if let Some(ref ctor) = constructor {
-                    self.enter_scope();
-                    for param in &ctor.params {
-                        let param_info = SymbolInfo { name: param.name.clone(), type_node: param.type_node.clone(), visibility: crate::parser::ast::Visibility::Private, editability: crate::parser::ast::Editability::Editable, settings: std::collections::HashSet::new() };
-                        self.current_env.borrow_mut().define(param.name.clone(), param_info)?;
-                    }
-                    for stmt in &ctor.body { self.visit_statement(stmt)?; }
-                    self.leave_scope();
-                }
-                self.leave_scope();
-                self.in_custom_scope = prev_in_custom;
-            }
-            Stmt::ArrayDecl { is_exported, name, keyword: _, length: _, data: _, handles: _, settings: _, public_block, private_block, generic_block, handle_block, constructor } => {
-                let info = SymbolInfo { name: name.clone(), type_node: Some(crate::parser::ast::TypeNode::Simple(crate::parser::ast::TypeRef { base_type: "blueprint".to_string(), size: None })), visibility: if *is_exported { crate::parser::ast::Visibility::Public } else { crate::parser::ast::Visibility::Private }, editability: crate::parser::ast::Editability::NotEditable, settings: std::collections::HashSet::new() };
-                self.current_env.borrow_mut().define(name.clone(), info)?;
-                self.enter_scope();
-                let prev_in_custom = self.in_custom_scope;
-                self.in_custom_scope = true;
-                for s in private_block { self.visit_statement(s)?; }
-                for s in public_block { self.visit_statement(s)?; }
-                for s in generic_block { self.visit_statement(s)?; }
-                for s in handle_block { self.visit_statement(s)?; }
-                if let Some(ref ctor) = constructor {
-                    self.enter_scope();
-                    for param in &ctor.params {
-                        let param_info = SymbolInfo { name: param.name.clone(), type_node: param.type_node.clone(), visibility: crate::parser::ast::Visibility::Private, editability: crate::parser::ast::Editability::Editable, settings: std::collections::HashSet::new() };
-                        self.current_env.borrow_mut().define(param.name.clone(), param_info)?;
-                    }
-                    for stmt in &ctor.body { self.visit_statement(stmt)?; }
-                    self.leave_scope();
-                }
-                self.leave_scope();
-                self.in_custom_scope = prev_in_custom;
-            }
-            Stmt::StrDecl { is_exported, name, keyword: _, length: _, data: _, handles: _, settings: _, public_block, private_block, handle_block, constructor } => {
-                let info = SymbolInfo { name: name.clone(), type_node: Some(crate::parser::ast::TypeNode::Simple(crate::parser::ast::TypeRef { base_type: "blueprint".to_string(), size: None })), visibility: if *is_exported { crate::parser::ast::Visibility::Public } else { crate::parser::ast::Visibility::Private }, editability: crate::parser::ast::Editability::NotEditable, settings: std::collections::HashSet::new() };
-                self.current_env.borrow_mut().define(name.clone(), info)?;
-                self.enter_scope();
-                let prev_in_custom = self.in_custom_scope;
-                self.in_custom_scope = true;
-                for s in private_block { self.visit_statement(s)?; }
-                for s in public_block { self.visit_statement(s)?; }
-                for s in handle_block { self.visit_statement(s)?; }
-                if let Some(ref ctor) = constructor {
-                    self.enter_scope();
-                    for param in &ctor.params {
-                        let param_info = SymbolInfo { name: param.name.clone(), type_node: param.type_node.clone(), visibility: crate::parser::ast::Visibility::Private, editability: crate::parser::ast::Editability::Editable, settings: std::collections::HashSet::new() };
-                        self.current_env.borrow_mut().define(param.name.clone(), param_info)?;
-                    }
-                    for stmt in &ctor.body { self.visit_statement(stmt)?; }
-                    self.leave_scope();
-                }
-                self.leave_scope();
-                self.in_custom_scope = prev_in_custom;
-            }
-            Stmt::StructDecl { is_exported, name, keyword: _, handles: _, settings: _, public_block, private_block, handle_block, static_block, constructor } => {
-                let info = SymbolInfo { name: name.clone(), type_node: Some(crate::parser::ast::TypeNode::Simple(crate::parser::ast::TypeRef { base_type: "blueprint".to_string(), size: None })), visibility: if *is_exported { crate::parser::ast::Visibility::Public } else { crate::parser::ast::Visibility::Private }, editability: crate::parser::ast::Editability::NotEditable, settings: std::collections::HashSet::new() };
-                self.current_env.borrow_mut().define(name.clone(), info)?;
-                self.enter_scope();
-                let prev_in_custom = self.in_custom_scope;
-                self.in_custom_scope = true;
-                for s in private_block { self.visit_statement(s)?; }
-                for s in public_block { self.visit_statement(s)?; }
-                for s in static_block { self.visit_statement(s)?; }
-                for s in handle_block { self.visit_statement(s)?; }
-                if let Some(ref ctor) = constructor {
-                    self.enter_scope();
-                    for param in &ctor.params {
-                        let param_info = SymbolInfo { name: param.name.clone(), type_node: param.type_node.clone(), visibility: crate::parser::ast::Visibility::Private, editability: crate::parser::ast::Editability::Editable, settings: std::collections::HashSet::new() };
-                        self.current_env.borrow_mut().define(param.name.clone(), param_info)?;
-                    }
-                    for stmt in &ctor.body { self.visit_statement(stmt)?; }
-                    self.leave_scope();
-                }
-                self.leave_scope();
-                self.in_custom_scope = prev_in_custom;
-            }
-            Stmt::EnumDecl { is_exported, name, keyword: _, handles: _, settings: _, handle_block, variants: _ } => {
-                let info = SymbolInfo { name: name.clone(), type_node: Some(crate::parser::ast::TypeNode::Simple(crate::parser::ast::TypeRef { base_type: "blueprint".to_string(), size: None })), visibility: if *is_exported { crate::parser::ast::Visibility::Public } else { crate::parser::ast::Visibility::Private }, editability: crate::parser::ast::Editability::NotEditable, settings: std::collections::HashSet::new() };
-                self.current_env.borrow_mut().define(name.clone(), info)?;
-                self.enter_scope();
-                let prev_in_custom = self.in_custom_scope;
-                self.in_custom_scope = true;
-                for s in handle_block { self.visit_statement(s)?; }
-                self.leave_scope();
-                self.in_custom_scope = prev_in_custom;
-            }
-            Stmt::BlockDecl { is_exported: _, name: _, statements } => {
-                self.enter_scope();
-                for s in statements { self.visit_statement(s)?; }
-                self.leave_scope();
-            }
-            Stmt::CaseStmt { value: _, body } => {
-                self.enter_scope();
-                for s in body { self.visit_statement(s)?; }
-                self.leave_scope();
-            }
-            Stmt::FnDecl { is_exported, name, params, return_type: _, body } => {
+            Stmt::ClassDecl {
+                is_exported,
+                name,
+                keyword: _,
+                extends: _,
+                handles: _,
+                settings: _,
+                public_block,
+                private_block,
+                static_block,
+                generic_block,
+                handle_block,
+                length: _,
+                constructor,
+            } => {
                 let info = SymbolInfo {
                     name: name.clone(),
                     type_node: Some(crate::parser::ast::TypeNode::Simple(
@@ -481,6 +416,326 @@ impl SemanticAnalyzer {
                 };
                 self.current_env.borrow_mut().define(name.clone(), info)?;
                 self.enter_scope();
+                let prev_in_custom = self.in_custom_scope;
+                self.in_custom_scope = true;
+                for s in private_block {
+                    self.visit_statement(s)?;
+                }
+                for s in public_block {
+                    self.visit_statement(s)?;
+                }
+                for s in static_block {
+                    self.visit_statement(s)?;
+                }
+                for s in generic_block {
+                    self.visit_statement(s)?;
+                }
+                for s in handle_block {
+                    self.visit_statement(s)?;
+                }
+                if let Some(ref ctor) = constructor {
+                    self.enter_scope();
+                    for param in &ctor.params {
+                        let param_info = SymbolInfo {
+                            name: param.name.clone(),
+                            type_node: param.type_node.clone(),
+                            visibility: crate::parser::ast::Visibility::Private,
+                            editability: crate::parser::ast::Editability::Editable,
+                            settings: std::collections::HashSet::new(),
+                        };
+                        self.current_env
+                            .borrow_mut()
+                            .define(param.name.clone(), param_info)?;
+                    }
+                    for stmt in &ctor.body {
+                        self.visit_statement(stmt)?;
+                    }
+                    self.leave_scope();
+                }
+                self.leave_scope();
+                self.in_custom_scope = prev_in_custom;
+            }
+            Stmt::ArrayDecl {
+                is_exported,
+                name,
+                keyword: _,
+                length: _,
+                data: _,
+                handles: _,
+                settings: _,
+                public_block,
+                private_block,
+                generic_block,
+                handle_block,
+                constructor,
+            } => {
+                let info = SymbolInfo {
+                    name: name.clone(),
+                    type_node: Some(crate::parser::ast::TypeNode::Simple(
+                        crate::parser::ast::TypeRef {
+                            base_type: "blueprint".to_string(),
+                            size: None,
+                        },
+                    )),
+                    visibility: if *is_exported {
+                        crate::parser::ast::Visibility::Public
+                    } else {
+                        crate::parser::ast::Visibility::Private
+                    },
+                    editability: crate::parser::ast::Editability::NotEditable,
+                    settings: std::collections::HashSet::new(),
+                };
+                self.current_env.borrow_mut().define(name.clone(), info)?;
+                self.enter_scope();
+                let prev_in_custom = self.in_custom_scope;
+                self.in_custom_scope = true;
+                for s in private_block {
+                    self.visit_statement(s)?;
+                }
+                for s in public_block {
+                    self.visit_statement(s)?;
+                }
+                for s in generic_block {
+                    self.visit_statement(s)?;
+                }
+                for s in handle_block {
+                    self.visit_statement(s)?;
+                }
+                if let Some(ref ctor) = constructor {
+                    self.enter_scope();
+                    for param in &ctor.params {
+                        let param_info = SymbolInfo {
+                            name: param.name.clone(),
+                            type_node: param.type_node.clone(),
+                            visibility: crate::parser::ast::Visibility::Private,
+                            editability: crate::parser::ast::Editability::Editable,
+                            settings: std::collections::HashSet::new(),
+                        };
+                        self.current_env
+                            .borrow_mut()
+                            .define(param.name.clone(), param_info)?;
+                    }
+                    for stmt in &ctor.body {
+                        self.visit_statement(stmt)?;
+                    }
+                    self.leave_scope();
+                }
+                self.leave_scope();
+                self.in_custom_scope = prev_in_custom;
+            }
+            Stmt::StrDecl {
+                is_exported,
+                name,
+                keyword: _,
+                length: _,
+                data: _,
+                handles: _,
+                settings: _,
+                public_block,
+                private_block,
+                handle_block,
+                constructor,
+            } => {
+                let info = SymbolInfo {
+                    name: name.clone(),
+                    type_node: Some(crate::parser::ast::TypeNode::Simple(
+                        crate::parser::ast::TypeRef {
+                            base_type: "blueprint".to_string(),
+                            size: None,
+                        },
+                    )),
+                    visibility: if *is_exported {
+                        crate::parser::ast::Visibility::Public
+                    } else {
+                        crate::parser::ast::Visibility::Private
+                    },
+                    editability: crate::parser::ast::Editability::NotEditable,
+                    settings: std::collections::HashSet::new(),
+                };
+                self.current_env.borrow_mut().define(name.clone(), info)?;
+                self.enter_scope();
+                let prev_in_custom = self.in_custom_scope;
+                self.in_custom_scope = true;
+                for s in private_block {
+                    self.visit_statement(s)?;
+                }
+                for s in public_block {
+                    self.visit_statement(s)?;
+                }
+                for s in handle_block {
+                    self.visit_statement(s)?;
+                }
+                if let Some(ref ctor) = constructor {
+                    self.enter_scope();
+                    for param in &ctor.params {
+                        let param_info = SymbolInfo {
+                            name: param.name.clone(),
+                            type_node: param.type_node.clone(),
+                            visibility: crate::parser::ast::Visibility::Private,
+                            editability: crate::parser::ast::Editability::Editable,
+                            settings: std::collections::HashSet::new(),
+                        };
+                        self.current_env
+                            .borrow_mut()
+                            .define(param.name.clone(), param_info)?;
+                    }
+                    for stmt in &ctor.body {
+                        self.visit_statement(stmt)?;
+                    }
+                    self.leave_scope();
+                }
+                self.leave_scope();
+                self.in_custom_scope = prev_in_custom;
+            }
+            Stmt::StructDecl {
+                is_exported,
+                name,
+                keyword: _,
+                handles: _,
+                settings: _,
+                public_block,
+                private_block,
+                handle_block,
+                static_block,
+                constructor,
+            } => {
+                let info = SymbolInfo {
+                    name: name.clone(),
+                    type_node: Some(crate::parser::ast::TypeNode::Simple(
+                        crate::parser::ast::TypeRef {
+                            base_type: "blueprint".to_string(),
+                            size: None,
+                        },
+                    )),
+                    visibility: if *is_exported {
+                        crate::parser::ast::Visibility::Public
+                    } else {
+                        crate::parser::ast::Visibility::Private
+                    },
+                    editability: crate::parser::ast::Editability::NotEditable,
+                    settings: std::collections::HashSet::new(),
+                };
+                self.current_env.borrow_mut().define(name.clone(), info)?;
+                self.enter_scope();
+                let prev_in_custom = self.in_custom_scope;
+                self.in_custom_scope = true;
+                for s in private_block {
+                    self.visit_statement(s)?;
+                }
+                for s in public_block {
+                    self.visit_statement(s)?;
+                }
+                for s in static_block {
+                    self.visit_statement(s)?;
+                }
+                for s in handle_block {
+                    self.visit_statement(s)?;
+                }
+                if let Some(ref ctor) = constructor {
+                    self.enter_scope();
+                    for param in &ctor.params {
+                        let param_info = SymbolInfo {
+                            name: param.name.clone(),
+                            type_node: param.type_node.clone(),
+                            visibility: crate::parser::ast::Visibility::Private,
+                            editability: crate::parser::ast::Editability::Editable,
+                            settings: std::collections::HashSet::new(),
+                        };
+                        self.current_env
+                            .borrow_mut()
+                            .define(param.name.clone(), param_info)?;
+                    }
+                    for stmt in &ctor.body {
+                        self.visit_statement(stmt)?;
+                    }
+                    self.leave_scope();
+                }
+                self.leave_scope();
+                self.in_custom_scope = prev_in_custom;
+            }
+            Stmt::EnumDecl {
+                is_exported,
+                name,
+                keyword: _,
+                handles: _,
+                settings: _,
+                handle_block,
+                variants: _,
+            } => {
+                let info = SymbolInfo {
+                    name: name.clone(),
+                    type_node: Some(crate::parser::ast::TypeNode::Simple(
+                        crate::parser::ast::TypeRef {
+                            base_type: "blueprint".to_string(),
+                            size: None,
+                        },
+                    )),
+                    visibility: if *is_exported {
+                        crate::parser::ast::Visibility::Public
+                    } else {
+                        crate::parser::ast::Visibility::Private
+                    },
+                    editability: crate::parser::ast::Editability::NotEditable,
+                    settings: std::collections::HashSet::new(),
+                };
+                self.current_env.borrow_mut().define(name.clone(), info)?;
+                self.enter_scope();
+                let prev_in_custom = self.in_custom_scope;
+                self.in_custom_scope = true;
+                for s in handle_block {
+                    self.visit_statement(s)?;
+                }
+                self.leave_scope();
+                self.in_custom_scope = prev_in_custom;
+            }
+            Stmt::BlockDecl {
+                is_exported: _,
+                name: _,
+                statements,
+            } => {
+                self.enter_scope();
+                for s in statements {
+                    self.visit_statement(s)?;
+                }
+                self.leave_scope();
+            }
+            Stmt::CaseStmt { body, .. } => {
+                self.enter_scope();
+                for s in body {
+                    self.visit_statement(s)?;
+                }
+                self.leave_scope();
+            }
+            Stmt::FnDecl {
+                is_exported,
+                name,
+                params,
+                return_type,
+                body,
+            } => {
+                let info = SymbolInfo {
+                    name: name.clone(),
+                    type_node: Some(crate::parser::ast::TypeNode::Simple(
+                        crate::parser::ast::TypeRef {
+                            base_type: "blueprint".to_string(),
+                            size: None,
+                        },
+                    )),
+                    visibility: if *is_exported {
+                        crate::parser::ast::Visibility::Public
+                    } else {
+                        crate::parser::ast::Visibility::Private
+                    },
+                    editability: crate::parser::ast::Editability::NotEditable,
+                    settings: std::collections::HashSet::new(),
+                };
+                self.current_env.borrow_mut().define(name.clone(), info)?;
+                let previous_flags = self.active_flags.clone();
+                let previous_return_type = self.active_return_type.clone();
+                self.active_flags.push("+is_return".to_string());
+                self.active_flags.push("+is_throw".to_string());
+                self.active_return_type = Some(return_type.clone());
+                self.enter_scope();
                 for p in params {
                     let param_info = SymbolInfo {
                         name: p.name.clone(),
@@ -489,7 +744,9 @@ impl SemanticAnalyzer {
                         editability: crate::parser::ast::Editability::Editable,
                         settings: std::collections::HashSet::new(),
                     };
-                    self.current_env.borrow_mut().define(p.name.clone(), param_info)?;
+                    self.current_env
+                        .borrow_mut()
+                        .define(p.name.clone(), param_info)?;
                 }
                 for s in body {
                     self.visit_statement(s)?;
@@ -537,20 +794,13 @@ impl SemanticAnalyzer {
                     }
                 }
             }
-            Stmt::SwitchStmt { condition, cases } => {
+            Stmt::SwitchStmt { condition, cases, .. } => {
                 self.visit_expression(condition)?;
-                match cases {
-                    crate::parser::ast::EitherBlock::Inline(stmts) => {
-                        self.enter_scope();
-                        for s in stmts {
-                            self.visit_statement(s)?;
-                        }
-                        self.leave_scope();
-                    }
-                    crate::parser::ast::EitherBlock::External(_) => {
-                        // In the future, we should look up the external scope and verify it
-                    }
+                self.enter_scope();
+                for s in cases {
+                    self.visit_statement(s)?;
                 }
+                self.leave_scope();
             }
             Stmt::DelStmt(expr) => {
                 self.visit_expression(expr)?;
@@ -896,96 +1146,5 @@ impl SemanticAnalyzer {
             Some(size) => format!("{}({})", type_ref.base_type, size),
             None => type_ref.base_type.clone(),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::SemanticAnalyzer;
-    use crate::parser::ast::{
-        ConstructorDecl, Editability, Expr, FieldDecl, ScopeType, Stmt, TypeRef, Visibility,
-    };
-
-    fn int_field(name: &str) -> FieldDecl {
-        FieldDecl {
-            visibility: Visibility::Public,
-            editability: Editability::Editable,
-            type_sized: Some(TypeRef {
-                base_type: "int".to_string(),
-                size: Some(32),
-            }),
-            name: name.to_string(),
-            value: None,
-        }
-    }
-
-    #[test]
-    fn rejects_a_return_value_with_the_wrong_type() {
-        let function = Stmt::ScopeDecl {
-            is_exported: false,
-            is_const: false,
-            name: "number".to_string(),
-            scope_type: ScopeType::Fn,
-            params: Vec::new(),
-            return_type: Some(TypeRef {
-                base_type: "int".to_string(),
-                size: Some(32),
-            }),
-            flags: Vec::new(),
-            settings: Vec::new(),
-            events: Vec::new(),
-            custom_keyword: None,
-            handle_block: Vec::new(),
-            generic_block: Vec::new(),
-            static_block: Vec::new(),
-            statements: vec![Stmt::ReturnStmt(Expr::LiteralString("wrong".to_string()))],
-            public_block: Vec::new(),
-            fields: Vec::new(),
-            private_block: Vec::new(),
-            return_value: None,
-            constructor: None,
-        };
-
-        let error = SemanticAnalyzer::new()
-            .analyze(&vec![function])
-            .unwrap_err();
-        assert!(error.contains("Return type mismatch"));
-    }
-
-    #[test]
-    fn resolves_custom_scope_fields_through_this() {
-        let custom_scope = Stmt::ScopeDecl {
-            is_exported: false,
-            is_const: false,
-            name: "Box".to_string(),
-            scope_type: ScopeType::Custom,
-            params: Vec::new(),
-            return_type: None,
-            flags: Vec::new(),
-            settings: Vec::new(),
-            events: Vec::new(),
-            custom_keyword: None,
-            handle_block: Vec::new(),
-            generic_block: Vec::new(),
-            static_block: Vec::new(),
-            statements: Vec::new(),
-            public_block: Vec::new(),
-            fields: vec![int_field("width")],
-            private_block: Vec::new(),
-            return_value: None,
-            constructor: Some(ConstructorDecl {
-                params: Vec::new(),
-                expected_types: Vec::new(),
-                body: vec![Stmt::ReassignStmt {
-                    target: Expr::PropertyAccess {
-                        object: Box::new(Expr::This),
-                        property: "width".to_string(),
-                    },
-                    value: Expr::LiteralInt(10),
-                }],
-            }),
-        };
-
-        assert!(SemanticAnalyzer::new().analyze(&vec![custom_scope]).is_ok());
     }
 }

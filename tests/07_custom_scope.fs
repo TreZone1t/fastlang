@@ -1,7 +1,8 @@
 // Valid: complete custom scope
 scope Box -> {
+    type -> custom;
     enable [length , keyword];
-    type -> custom("box");
+    keyword -> "box";
     param -> {
         int(32) width;
         int(32) height;

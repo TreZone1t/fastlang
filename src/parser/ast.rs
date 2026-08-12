@@ -47,8 +47,9 @@ pub enum ScopeType {
     Class,
     Struct,
     Custom,
-    //todo : add looped
-    Case,
+    //todo : add looped  so we will add setting for that instead
+    // Case, //todo : the same
+    Switch,
     Array,
     Enum,
     String,
@@ -96,6 +97,7 @@ impl Flag {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Setting {
+    //custom
     CustomIndexAccess,
     CustomConstructor,
     CustomKeyword,
@@ -103,20 +105,28 @@ pub enum Setting {
     CustomIterator,
     CustomDisplay,
     CustomOperators,
+    //fn
     Param,
+    Statement,
+    Return,
+    //switch
+    Case,
+    Break,
+    //oop
     Private,
     Public,
     Static,
+    Extends,
+    Constructor,
+    //enum
+    Variants,
+    // array and str
     Length,
     Data,
     Size,
-    Extends,
-    Variants,
+    //all
     Error,
-    Statement,
-    Constructor,
     Handle,
-    Return,
     Custom(String),
     NotFound,
 }
@@ -124,6 +134,7 @@ pub enum Setting {
 impl Setting {
     pub fn from_str(s: &str) -> Self {
         match s {
+            //custom -------
             "index_access" => Setting::CustomIndexAccess,
             "custom_constructor" => Setting::CustomConstructor,
             "custom_keyword" => Setting::CustomKeyword,
@@ -131,27 +142,35 @@ impl Setting {
             "iterator" => Setting::CustomIterator,
             "display" => Setting::CustomDisplay,
             "operators" => Setting::CustomOperators,
+            //fn -------
             "param" => Setting::Param,
+            "statement" => Setting::Statement,
+            "return" => Setting::Return,
+            //switch -------
+            "case" => Setting::Case,
+            "break" => Setting::Break,
+            //oop -------
             "private" => Setting::Private,
             "public" => Setting::Public,
             "static" => Setting::Static,
-            "length" => Setting::Length,
-            "size" => Setting::Size,
             "extends" => Setting::Extends,
-            "variants" => Setting::Variants,
-            "error" => Setting::Error,
-            "data" => Setting::Data,
-            "statement" => Setting::Statement,
             "constructor" => Setting::Constructor,
             "_" => Setting::Constructor, // only for from_token
+            //enum --
+            "variants" => Setting::Variants,
+            //array and str -------
+            "length" => Setting::Length,
+            "size" => Setting::Size,
+            "data" => Setting::Data,
+            "error" => Setting::Error,
             "handle" => Setting::Handle,
-            "return" => Setting::Return,
             _ => Setting::NotFound,
         }
     }
 
     pub fn as_str(&self) -> String {
         match self {
+            //custom -----
             Setting::CustomIndexAccess => "custom_index_access".to_string(),
             Setting::CustomConstructor => "custom_constructor".to_string(),
             Setting::CustomKeyword => "custom_keyword".to_string(),
@@ -159,21 +178,28 @@ impl Setting {
             Setting::CustomIterator => "custom_iterator".to_string(),
             Setting::CustomDisplay => "custom_display".to_string(),
             Setting::CustomOperators => "custom_operators".to_string(),
+            //fn -------
             Setting::Param => "param".to_string(),
-
+            Setting::Statement => "statement".to_string(),
+            Setting::Return => "return".to_string(),
+            //switch -------
+            Setting::Case => "case".to_string(),
+            Setting::Break => "break".to_string(),
+            //oop -------
             Setting::Private => "private".to_string(),
             Setting::Public => "public".to_string(),
             Setting::Static => "static".to_string(),
-            Setting::Length => "length".to_string(),
             Setting::Extends => "extends".to_string(),
+            Setting::Constructor => "constructor".to_string(),
+            //enum -------
             Setting::Variants => "variants".to_string(),
+            //array and str -------
+            Setting::Length => "length".to_string(),
             Setting::Size => "size".to_string(),
             Setting::Data => "data".to_string(),
+            //all ------
             Setting::Error => "error".to_string(),
-            Setting::Statement => "statement".to_string(),
-            Setting::Constructor => "constructor".to_string(),
             Setting::Handle => "handle".to_string(),
-            Setting::Return => "return".to_string(),
             Setting::NotFound => "not_found".to_string(),
             Setting::Custom(s) => s.clone(),
         }
@@ -296,7 +322,11 @@ pub enum Stmt {
         name: String,
         value: Expr,
     },
-
+    NameDecl {
+        name: String,      /*/ the name of th ptr  */
+        to_type: TypeNode, /* the type of the ptr */
+        value: ,
+    },
     Reassign {
         name: String,
         value: Expr,
@@ -392,7 +422,6 @@ pub enum Stmt {
         handle_block: Vec<Stmt>,
         variants: Vec<EnumVariant>,
     },
-
     FnDecl {
         is_exported: bool,
         name: String,
@@ -400,7 +429,16 @@ pub enum Stmt {
         return_type: TypeNode,
         body: Vec<Stmt>,
     },
-
+    CaseStmt {
+        option: Expr,
+        set: Expr,
+        body: Vec<Stmt>,
+    },
+    SwitchStmt {
+        name: String,
+        condition: Expr,
+        cases: Vec<Stmt>,
+    },
     ReturnStmt(Expr),
     ForIn {
         item_decl: Box<Stmt>,
@@ -464,12 +502,6 @@ pub enum Stmt {
     Use {
         module_path: Vec<String>,
         imports: Option<Vec<String>>,
-    },
-
-    CaseStmt { value: Option<Expr>, body: Vec<Stmt> },
-    SwitchStmt {
-        condition: Expr,
-        cases: EitherBlock,
     },
 
     DelStmt(Expr),
