@@ -58,7 +58,7 @@ impl Parser {
                 // handle -> { fn1 , fn2 , ... }
                 //====================================================================
                 let t = self.peek().kind.clone();
-                if t == TokenKind::TypeHandle {
+                if t == TokenKind::Handle {
                     self.advance(); // 'handle'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'handle'")?;
                     self.consume(TokenKind::LBrace, "Expected '{' to open handle block")?;
@@ -136,7 +136,7 @@ impl Parser {
                 //====================================================================
                 // variants -> { ... }
                 //====================================================================
-                if t == TokenKind::TypeVariants {
+                if t == TokenKind::Variants {
                     self.advance(); // 'variants'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'variants'")?;
                     self.consume(TokenKind::LBrace, "Expected '{' to open variants block")?;
@@ -193,11 +193,11 @@ impl Parser {
                 //====================================================================
                 // keyword -> <str>;
                 //====================================================================
-                if t == TokenKind::TypeKeyword {
+                if t == TokenKind::Keyword {
                     self.advance(); // 'keyword'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'keyword'")?;
                     keyword = self.get_identifier("Expected keyword name")?;
-                    self.custom_keywords.push(keyword.clone());
+                    self.custom_keywords.insert(keyword.clone(), name.clone());
                     self.consume(TokenKind::SemiColon, "Expected ';' after keyword name")?;
                     continue;
                 }

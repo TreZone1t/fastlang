@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::lexer::token::TokenKind;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,16 +24,35 @@ pub struct TypeRef {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeNode {
     Simple(TypeRef),
-    Generic(TypeGeneric),
+    Generic(Generic),
 }
-
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypeGeneric {
+pub struct FnType {
+    name: String,
+    params: Vec<Param>,
+    return_type: TypeRef,
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstructorType {
+    name: String,
+    params: Vec<Param>,
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeMetadata {
+    name: String,                     // "Node"
+    fields: HashMap<String, TypeRef>, // {"data": Int, "next": UserType("Node")}
+    constructor: Option<ConstructorType>,
+    params: Vec<Param>,               // {"value": Int}
+    generics: Vec<TypeNode>,          // {"T": UserType("Type")}
+    methods: HashMap<String, FnType>, // {"set_next": Node.set_next -> void}
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct Generic {
     pub base_type: String,
     pub generics: Vec<TypeNode>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FieldDecl {
     pub visibility: Visibility,
     pub editability: Editability,
@@ -39,7 +60,19 @@ pub struct FieldDecl {
     pub name: String,
     pub value: Option<Expr>,
 }
+#[derive(Debug, Clone, PartialEq)]
+pub enum AccessMode {
+    ReadOnly,  // default (e.g., let name x = y;)
+    ReadWrite, // when using modify (e.g., let name x = modify y;)
+}
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReferenceKind {
+    Name,
+    Length,
+    Size,
+    Data,
+}
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScopeType {
     Fn,
@@ -55,7 +88,7 @@ pub enum ScopeType {
     String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: String,
     pub type_node: Option<TypeNode>,
@@ -135,13 +168,12 @@ impl Setting {
     pub fn from_str(s: &str) -> Self {
         match s {
             //custom -------
-            "index_access" => Setting::CustomIndexAccess,
-            "custom_constructor" => Setting::CustomConstructor,
-            "custom_keyword" => Setting::CustomKeyword,
-            "custom_generic" => Setting::CustomGeneric,
-            "iterator" => Setting::CustomIterator,
-            "display" => Setting::CustomDisplay,
-            "operators" => Setting::CustomOperators,
+            "index_access" | "custom_index_access" => Setting::CustomIndexAccess,
+            "constructor" | "custom_constructor" => Setting::CustomConstructor,
+            "generic" | "custom_generic" => Setting::CustomGeneric,
+            "iterator" | "custom_iterator" => Setting::CustomIterator,
+            "display" | "custom_display" => Setting::CustomDisplay,
+            "operators" | "custom_operators" => Setting::CustomOperators,
             //fn -------
             "param" => Setting::Param,
             "statement" => Setting::Statement,
@@ -150,12 +182,11 @@ impl Setting {
             "case" => Setting::Case,
             "break" => Setting::Break,
             //oop -------
+            "init" => Setting::Constructor,
             "private" => Setting::Private,
             "public" => Setting::Public,
             "static" => Setting::Static,
             "extends" => Setting::Extends,
-            "constructor" => Setting::Constructor,
-            "_" => Setting::Constructor, // only for from_token
             //enum --
             "variants" => Setting::Variants,
             //array and str -------
@@ -190,7 +221,7 @@ impl Setting {
             Setting::Public => "public".to_string(),
             Setting::Static => "static".to_string(),
             Setting::Extends => "extends".to_string(),
-            Setting::Constructor => "constructor".to_string(),
+            Setting::Constructor => "init".to_string(),
             //enum -------
             Setting::Variants => "variants".to_string(),
             //array and str -------
@@ -245,7 +276,7 @@ impl HandleMethods {
         }
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     LiteralInt(i64),
     LiteralFloat(f64),
@@ -258,7 +289,6 @@ pub enum Expr {
     This,
     Global,
 
-    ListLiteral(Vec<Expr>),
     ObjectLiteral(Vec<Stmt>),
 
     Instantiate {
@@ -271,11 +301,20 @@ pub enum Expr {
     Copy {
         target: Box<Expr>,
     },
-    MagicCast {
-        magic_type: String,
+    TypeOf {
         target: Box<Expr>,
     },
-
+    SizeOf {
+        target: Box<Expr>,
+    },
+    ToString {
+        target: Box<Expr>,
+    },
+    MagicReference {
+        target: Box<Expr>,
+        kind: ReferenceKind,     // (Name, Length, Size, Data)
+        access_mode: AccessMode, // (ReadOnly, ReadWrite)
+    },
     UnaryOp {
         operator: String,
         operand: Box<Expr>,
@@ -313,7 +352,7 @@ pub enum Expr {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     VarDecl {
         visibility: Visibility,
@@ -321,11 +360,6 @@ pub enum Stmt {
         type_node: Option<TypeNode>,
         name: String,
         value: Expr,
-    },
-    NameDecl {
-        name: String,      /*/ the name of th ptr  */
-        to_type: TypeNode, /* the type of the ptr */
-        value: ,
     },
     Reassign {
         name: String,
@@ -337,10 +371,14 @@ pub enum Stmt {
         name: String,
         statements: Vec<Stmt>,
     },
+    ObjectDecl {
+        is_exported: bool,
+        name: String,
+        fields: Vec<ObjectField>,
+    },
     CustomDecl {
         is_exported: bool,
         name: String,
-        keyword: String,
         settings: Option<Vec<Setting>>,
         handles: Option<Vec<HandleMethods>>,
         params: Option<Vec<Param>>,
@@ -361,7 +399,6 @@ pub enum Stmt {
     ClassDecl {
         is_exported: bool,
         name: String,
-        keyword: String,
         extends: Option<String>,
         handles: Vec<HandleMethods>,
         settings: Vec<Setting>,
@@ -376,7 +413,6 @@ pub enum Stmt {
     ArrayDecl {
         is_exported: bool,
         name: String,
-        keyword: String,
         length: i64,
         data: String,
         handles: Vec<HandleMethods>,
@@ -390,7 +426,6 @@ pub enum Stmt {
     StrDecl {
         is_exported: bool,
         name: String,
-        keyword: String,
         length: i64,
         data: String,
         handles: Vec<HandleMethods>,
@@ -400,10 +435,19 @@ pub enum Stmt {
         handle_block: Vec<Stmt>,
         constructor: Option<ConstructorDecl>,
     },
+    BlueprintDecl {
+        is_exported: bool,
+        name: String,
+        definition: BlueprintDef,
+    },
+    ImplDecl {
+        target: String,
+        methods: Vec<Stmt>,
+    },
+
     StructDecl {
         is_exported: bool,
         name: String,
-        keyword: String,
         handles: Vec<HandleMethods>,
         settings: Vec<Setting>,
         public_block: Vec<Stmt>,
@@ -416,7 +460,6 @@ pub enum Stmt {
     EnumDecl {
         is_exported: bool,
         name: String,
-        keyword: String,
         handles: Vec<HandleMethods>,
         settings: Vec<Setting>,
         handle_block: Vec<Stmt>,
@@ -511,7 +554,7 @@ pub enum Stmt {
 ///   Inline: block عادي `{ ... }`
 ///   ScopeCall: استدعاء scope من نوع looped/custom
 ///     e.g. `while (cond) -> my_looped_scope()`
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum EitherBlock {
     /// `{ statements... }` — inline block
     Inline(Vec<Stmt>),
@@ -519,32 +562,50 @@ pub enum EitherBlock {
     External(Expr),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ConstructorDecl {
     pub params: Vec<Param>,
     pub expected_types: Vec<String>,
     pub body: Vec<Stmt>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EventDecl {
     pub trigger_name: String,
     pub body: Vec<Stmt>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HandleDecl {
     pub target_flag: String,
     pub body: Vec<Stmt>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EnumVariant {
     pub name: String,
     pub data_types: Option<Vec<TypeNode>>, // e.g. Success(int) -> vec!["int"]
 }
+// 1. طرق تعريف الـ Blueprint (الـ 3 سيناريوهات اللي صممناها سوا)
+#[derive(Debug, Clone, PartialEq)]
+pub enum BlueprintDef {
+    Explicit(Vec<BlueprintField>), // طريقة البلوك الصريح: { int(32) x; }
+    FromExistingObject(String),    // طريقة النسخ: blueprint P = existing_obj;
+    FromTemporaryObject(Vec<ObjectField>), // طريقة الاستنتاج: blueprint P = {x: 3, y: 6};
+}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlueprintField {
+    pub name: String,
+    pub type_node: TypeNode,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectField {
+    pub name: String,
+    pub value: Expr,
+}
+#[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub statements: Vec<Stmt>,
 }

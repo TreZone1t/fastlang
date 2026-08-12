@@ -119,10 +119,39 @@ impl CodeGenerator {
                 // Value copy in C++
                 self.visit_expression(target)
             }
-            Expr::MagicCast { magic_type, target } => {
+            Expr::MagicReference {
+                target,
+                kind,
+                access_mode,
+            } => {
                 let target_code = self.visit_expression(target);
-                // In C++, reinterpret_cast or static_cast is safer, but C-style cast is easier for now
-                format!("({}*){}", magic_type, target_code)
+
+                // 1. تحديد هل المؤشر للقراءة فقط (const) ولا قابل للتعديل بناءً على الـ access_mode
+                let const_prefix = match access_mode {
+                    AccessMode::ReadOnly => "const ",
+                    AccessMode::ReadWrite => "", // لو modify يبقى مفيش const
+                };
+
+                // 2. توليد كود C++ المناسب لكل ReferenceKind
+                match kind {
+                    ReferenceKind::Name => {
+                        // بنترجم الـ name لـ void* (مؤشر عام في C++)
+                        // وبنجيب عنوان المتغير باستخدام &
+                        format!("({}void*)&({})", const_prefix, target_code)
+                    }
+                    ReferenceKind::Length => {
+                        // بنفترض إن الكائن في C++ (زي std::vector أو std::string) عنده دالة length
+                        format!("{}.length()", target_code)
+                    }
+                    ReferenceKind::Size => {
+                        // بنستخدم sizeof عشان نرجع حجم الكائن بالبايت
+                        format!("sizeof({})", target_code)
+                    }
+                    ReferenceKind::Data => {
+                        // بنستدعي data() عشان نرجع الـ Raw Pointer
+                        format!("{}.data()", target_code)
+                    }
+                }
             }
             Expr::PropertyAccess { object, property } => {
                 let obj_code = self.visit_expression(object);

@@ -1,8 +1,8 @@
 use crate::parser::ast::{Expr, Stmt, TypeRef};
+use crate::parser::parser::Parser;
 use crate::semantic::environment::{Environment, SymbolInfo};
 use std::cell::RefCell;
 use std::rc::Rc;
-
 pub struct SemanticAnalyzer {
     pub current_env: Rc<RefCell<Environment>>,
     pub in_class: bool,
@@ -93,10 +93,8 @@ impl SemanticAnalyzer {
                 name,
                 value,
             } => {
-                // Evaluate value first to infer type
                 let expr_type = self.visit_expression(value)?;
 
-                // Get the declared type
                 let declared_type = type_node
                     .clone()
                     .map(|t| match t {
@@ -105,66 +103,35 @@ impl SemanticAnalyzer {
                     })
                     .unwrap_or_else(|| "unknown".to_string());
 
-                // Enforce fixed sizes for array and str
-                if let Some(ref t) = type_node {
-                    let (t_base, t_size) = match t {
-                        crate::parser::ast::TypeNode::Simple(r) => (&r.base_type, r.size),
-                        crate::parser::ast::TypeNode::Generic(g) => (&g.base_type, None),
-                    };
-                    if (t_base.starts_with("array<") || t_base == "str" || t_base == "string")
-                        && t_size.is_none()
-                    {
-                        return Err(format!(
-                            "Semantic Error: Type '{}' requires a fixed size (e.g., '{}(255)')",
-                            t_base, t_base
-                        ));
-                    }
-                }
-
-                // Special handling for Magic Types (length, size, init, param, blueprint, type)
-                if ["length", "size", "init", "param", "blueprint", "type"]
-                    .contains(&declared_type.as_str())
-                    || declared_type.starts_with("type<")
-                {
-                    if declared_type.starts_with("type") || declared_type.starts_with("type<") {
-                        // type assignment logic
-                        // allow anything for now, or check if expr_type is a valid type name
-                    } else {
-                        self.validate_magic_type_assignment(&declared_type, &expr_type)?;
-                    }
-                    if declared_type == "length"
-                        && expr_type != "str"
-                        && expr_type != "string"
-                        && expr_type != "list"
-                    {
-                        return Err(format!("Semantic Error: 'length' can only be applied to string or list, got '{}'", expr_type));
-                    }
-                    if declared_type == "size" && expr_type == "blueprint" {
-                        return Err(
-                            "Semantic Error: Cannot get size of a blueprint directly".to_string()
-                        );
-                    }
-                } else if declared_type != expr_type && expr_type != "unknown" {
-                    // Allow assigning 'str' to 'string'
-                    if declared_type == "string" && expr_type == "str" {
-                        // valid
-                    } else if declared_type == "blueprint" && expr_type == "object" {
-                        // valid
-                    } else if declared_type == "name" && expr_type == "object" {
-                        // valid
-                    } else {
-                        let mut mismatch = !self.types_are_compatible(&declared_type, &expr_type);
-                        if expr_type == "list"
-                            && (declared_type.starts_with("array<")
-                                || declared_type.starts_with("list<"))
-                        {
-                            mismatch = false;
+                if expr_type != "unknown" {
+                    match declared_type.as_str() {
+                        "name" => {
+                            // المؤشرات تقبل أي شيء، لا حاجة لـ Type Checking
                         }
-                        if mismatch {
-                            return Err(format!(
-                                "Semantic Error: Type mismatch for '{}'. Declared '{}', got '{}'",
-                                name, declared_type, expr_type
-                            ));
+                        "blueprint" => {
+                            if expr_type != "object" {
+                                return Err(format!(
+                        "Semantic Error: 'blueprint' must be initialized with an object literal, got '{}'",
+                        expr_type
+                    ));
+                            }
+                        }
+                        "length" | "size" => {
+                            if !expr_type.starts_with("int") {
+                                return Err(format!(
+                                    "Semantic Error: '{}' expects an integer value, got '{}'",
+                                    declared_type, expr_type
+                                ));
+                            }
+                        }
+                        _ => {
+                            // التحقق الديناميكي العام (بدون أي استثناءات Hardcoded للـ Array أو الـ Str)
+                            if !self.types_are_compatible(&declared_type, &expr_type) {
+                                return Err(format!(
+                        "Semantic Error: Type mismatch for '{}'. Declared '{}', got '{}'",
+                        name, declared_type, expr_type
+                    ));
+                            }
                         }
                     }
                 }
@@ -177,12 +144,14 @@ impl SemanticAnalyzer {
                     settings: std::collections::HashSet::new(),
                 };
 
-                println!("DEBUG: Defining variable '{}' in environment", name);
+                println!(
+                    "DEBUG: Defining variable '{}' of type '{}' in environment",
+                    name, declared_type
+                );
                 self.current_env.borrow_mut().define(name.clone(), info)?;
             }
             Stmt::ReassignStmt { target, value } => {
                 let expr_type = self.visit_expression(value)?;
-                // Resolving target type
                 let target_type = self.visit_expression(target)?;
 
                 if let Expr::Identifier(name) = target {
@@ -197,17 +166,18 @@ impl SemanticAnalyzer {
                 }
 
                 if target_type != expr_type && target_type != "unknown" && expr_type != "unknown" {
-                    if target_type == "string" && expr_type == "str" {
-                        // Allow assigning 'str' to 'string'
-                    } else if target_type == "name" && expr_type == "object" {
-                        // Allow assigning 'object' to 'name'
+                    if target_type == "name" && expr_type == "object" {
+                        // السماح بتعيين object لـ name
                     } else if target_type == "type" || target_type.starts_with("type<") {
-                        // Allow assigning any type to 'type'
+                        // السماح بتعيين الأنواع
                     } else {
-                        return Err(format!(
-                            "Semantic Error: Cannot assign '{}' to type '{}'",
-                            expr_type, target_type
-                        ));
+                        // الاعتماد الكامل على نظام الأنواع دون هارد كود
+                        if !self.types_are_compatible(&target_type, &expr_type) {
+                            return Err(format!(
+                                "Semantic Error: Cannot assign '{}' to type '{}'",
+                                expr_type, target_type
+                            ));
+                        }
                     }
                 }
             }
@@ -794,7 +764,9 @@ impl SemanticAnalyzer {
                     }
                 }
             }
-            Stmt::SwitchStmt { condition, cases, .. } => {
+            Stmt::SwitchStmt {
+                condition, cases, ..
+            } => {
                 self.visit_expression(condition)?;
                 self.enter_scope();
                 for s in cases {
@@ -842,32 +814,22 @@ impl SemanticAnalyzer {
                 if !self.active_flags.contains(&"+is_return".to_string()) {
                     return Err("Semantic Error: Return statement is not allowed in this scope. 'is_return' flag is not enabled.".to_string());
                 }
-                let actual_type = self.visit_expression(expr)?;
-                if let Some(expected_type) = &self.active_return_type {
-                    // Allow 'list' literal to be assigned to 'array<...>'
-                    let mut mismatch = actual_type != "unknown"
-                        && match expected_type {
-                            crate::parser::ast::TypeNode::Simple(r) => &r.base_type,
-                            crate::parser::ast::TypeNode::Generic(g) => &g.base_type,
-                        } != "unknown"
-                        && actual_type
-                            != *match expected_type {
-                                crate::parser::ast::TypeNode::Simple(r) => &r.base_type,
-                                crate::parser::ast::TypeNode::Generic(g) => &g.base_type,
-                            };
-                    if actual_type == "list"
-                        && match expected_type {
-                            crate::parser::ast::TypeNode::Simple(r) => &r.base_type,
-                            crate::parser::ast::TypeNode::Generic(g) => &g.base_type,
-                        }
-                        .starts_with("array<")
-                    {
-                        mismatch = false;
-                    }
 
-                    if mismatch {
+                let actual_type = self.visit_expression(expr)?;
+
+                if let Some(expected_type) = &self.active_return_type {
+                    let expected_type_str = match expected_type {
+                        crate::parser::ast::TypeNode::Simple(r) => &r.base_type,
+                        crate::parser::ast::TypeNode::Generic(g) => &g.base_type,
+                    };
+
+                    // تحقق صارم وديناميكي للمخرجات
+                    if actual_type != "unknown"
+                        && expected_type_str != "unknown"
+                        && !self.types_are_compatible(expected_type_str, &actual_type)
+                    {
                         return Err(format!(
-                            "Semantic Error: Return type mismatch. Declared '{}', got '{}'",
+                            "Semantic Error: Return type mismatch. Expected '{}', got '{}'",
                             Self::format_type(expected_type),
                             actual_type
                         ));

@@ -10,24 +10,18 @@ impl Parser {
             | TokenKind::TypeFloat
             | TokenKind::TypeBool
             | TokenKind::TypeChar
-            | TokenKind::TypeName
+            | TokenKind::TypeLength
+            | TokenKind::TypeType
+            | TokenKind::TypeData
             | TokenKind::TypeVoid => true,
 
             // Built-in scope-backed types — always valid (array/str are first-class type keywords)
             TokenKind::TypeArray | TokenKind::TypeStr => true,
 
             // `scope` is the general type for any scope value
-            // (only custom and block scopes can be passed this way)
-            TokenKind::TypeScope => true,
-
+            TokenKind::TypeScope | TokenKind::TypeName => true,
             // Custom keywords registered dynamically via `keyword -> "...";` in scope bodies
-            // OR any registered built-in type token (for future use when std is fully external)
-            t => {
-                self.registered_builtin_type_tokens
-                    .iter()
-                    .any(|r| core::mem::discriminant(r) == core::mem::discriminant(t))
-                    || matches!(t, TokenKind::Identifier(n) if self.custom_keywords.contains(n))
-            }
+            t => matches!(t, TokenKind::MadeUpType(n) if self.metadata.contains_key(n)),
         }
     }
 
@@ -38,7 +32,7 @@ impl Parser {
     ///                        type, blueprint, init, static, public, private,
     ///                        event, handle, custom
     /// يرجع None لو الـ token الحالي مش type أصلاً.
-    fn parse_generic_list(
+    pub(crate) fn parse_generic_list(
         &mut self,
         generics: &mut Vec<crate::parser::ast::TypeNode>,
         size: &mut Option<i64>,
@@ -72,20 +66,22 @@ impl Parser {
             TokenKind::TypeChar => "char".to_string(),
             // Magic value types
             TokenKind::TypeName => "name".to_string(),
+            TokenKind::TypeLength => "length".to_string(),
+            TokenKind::TypeData => "data".to_string(),
+
+            TokenKind::TypeType => "type".to_string(),
             TokenKind::TypeVoid => "void".to_string(),
-            // `scope` as a type — represents any scope value
-            TokenKind::TypeScope => "scope".to_string(),
             // Built-in scope-backed types: always valid as first-class type keywords
-            TokenKind::TypeArray => "array".to_string(),
-            TokenKind::TypeStr => "str".to_string(),
             // Custom scope keywords — registered dynamically via `keyword -> "...";`
-            TokenKind::Identifier(n) if self.custom_keywords.contains(n) => n.to_string(),
+            TokenKind::MadeUpType(n) => n.to_string(),
             // User-defined type names (struct/class instances) via bare Identifier
             TokenKind::Identifier(n) => n.to_string(),
             _ => {
                 return Err(format!(
-                    "Syntax Error: Expected a type, found '{}'.",
-                    self.peek().kind.as_str()
+                    "Syntax Error: Expected a type, found '{}'. at line {}, column {}",
+                    self.peek().kind.as_str(),
+                    self.peek().line,
+                    self.peek().column
                 ))
             }
         };
@@ -140,7 +136,7 @@ impl Parser {
 
         if !generics.is_empty() {
             return Ok(crate::parser::ast::TypeNode::Generic(
-                crate::parser::ast::TypeGeneric {
+                crate::parser::ast::Generic {
                     base_type: result,
                     generics,
                 },
@@ -155,10 +151,6 @@ impl Parser {
         ))
     }
     pub(crate) fn parse_expression(&mut self) -> Result<Expr, String> {
-        println!(
-            "DEBUG: Successfully parsed array. Next token is: {:?}",
-            self.peek().kind
-        );
         self.parse_expr(0)
     }
 
@@ -176,10 +168,7 @@ impl Parser {
                     break;
                 }
                 lhs = self.parse_postfix(lhs)?;
-                println!(
-                    "DEBUG: Successfully parsed array. Next token is: {:?}",
-                    self.peek().kind
-                );
+
                 continue;
             }
 
@@ -191,10 +180,7 @@ impl Parser {
                 let op_str = self.current_op_str();
                 self.advance(); // نتخطى الـ operator
                 let rhs = self.parse_expr(right_bp)?;
-                println!(
-                    "DEBUG: Successfully parsed array. Next token is: {:?}",
-                    self.peek().kind
-                );
+
                 lhs = Expr::BinaryOp {
                     left: Box::new(lhs),
                     operator: op_str,
@@ -231,46 +217,31 @@ impl Parser {
             TokenKind::Int(v) => {
                 let val = *v;
                 self.advance();
-                println!(
-                    "DEBUG: Successfully parsed array. Next token is: {:?}",
-                    self.peek().kind
-                );
+
                 Ok(Expr::LiteralInt(val))
             }
             TokenKind::Float(v) => {
                 let val = *v;
                 self.advance();
-                println!(
-                    "DEBUG: Successfully parsed array. Next token is: {:?}",
-                    self.peek().kind
-                );
+
                 Ok(Expr::LiteralFloat(val))
             }
             TokenKind::String(s) => {
                 let val = s.clone();
                 self.advance();
-                println!(
-                    "DEBUG: Successfully parsed array. Next token is: {:?}",
-                    self.peek().kind
-                );
+
                 Ok(Expr::LiteralString(val.to_string()))
             }
             TokenKind::Char(c) => {
                 let val = *c;
                 self.advance();
-                println!(
-                    "DEBUG: Successfully parsed array. Next token is: {:?}",
-                    self.peek().kind
-                );
+
                 Ok(Expr::LiteralChar(val))
             }
             TokenKind::Bool(b) => {
                 let val = *b;
                 self.advance();
-                println!(
-                    "DEBUG: Successfully parsed array. Next token is: {:?}",
-                    self.peek().kind
-                );
+
                 Ok(Expr::LiteralBool(val))
             }
 
@@ -278,10 +249,7 @@ impl Parser {
             TokenKind::Identifier(name) => {
                 let val = name.clone();
                 self.advance();
-                println!(
-                    "DEBUG: Successfully parsed array. Next token is: {:?}",
-                    self.peek().kind
-                );
+
                 Ok(Expr::Identifier(val.to_string()))
             }
 
@@ -321,20 +289,14 @@ impl Parser {
                 let mut elements = Vec::new();
                 if self.peek().kind != TokenKind::RBracket {
                     elements.push(self.parse_expr(0)?);
-                    println!(
-                        "DEBUG: Successfully parsed array. Next token is: {:?}",
-                        self.peek().kind
-                    );
+
                     while self.peek().kind == TokenKind::Comma {
                         self.advance();
                         elements.push(self.parse_expr(0)?);
                     }
                 }
                 self.consume(TokenKind::RBracket, "Expected ']' to close array literal")?;
-                println!(
-                    "DEBUG: Successfully parsed array. Next token is: {:?}",
-                    self.peek().kind
-                );
+
                 Ok(Expr::ArrayLiteral(elements))
             }
 

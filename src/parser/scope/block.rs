@@ -1,52 +1,32 @@
+use std::fmt::format;
+
 use crate::lexer::token::TokenKind;
 use crate::parser::ast::*;
 use crate::parser::parser::Parser;
 impl Parser {
-    pub(crate) fn parse_public_block(&mut self) -> Result<Vec<Stmt>, String> {
-        self.advance(); // 'public'
+    pub(crate) fn parse_field_block(&mut self) -> Result<Vec<Stmt>, String> {
+        self.advance(); // 'public' , 'private' or 'static'
         self.consume(TokenKind::Arrow, "Expected '->' after 'public'")?;
         self.consume(TokenKind::LBrace, "Expected '{' to open public block")?;
         let mut block = Vec::new();
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-            if let Some(stmt) = self.parse_statement()? {
-                block.push(stmt);
+            //we have only fn decl and var decl so we will not use the parse_statement ever here
+            let token = self.peek().kind.clone();
+            if token == TokenKind::Fn {
+                let st: Stmt = self.parse_fn_decl("".to_string())?;
+                block.push(st);
+                continue;
             }
+            if self.is_type_token(&token) {
+                let st = self.parse_var_decl()?;
+                block.push(st);
+                continue;
+            }
+            return Err(
+                "Syntax Error: Expected fn or var declaration inside public block".to_string(),
+            );
         }
         self.consume(TokenKind::RBrace, "Expected '}' to close public block")?;
-        if self.peek().kind == TokenKind::SemiColon {
-            self.advance();
-        }
-        Ok(block)
-    }
-
-    pub(crate) fn parse_private_block(&mut self) -> Result<Vec<Stmt>, String> {
-        self.advance(); // 'private'
-        self.consume(TokenKind::Arrow, "Expected '->' after 'private'")?;
-        self.consume(TokenKind::LBrace, "Expected '{' to open private block")?;
-        let mut block = Vec::new();
-        while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-            if let Some(stmt) = self.parse_statement()? {
-                block.push(stmt);
-            }
-        }
-        self.consume(TokenKind::RBrace, "Expected '}' to close private block")?;
-        if self.peek().kind == TokenKind::SemiColon {
-            self.advance();
-        }
-        Ok(block)
-    }
-
-    pub(crate) fn parse_static_block(&mut self) -> Result<Vec<Stmt>, String> {
-        self.advance(); // 'static'
-        self.consume(TokenKind::Arrow, "Expected '->' after 'static'")?;
-        self.consume(TokenKind::LBrace, "Expected '{' to open static block")?;
-        let mut block = Vec::new();
-        while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-            if let Some(stmt) = self.parse_statement()? {
-                block.push(stmt);
-            }
-        }
-        self.consume(TokenKind::RBrace, "Expected '}' to close static block")?;
         if self.peek().kind == TokenKind::SemiColon {
             self.advance();
         }
@@ -59,8 +39,19 @@ impl Parser {
         self.consume(TokenKind::LBrace, "Expected '{' to open generic block")?;
         let mut block = Vec::new();
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-            if let Some(stmt) = self.parse_statement()? {
-                block.push(stmt);
+            // we only expect the type keyword
+            let token = self.peek().kind.clone();
+            if token == TokenKind::TypeType {
+                self.advance(); // consume type
+                let type_name = self.get_identifier("Expected type name")?;
+                self.consume(TokenKind::SemiColon, "Expected ';' after type name")?;
+                continue;
+            } else {
+                return Err(format!(
+                    "Syntax Error: Expected only  type keyword in generic block at line {}, column {}",
+                    self.peek().line,
+                    self.peek().column
+                ));
             }
         }
         self.consume(TokenKind::RBrace, "Expected '}' to close generic block")?;
@@ -141,7 +132,7 @@ impl Parser {
             expected_types: Vec::new(),
         };
 
-        if self.peek().kind == TokenKind::TypeParam {
+        if self.peek().kind == TokenKind::Param {
             self.advance();
             self.consume(TokenKind::Arrow, "Expected '->' after 'param'")?;
             self.consume(
@@ -211,7 +202,8 @@ impl Parser {
         if self.peek().kind != TokenKind::RParen {
             loop {
                 let (name, type_node) = if matches!(self.peek().kind, TokenKind::Identifier(_))
-                    && self.tokens.get(self.current + 1).map(|token| &token.kind) == Some(&TokenKind::Colon)
+                    && self.tokens.get(self.current + 1).map(|token| &token.kind)
+                        == Some(&TokenKind::Colon)
                 {
                     let name = self.get_identifier("Expected parameter name")?;
                     self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
@@ -263,7 +255,7 @@ impl Parser {
                     if self.peek().kind == TokenKind::Identifier(String::new()) {
                         set = self.parse_expression()?;
                         if self.peek().kind == TokenKind::SemiColon {
-                            self.advance(); 
+                            self.advance();
                         continue;
                     }
                     }
@@ -284,7 +276,7 @@ impl Parser {
                     }
                 }
             }else if option == TokenKind::Identifier(String::new()) {
-                
+
         }
         */
     }

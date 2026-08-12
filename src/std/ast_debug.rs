@@ -244,7 +244,7 @@
                 editability: Editable,
                 type_node: Some(
                     Generic(
-                        TypeGeneric {
+                        Generic {
                             base_type: "type",
                             generics: [
                                 Simple(
@@ -347,7 +347,7 @@
                 ],
                 return_type: Some(
                     Generic(
-                        TypeGeneric {
+                        Generic {
                             base_type: "Option",
                             generics: [
                                 Simple(
@@ -917,7 +917,7 @@
                 params: [],
                 return_type: Some(
                     Generic(
-                        TypeGeneric {
+                        Generic {
                             base_type: "Option",
                             generics: [
                                 Simple(
@@ -1120,7 +1120,7 @@
                         name: "arr",
                         type_node: Some(
                             Generic(
-                                TypeGeneric {
+                                Generic {
                                     base_type: "array",
                                     generics: [
                                         Simple(
@@ -1267,7 +1267,7 @@
                 editability: Editable,
                 type_node: Some(
                     Generic(
-                        TypeGeneric {
+                        Generic {
                             base_type: "type",
                             generics: [
                                 Simple(
@@ -1295,7 +1295,7 @@
                         name: "arr",
                         type_node: Some(
                             Generic(
-                                TypeGeneric {
+                                Generic {
                                     base_type: "array",
                                     generics: [
                                         Simple(

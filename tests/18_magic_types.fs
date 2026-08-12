@@ -1,15 +1,14 @@
 use std::{array};
 scope main -> {
     type -> fn;
-        array<int(32)> arr1 -> [1,2,3];
-        let int(32) y = 10;
+    statement -> {
+                let int(32) y = 10;
         fn test_magic() -> void {
             // Test 1: modify with let
             let name x = modify y;
             log(&x);
             // Test 2: copy with let
-            array<int(32)> arr2 -> copy arr1;
-            
+            array<int(32)> arr2 -> [1,2,3];
             // Test 3: Magic cast 
             struct Node {
                 public -> {
@@ -21,7 +20,6 @@ scope main -> {
             }
             let int(32) temp = 10;
             Node n -> new Node(temp);
-        }
-        test_magic();
     }
-    
+    return -> int(32);
+    };

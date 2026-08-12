@@ -50,6 +50,11 @@ impl Parser {
             }
             TokenKind::Throw => self.parse_throw_stmt(),
             TokenKind::Try => self.parse_try_catch_stmt(),
+            // Custom keyword: `my_list<int(32)> items -> [1, 2];`
+            TokenKind::Identifier(id) => self.parse_expression_or_reassignment(),
+            TokenKind::MadeUpType(id) => {
+                todo!()
+            }
             kind if self.is_type_token(kind) => self.parse_var_decl(),
             _ => self.parse_expression_stmt(),
         };
@@ -97,37 +102,11 @@ impl Parser {
 
                 self.consume(TokenKind::RBrace, "Expected '}' after import list")?;
 
-                // Register built-in scope type tokens for known imported names.
-                // This lets us use e.g. `array<int(32)> x -> ...;` after `use std::{array};`
-                // without hardcoding std library scope names — we just map the keyword string.
-                for name in &selected {
-                    match name.as_str() {
-                        "array" | "Array" => {
-                            if !self.registered_builtin_type_tokens.iter().any(|t| {
-                                core::mem::discriminant(t)
-                                    == core::mem::discriminant(&TokenKind::TypeArray)
-                            }) {
-                                self.registered_builtin_type_tokens
-                                    .push(TokenKind::TypeArray);
-                            }
-                        }
-                        "str" | "Str" => {
-                            if !self.registered_builtin_type_tokens.iter().any(|t| {
-                                core::mem::discriminant(t)
-                                    == core::mem::discriminant(&TokenKind::TypeStr)
-                            }) {
-                                self.registered_builtin_type_tokens.push(TokenKind::TypeStr);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
                 imports = Some(selected);
                 break;
             }
 
-            module_path.push(self.get_identifier("Expected module name after '::'")?)
+            module_path.push(self.get_identifier("Expected module name after '::'")?);
         }
 
         self.consume(TokenKind::SemiColon, "Expected ';' after use statement")?;
@@ -136,6 +115,7 @@ impl Parser {
             imports,
         })
     }
+
     pub(crate) fn parse_exported_stmt(&mut self) -> Result<Stmt, String> {
         self.advance(); // consume 'export'
 
@@ -185,11 +165,7 @@ impl Parser {
             let type_node = self.parse_type()?;
             let name = self.get_identifier("Expected variable name after 'let'")?;
             let mut value = Expr::Identifier("__param__".to_string());
-            println!(
-                "DEBUG: [Let branch] Token after name '{}' is {:?}",
-                name,
-                self.peek().kind
-            );
+
             if self.peek().kind == TokenKind::Assign {
                 self.advance();
                 value = self.parse_expression()?;
@@ -215,28 +191,12 @@ impl Parser {
                 value,
             });
         } else {
-            println!(
-                "DEBUG: [Bare branch] Token after name is {:?}",
-                self.previous(Some(2)).kind
-            );
             let type_node = self.parse_type()?;
-            println!(
-                "DEBUG: [Bare branch] Token after name '{:?}' is {:?}",
-                type_node,
-                self.peek().kind
-            );
+
             let name = self.get_identifier("Expected variable name after type")?;
-            println!(
-                "DEBUG: [Bare branch] Token after name '{}' is {:?}",
-                name,
-                self.peek().kind
-            );
+
             let mut value = Expr::Identifier("__param__".to_string());
-            println!(
-                "DEBUG: [Bare branch] Token after name '{:?}' is {:?}",
-                value,
-                self.peek().kind
-            );
+
             if self.peek().kind == TokenKind::Arrow {
                 self.advance();
                 value = self.parse_expression()?;
@@ -539,6 +499,119 @@ impl Parser {
         Ok(Stmt::ThrowStmt(expr))
     }
 
+    /// يُعالج سطراً يبدأ بـ Identifier عادي (مش custom keyword):
+    /// إما إعادة تعيين: `items -> [1];`  أو  expression: `foo.bar();`
+    pub(crate) fn parse_expression_or_reassignment(&mut self) -> Result<Stmt, String> {
+        // Look-ahead: `TypeName varName ->` يعني VarDecl بـ user-defined type
+        // مثل `Node n -> new Node(temp);` أو `Node<T> n -> ...;`
+        if let TokenKind::Identifier(type_name) = self.peek().kind.clone() {
+            let next1 = self.tokens.get(self.current + 1).map(|t| &t.kind);
+            let next2 = self.tokens.get(self.current + 2).map(|t| &t.kind);
+
+            // `TypeName varName ->` pattern
+            let is_var_decl = match (next1, next2) {
+                (Some(TokenKind::Identifier(_)), Some(TokenKind::Arrow)) => true,
+                (Some(TokenKind::Less), _) => {
+                    // `TypeName<...> varName ->` - بنفحص أبعد
+                    // نبحث عن `>` ثم Identifier ثم `->`
+                    let mut i = self.current + 2;
+                    let mut depth = 1;
+                    while i < self.tokens.len() && depth > 0 {
+                        match &self.tokens[i].kind {
+                            TokenKind::Less => depth += 1,
+                            TokenKind::Greater => depth -= 1,
+                            _ => {}
+                        }
+                        i += 1;
+                    }
+                    // بعد الـ `>`: هل في Identifier ثم `->`؟
+                    matches!(
+                        (
+                            self.tokens.get(i).map(|t| &t.kind),
+                            self.tokens.get(i + 1).map(|t| &t.kind)
+                        ),
+                        (Some(TokenKind::Identifier(_)), Some(TokenKind::Arrow))
+                    )
+                }
+                _ => false,
+            };
+
+            if is_var_decl {
+                return self.parse_var_decl();
+            }
+        }
+
+        let expr = self.parse_expression()?;
+
+        // إعادة تعيين: target -> value;   أو   target = value;
+        if self.peek().kind == TokenKind::Arrow || self.peek().kind == TokenKind::Assign {
+            self.advance(); // consume '->' or '='
+            let value = self.parse_expression()?;
+            self.consume(TokenKind::SemiColon, "Expected ';' after reassignment")?;
+            return Ok(Stmt::ReassignStmt {
+                target: expr,
+                value,
+            });
+        }
+
+        self.consume(
+            TokenKind::SemiColon,
+            "Expected ';' after expression statement",
+        )?;
+        Ok(Stmt::ExpressionStmt(expr))
+    }
+
+    /// يُعالج تعريف متغير باستخدام Custom Keyword:
+    /// `my_list<int(32)> items -> [1, 2];`
+    /// حيث `keyword_name` = "my_list" و `original_scope_name` = "array"
+    pub(crate) fn parse_custom_keyword_var_decl(
+        &mut self,
+        keyword_name: String,
+        original_scope_name: String,
+    ) -> Result<Stmt, String> {
+        // parse optional generic params: <int(32)>
+        let mut generics = Vec::new();
+        let mut _size: Option<i64> = None;
+        if self.peek().kind == crate::lexer::token::TokenKind::Less {
+            self.advance();
+            self.parse_generic_list(&mut generics, &mut _size, original_scope_name == "array")?;
+        }
+
+        // اسم المتغير
+        let name = self.get_identifier("Expected variable name after custom type keyword")?;
+
+        // '->' للتعيين
+        self.consume(
+            crate::lexer::token::TokenKind::Arrow,
+            "Expected '->' after variable name in custom keyword declaration",
+        )?;
+        let value = self.parse_expression()?;
+        self.consume(
+            crate::lexer::token::TokenKind::SemiColon,
+            "Expected ';' after custom keyword variable declaration",
+        )?;
+
+        let type_node = if generics.is_empty() {
+            crate::parser::ast::TypeNode::Simple(crate::parser::ast::TypeRef {
+                base_type: keyword_name,
+                size: None,
+            })
+        } else {
+            crate::parser::ast::TypeNode::Generic(crate::parser::ast::Generic {
+                base_type: keyword_name,
+                generics,
+            })
+        };
+
+        Ok(Stmt::VarDecl {
+            visibility: crate::parser::ast::Visibility::Private,
+            editability: crate::parser::ast::Editability::Editable,
+            type_node: Some(type_node),
+            name,
+            value,
+        })
+    }
+
     pub(crate) fn parse_expression_stmt(&mut self) -> Result<Stmt, String> {
         let expr = self.parse_expression()?;
 
@@ -554,59 +627,6 @@ impl Parser {
                 target: expr,
                 value,
             });
-        }
-
-        // --- Bare declaration for user-defined types: MyClass x = 10; ---
-        // We only enter this branch when `expr` was a bare Identifier that is
-        // either a custom scope keyword OR a registered built-in type token name,
-        // AND the next token is another Identifier (the variable name).
-        // This prevents misinterpreting scope calls like `someScope(args) myVar`.
-        let expr_is_type_name = match &expr {
-            Expr::Identifier(t) => {
-                // Only treat as a type if it's a known custom keyword
-                self.custom_keywords.contains(t)
-                    // OR it's the string name of a registered built-in type token
-                    // (use type_keyword() since as_str() doesn't cover TypeArray/TypeStr)
-                    || self.registered_builtin_type_tokens.iter().any(|tok| {
-                        tok.type_keyword().map_or(false, |kw| kw == t.as_str())
-                    })
-            }
-            _ => false,
-        };
-
-        if expr_is_type_name {
-            if let TokenKind::Identifier(var_name) = &self.peek().kind.clone() {
-                let name = var_name.clone();
-                self.advance(); // consume variable name
-
-                let mut value = Expr::Identifier("__param__".to_string());
-                if self.peek().kind == TokenKind::Assign || self.peek().kind == TokenKind::Arrow {
-                    self.advance();
-                    value = self.parse_expression()?;
-                }
-
-                if self.peek().kind == TokenKind::SemiColon {
-                    self.advance();
-                }
-
-                let base_type = match &expr {
-                    Expr::Identifier(t) => t.clone(),
-                    _ => "unknown".to_string(),
-                };
-
-                return Ok(Stmt::VarDecl {
-                    visibility: crate::parser::ast::Visibility::Public,
-                    editability: crate::parser::ast::Editability::Editable,
-                    type_node: Some(crate::parser::ast::TypeNode::Simple(
-                        crate::parser::ast::TypeRef {
-                            base_type,
-                            size: None,
-                        },
-                    )),
-                    name: name.to_string(),
-                    value,
-                });
-            }
         }
 
         self.consume(
@@ -660,10 +680,17 @@ impl Parser {
             let s = n.to_string();
             self.advance();
             return Ok(s);
+        } else {
+            return Err(err_msg.to_string());
         }
-        let kw = self.peek().kind.clone().as_str().to_string();
-        let s = kw;
-        self.advance();
-        return Ok(s);
+    }
+    pub(crate) fn get_sc_type(&mut self, err_msg: &str) -> Result<String, String> {
+        if let TokenKind::MadeUpType(n) = &self.peek().kind.clone() {
+            let s = n.to_string();
+            self.advance();
+            return Ok(s);
+        } else {
+            return Err(err_msg.to_string());
+        }
     }
 }

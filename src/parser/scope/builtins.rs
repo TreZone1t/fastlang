@@ -45,7 +45,7 @@ impl Parser {
                 //====================================================================
                 // constructor    _ () -> { ... }
                 //====================================================================
-                if t == TokenKind::Underscore {
+                if t == TokenKind::Init {
                     match self.parse_constructor_decl() {
                         Ok(c) => constructor = Some(c),
                         Err(e) => {
@@ -58,30 +58,14 @@ impl Parser {
                 //====================================================================
                 // generic -> { ... }
                 //====================================================================
-                if t == TokenKind::TypeGeneric {
-                    self.advance(); // 'generic'
-                    self.consume(TokenKind::Arrow, "Expected '->' after 'generic'")?;
-                    self.consume(TokenKind::LBrace, "Expected '{' to open generic block")?;
-
-                    while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        match self.parse_statement() {
-                            Ok(Some(stmt)) => generic_block.push(stmt),
-                            Ok(None) => {
-                                if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                                    self.advance();
-                                }
-                            }
-                            Err(err) => return Err(err),
-                        }
-                    }
-
-                    self.consume(TokenKind::RBrace, "Expected '}' to close generic block")?;
+                if t == TokenKind::Generic {
+                    generic_block = self.parse_generic_block()?;
                 }
                 //====================================================================
                 //====================================================================
                 // handle -> { fn1 , fn2 , ... }
                 //====================================================================
-                if t == TokenKind::TypeHandle {
+                if t == TokenKind::Handle {
                     self.advance(); // 'handle'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'handle'")?;
                     self.consume(TokenKind::LBrace, "Expected '{' to open handle block")?;
@@ -158,53 +142,16 @@ impl Parser {
                 //====================================================================
                 // public -> { ... }
                 //====================================================================
-                if self.peek().kind == TokenKind::TypePublic {
-                    self.advance(); // 'public'
-                    self.consume(TokenKind::Arrow, "Expected '->' after 'public'")?;
-                    self.consume(TokenKind::LBrace, "Expected '{' to open public block")?;
-
-                    while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        match self.parse_statement() {
-                            Ok(Some(stmt)) => public_block_ast.push(stmt),
-                            Ok(None) => {
-                                if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                                    self.advance();
-                                }
-                            }
-                            Err(err) => return Err(err),
-                        }
-                    }
-
-                    self.consume(TokenKind::RBrace, "Expected '}' to close public block")?;
-                    if self.peek().kind == TokenKind::SemiColon {
-                        self.advance();
-                    }
+                if self.peek().kind == TokenKind::Public {
+                    public_block_ast = self.parse_field_block()?;
+                    self.advance();
                     continue;
                 }
                 //====================================================================
                 // private -> { ... }
                 //====================================================================
-                if t == TokenKind::TypePrivate {
-                    self.advance(); // 'private'
-                    self.consume(TokenKind::Arrow, "Expected '->' after 'private'")?;
-                    self.consume(TokenKind::LBrace, "Expected '{' to open private block")?;
-
-                    while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        match self.parse_statement() {
-                            Ok(Some(stmt)) => private_block_ast.push(stmt),
-                            Ok(None) => {
-                                if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                                    self.advance();
-                                }
-                            }
-                            Err(err) => return Err(err),
-                        }
-                    }
-
-                    self.consume(TokenKind::RBrace, "Expected '}' to close private block")?;
-                    if self.peek().kind == TokenKind::SemiColon {
-                        self.advance();
-                    }
+                if t == TokenKind::Private {
+                    private_block_ast = self.parse_field_block()?;
                     continue;
                 }
                 //====================================================================
@@ -232,29 +179,28 @@ impl Parser {
                     self.consume(TokenKind::SemiColon, "Expected ';' after data name")?;
                     continue;
                 }
-                //====================================================================
-                // keyword -> <name>;
-                //====================================================================
-                if t == TokenKind::TypeKeyword {
-                    self.advance(); // 'keyword'
-                    self.consume(TokenKind::Arrow, "Expected '->' after 'keyword'")?;
-                    keyword = self.get_identifier("Expected keyword name")?;
-                    self.custom_keywords.push(keyword.clone());
-                    self.consume(TokenKind::SemiColon, "Expected ';' after keyword name")?;
-                    continue;
-                }
+            /*                 //====================================================================
+            // keyword -> <name>;
+            //====================================================================
+            if t == TokenKind::Keyword {
+                self.advance(); // 'keyword'
+                self.consume(TokenKind::Arrow, "Expected '->' after 'keyword'")?;
+                keyword = self.get_identifier("Expected keyword name")?;
+                self.custom_keywords.insert(keyword.clone(), name.clone());
+                self.consume(TokenKind::SemiColon, "Expected ';' after keyword name")?;
+                continue;
+            }*/
             } else {
                 let s_token = t.as_str();
-                print!("DEBUG: Invalid feild found : {} , that is not allow in the array typed scope to use it \n\t - use custom typed scope with enable some setting it will work if it valid" , s_token);
+                print!("DEBUG: Invalid field found : {} , that is not allow in the array typed scope to use it \n\t - use custom typed scope with enable some setting it will work if it valid" , s_token);
                 return Err(
-                    ("Syntax Error: Invalid feild  declaration at line {}, column {}").to_string(),
+                    ("Syntax Error: Invalid field  declaration at line {}, column {}").to_string(),
                 );
             }
         }
         return Ok(Stmt::ArrayDecl {
             is_exported: false,
             name,
-            keyword,
             length,
             handles,
             settings,
@@ -311,7 +257,7 @@ impl Parser {
                 //====================================================================
                 // constructor    _ () -> { ... }
                 //====================================================================
-                if t == TokenKind::Underscore {
+                if t == TokenKind::Init {
                     match self.parse_constructor_decl() {
                         Ok(c) => constructor = Some(c),
                         Err(e) => {
@@ -324,7 +270,7 @@ impl Parser {
                 //====================================================================
                 // handle -> { fn1 , fn2 , ... }
                 //====================================================================
-                if t == TokenKind::TypeHandle {
+                if t == TokenKind::Handle {
                     self.advance(); // 'handle'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'handle'")?;
                     self.consume(TokenKind::LBrace, "Expected '{' to open handle block")?;
@@ -402,53 +348,15 @@ impl Parser {
                 //====================================================================
                 // public -> { ... }
                 //====================================================================
-                if self.peek().kind == TokenKind::TypePublic {
-                    self.advance(); // 'public'
-                    self.consume(TokenKind::Arrow, "Expected '->' after 'public'")?;
-                    self.consume(TokenKind::LBrace, "Expected '{' to open public block")?;
-
-                    while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        match self.parse_statement() {
-                            Ok(Some(stmt)) => public_block_ast.push(stmt),
-                            Ok(None) => {
-                                if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                                    self.advance();
-                                }
-                            }
-                            Err(err) => return Err(err),
-                        }
-                    }
-
-                    self.consume(TokenKind::RBrace, "Expected '}' to close public block")?;
-                    if self.peek().kind == TokenKind::SemiColon {
-                        self.advance();
-                    }
+                if self.peek().kind == TokenKind::Public {
+                    public_block_ast = self.parse_field_block()?;
                     continue;
                 }
                 //====================================================================
                 // private -> { ... }
                 //====================================================================
-                if t == TokenKind::TypePrivate {
-                    self.advance(); // 'private'
-                    self.consume(TokenKind::Arrow, "Expected '->' after 'private'")?;
-                    self.consume(TokenKind::LBrace, "Expected '{' to open private block")?;
-
-                    while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        match self.parse_statement() {
-                            Ok(Some(stmt)) => private_block_ast.push(stmt),
-                            Ok(None) => {
-                                if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                                    self.advance();
-                                }
-                            }
-                            Err(err) => return Err(err),
-                        }
-                    }
-
-                    self.consume(TokenKind::RBrace, "Expected '}' to close private block")?;
-                    if self.peek().kind == TokenKind::SemiColon {
-                        self.advance();
-                    }
+                if t == TokenKind::Private {
+                    private_block_ast = self.parse_field_block()?;
                     continue;
                 }
                 //====================================================================
@@ -479,18 +387,18 @@ impl Parser {
                 //====================================================================
                 // keyword -> <name>;
                 //====================================================================
-                if t == TokenKind::TypeKeyword {
+                if t == TokenKind::Keyword {
                     self.advance(); // 'keyword'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'keyword'")?;
                     keyword = self.get_identifier("Expected keyword name")?;
-                    self.custom_keywords.push(keyword.clone());
+                    self.custom_keywords.insert(keyword.clone(), name.clone());
                     self.consume(TokenKind::SemiColon, "Expected ';' after keyword name")?;
                     continue;
                 }
             } else {
-                print!("DEBUG: Invalid feild found : {} , that is not allow in the array typed scope to use it \n\t - use custom typed scope with enable some setting it will work if it valid" , t.as_str());
+                print!("DEBUG: Invalid field found : {} , that is not allow in the array typed scope to use it \n\t - use custom typed scope with enable some setting it will work if it valid" , t.as_str());
                 return Err(
-                    ("Syntax Error: Invalid feild  declaration at line {}, column {}").to_string(),
+                    ("Syntax Error: Invalid field  declaration at line {}, column {}").to_string(),
                 );
             }
         }
@@ -510,60 +418,12 @@ impl Parser {
     }
 
     pub(crate) fn parse_fn_decl(&mut self, name: String) -> Result<Stmt, String> {
-        // Traditional form: `fn name(param: Type) -> Type { ... }`.
-        // This must consume `fn` before parsing the body; otherwise
-        // `parse_block` sees it again and recursively parses forever.
-        if name.is_empty() {
-            self.consume(TokenKind::Fn, "Expected 'fn'")?;
-            let name = self.get_identifier("Expected function name")?;
-            self.consume(TokenKind::LParen, "Expected '(' after function name")?;
-
-            let mut params = Vec::new();
-            while self.peek().kind != TokenKind::RParen {
-                let param_name = self.get_identifier("Expected parameter name")?;
-                self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
-                let type_node = self.parse_type()?;
-                params.push(Param {
-                    name: param_name,
-                    type_node: Some(type_node),
-                });
-                if self.peek().kind == TokenKind::Comma {
-                    self.advance();
-                } else {
-                    break;
-                }
-            }
-            self.consume(TokenKind::RParen, "Expected ')' after function parameters")?;
-
-            let return_type = if self.peek().kind == TokenKind::Arrow {
-                self.advance();
-                self.parse_type()?
-            } else {
-                TypeNode::Simple(TypeRef {
-                    base_type: "void".to_string(),
-                    size: None,
-                })
-            };
-
-            self.consume(TokenKind::LBrace, "Expected '{' to open function body")?;
-            let body = self.parse_block()?;
-            return Ok(Stmt::FnDecl {
-                is_exported: false,
-                name,
-                params,
-                return_type,
-                body,
-            });
-        }
-
-        // Scope form: `scope name -> { type -> fn; <statements> }`.
-        // The scope dispatcher has already consumed the outer `{` and type line.
         let mut settings: Vec<crate::parser::ast::Setting> = Vec::new();
         //todo: handle methods for future updates
         let mut handles: Vec<crate::parser::ast::HandleMethods> = Vec::new();
         let mut handle_block: Vec<Stmt> = Vec::new();
 
-        let mut statement_block_ast: Vec<Stmt> = Vec::new();
+        let mut statement_block: Vec<Stmt> = Vec::new();
         let mut params: Vec<Param> = Vec::new();
         let mut return_type: TypeNode =
             crate::parser::ast::TypeNode::Simple(crate::parser::ast::TypeRef {
@@ -576,208 +436,142 @@ impl Parser {
         settings.push(crate::parser::ast::Setting::Return);
         settings.push(crate::parser::ast::Setting::Param);
         settings.push(crate::parser::ast::Setting::Handle);
+        // لو جاي من scope dispatcher (name != "") → نحلل الـ statements مباشرةً
+        // لو جاي مباشر (name == "") → الـ scope settings parsing (غير مستخدم حالياً)
+        let normal = name.is_empty();
 
-        // adding allowed handles
-        let mut is_not_in_scope = name == "";
-
-        if !is_not_in_scope {
-            //we not been redirect by the scope parsing fn
-            name = self.get_identifier("Expected class name")?;
-            self.advance();
-            let mut method_params: Vec<Param> = Vec::new();
-            let return_type: TypeNode;
-            if self.peek().kind == TokenKind::LParen {
-                self.advance();
-                if self.peek().kind != TokenKind::RParen {
-                    // we expect a list of params
-                    // (a : int(32), b : int(32)) -> void
-                    loop {
-                        let name: String = self.get_identifier("Expected parameter name")?;
-                        self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
-                        let type_node = self.parse_type()?;
-                        method_params.push(Param {
-                            name,
-                            type_node: Some(type_node),
-                        });
-                        if self.peek().kind == TokenKind::Comma {
-                            self.advance();
-                        } else {
-                            break;
-                        }
+        if normal {
+            // fn name
+            self.advance(); // consume 'fn''
+            name = self.get_identifier("Expected function name")?;
+            self.consume(TokenKind::LParen, "Expected '(' after function name")?;
+            if self.peek().kind != TokenKind::RParen {
+                // we expect a list of params
+                // (a : int(32), b : int(32)) -> void
+                loop {
+                    let param_name: String = self.get_identifier("Expected parameter name")?;
+                    self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
+                    let type_node = self.parse_type()?;
+                    params.push(Param {
+                        name: param_name,
+                        type_node: Some(type_node),
+                    });
+                    if self.peek().kind == TokenKind::Comma {
+                        self.advance();
+                    } else {
+                        break;
                     }
                 }
-                self.consume(
-                    TokenKind::RParen,
-                    "Expected ')' after handle method parameters",
-                )?;
-                self.consume(
-                    TokenKind::Arrow,
-                    "Expected '->' after handle method parameters",
-                )?;
+            }
+            self.consume(TokenKind::RParen, "Expected ')' after function parameters")?;
+            self.consume(TokenKind::Arrow, "Expected '->' after function parameters")?;
+            if !(self.peek().kind == TokenKind::LBrace) {
                 return_type = self.parse_type()?;
             }
-            is_not_in_scope = true;
+            self.consume(TokenKind::LBrace, "Expected '{' to open function body")?;
         }
-        // no for now
-        while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-            // we need to check if the token is valid for the setting
-            let t = self.peek().kind.clone();
-            if self.is_valid_setting(t.clone()) && !is_not_in_scope {
-                // now need to know what is this section
-                //====================================================================
-                // handle -> { fn1 , fn2 , ... }
-                //====================================================================
-                if t == TokenKind::TypeHandle {
-                    self.advance(); // 'handle'
-                    self.consume(TokenKind::Arrow, "Expected '->' after 'handle'")?;
-                    self.consume(TokenKind::LBrace, "Expected '{' to open handle block")?;
+        //now we are in the body like the scope fn
+        if !normal {
+            while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                let t = self.peek().kind.clone();
+                if (self.is_valid_setting(t.clone())) {
+                    //====================================================================
+                    // param -> { int a; int b; } ...
+                    //====================================================================
+                    if t == TokenKind::Param {
+                        self.advance(); // 'param'
+                        self.consume(TokenKind::Arrow, "Expected '->' after 'param'")?;
+                        self.consume(TokenKind::LBrace, "Expected '{' to open param block")?;
 
-                    while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        // first we need to check if the function is a valid handle function and there is no other function with the same name
-                        // we need to check if it a fn in the first place no other thing is allowed
-                        if self.peek().kind == TokenKind::Fn {
-                            self.advance();
-                            let mut method_params: Vec<Param> = Vec::new();
-                            let mut return_type: crate::parser::ast::TypeNode =
-                                crate::parser::ast::TypeNode::Simple(crate::parser::ast::TypeRef {
-                                    base_type: "".to_string(),
-                                    size: None,
-                                });
-                            if self.is_valid_handle(handles.clone(), self.peek().kind.clone()) {
-                                self.advance();
-                                if self.peek().kind == TokenKind::LParen {
-                                    self.advance();
-
-                                    while !self.is_at_end() && self.peek().kind != TokenKind::RParen
-                                    {
-                                        // we expect a list of params
-                                        // (a : int(32), b : int(32)) -> void
-                                        let name: String =
-                                            self.get_identifier("Expected parameter name")?;
-                                        self.consume(
-                                            TokenKind::Colon,
-                                            "Expected ':' after parameter name",
-                                        )?;
-                                        let type_node = self.parse_type()?;
-                                        method_params.push(Param {
-                                            name,
-                                            type_node: Some(type_node),
-                                        });
-                                        if self.peek().kind == TokenKind::Comma {
-                                            self.advance();
-                                        } else {
-                                            break;
-                                        }
-                                    }
-                                    self.consume(
-                                        TokenKind::RParen,
-                                        "Expected ')' after param list",
-                                    )?;
-                                    self.consume(
-                                        TokenKind::Arrow,
-                                        "Expected '->' after param list",
-                                    )?;
-                                    return_type = self.parse_type()?;
-                                    self.consume(
-                                        TokenKind::LBrace,
-                                        "Expected '{' to open fn block",
-                                    )?;
+                        while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                            match self.parse_var_decl() {
+                                Ok(crate::parser::ast::Stmt::VarDecl {
+                                    name, type_node, ..
+                                }) => {
+                                    params.push(crate::parser::ast::Param { name, type_node });
+                                }
+                                Ok(_) => {
+                                    return Err(
+                                        "Syntax Error: Expected variable declaration".to_string()
+                                    );
+                                }
+                                Err(e) => {
+                                    eprintln!("Syntax Error in scope param block: {}", e);
+                                    self.synchronize();
                                 }
                             }
-                        } else {
-                            return Err("Syntax Error: this name is not a valid allowed handle method in this scope type (array) at line {}, column {}".to_string());
                         }
-                    }
-                    self.consume(TokenKind::RBrace, "Expected '}' to close handle block")?;
-                    if self.peek().kind == TokenKind::SemiColon {
-                        self.advance();
-                    }
-                    continue;
-                }
-                //====================================================================
-                // param -> { int a; int b; } ...
-                //====================================================================
-                if t == TokenKind::TypeParam {
-                    self.advance(); // 'param'
-                    self.consume(TokenKind::Arrow, "Expected '->' after 'param'")?;
-                    self.consume(TokenKind::LBrace, "Expected '{' to open param block")?;
-
-                    while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        //type name;
-                        let type_node = self.parse_type()?;
-                        let name = self.get_identifier("Expected parameter name")?;
-                        params.push(Param {
-                            name,
-                            type_node: Some(type_node),
-                        });
-                        if self.peek().kind == TokenKind::Comma {
+                        self.consume(TokenKind::RBrace, "Expected '}' to close param block")?;
+                        if self.peek().kind == TokenKind::SemiColon {
                             self.advance();
-                        } else {
-                            break;
                         }
-                    }
-                    self.consume(TokenKind::RBrace, "Expected '}' to close param block")?;
-                    if self.peek().kind == TokenKind::SemiColon {
-                        self.advance();
-                    }
-                    continue;
-                }
-                //====================================================================
-                // return -> <type>;
-                //====================================================================
-                if t == TokenKind::Return {
-                    self.advance(); // 'return'
-                    self.consume(TokenKind::Arrow, "Expected '->' after 'return'")?;
-                    return_type = self.parse_type()?;
-                    self.consume(TokenKind::SemiColon, "Expected ';' after return type")?;
-                    continue;
-                }
-                //====================================================================
-                // statement -> {  ... }
-                //====================================================================
-                if t == TokenKind::TypeStatement {
-                    self.advance(); // 'statement'
-                    self.consume(TokenKind::Arrow, "Expected '->' after 'statement'")?;
-                    self.consume(TokenKind::LBrace, "Expected '{' to open statement block")?;
-
-                    while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        match self.parse_statement() {
-                            Ok(Some(stmt)) => statement_block_ast.push(stmt),
-                            Ok(None) => {
-                                if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                                    self.advance();
-                                }
-                            }
-                            Err(err) => return Err(err),
-                        }
-                    }
-
-                    self.consume(TokenKind::RBrace, "Expected '}' to close statement block")?;
-                    if self.peek().kind == TokenKind::SemiColon {
-                        self.advance(); // consume ';'
                         continue;
                     }
+                    //====================================================================
+                    // return -> <type>;
+                    //====================================================================
+                    if t == TokenKind::Return {
+                        self.advance(); // 'return'
+                        self.consume(TokenKind::Arrow, "Expected '->' after 'return'")?;
+                        return_type = self.parse_type()?;
+                        self.consume(TokenKind::SemiColon, "Expected ';' after return type")?;
+                        continue;
+                    }
+                    //====================================================================
+                    // statement -> {  ... }
+                    //====================================================================
+                    if t == TokenKind::Statement {
+                        self.advance(); // 'statement'
+                        self.consume(TokenKind::Arrow, "Expected '->' after 'statement'")?;
+                        self.consume(TokenKind::LBrace, "Expected '{' to open statement block")?;
+
+                        while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                            match self.parse_statement() {
+                                Ok(Some(stmt)) => statement_block.push(stmt),
+                                Ok(None) => {
+                                    if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                                        self.advance();
+                                    }
+                                }
+                                Err(err) => return Err(err),
+                            }
+                        }
+
+                        self.consume(TokenKind::RBrace, "Expected '}' to close statement block")?;
+                        if self.peek().kind == TokenKind::SemiColon {
+                            self.advance(); // consume ';'
+                            continue;
+                        }
+                    }
                 } else {
-                    print!("DEBUG: Invalid feild found : {} , that is not allow in the array typed scope to use it \n\t - use custom typed scope with enable some setting it will work if it valid" , t.as_str());
-                    return Err(
-                        ("Syntax Error: Invalid feild  declaration at line {}, column {}")
-                            .to_string(),
-                    );
+                    return Err(format!("Syntax Error: Invalid field found : {} , that is not allow in the array typed scope to use it \n\t - use custom typed scope with enable some setting it will work if it valid" , t.as_str()));
                 }
             }
-            if is_not_in_scope {
-                let block = self.parse_block()?;
-                for stmt in block {
-                    statement_block_ast.push(stmt);
+        } else {
+            // we here only have a normal function
+            while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                match self.parse_statement() {
+                    Ok(Some(stmt)) => statement_block.push(stmt),
+                    Ok(None) => {
+                        if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                            self.advance();
+                        }
+                    }
+                    Err(err) => return Err(err),
                 }
+            }
+
+            self.consume(TokenKind::RBrace, "Expected '}' to close statement block")?;
+            if self.peek().kind == TokenKind::SemiColon {
+                self.advance(); // consume ';'
             }
         }
         return Ok(Stmt::FnDecl {
             is_exported: false,
             name,
             params,
-            return_type: return_type,
-            body: statement_block_ast,
+            return_type,
+            body: statement_block,
         });
     }
 

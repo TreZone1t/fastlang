@@ -66,8 +66,11 @@ impl Scanner {
             "set" => Some(TokenKind::Set),
             "del" => Some(TokenKind::Del),
 
-            // out and in
+            // built-in fn
             "log" => Some(TokenKind::Log),
+            "sizeof" => Some(TokenKind::SizeOf),
+            "typeof" => Some(TokenKind::TypeOf),
+            "to_string" => Some(TokenKind::ToString),
             // func
             "fn" => Some(TokenKind::Fn),
             "return" => Some(TokenKind::Return),
@@ -89,38 +92,38 @@ impl Scanner {
             "new" => Some(TokenKind::New),
 
             "class" => Some(TokenKind::TypeClass),
+            "struct" => Some(TokenKind::TypeStruct),
             "enum" => Some(TokenKind::TypeEnum),
+            "custom" => Some(TokenKind::TypeCustom),
+            "Str" => Some(TokenKind::TypeStr),
+            "Array" => Some(TokenKind::TypeArray),
+
             "extends" => Some(TokenKind::Extends),
             "super" => Some(TokenKind::Super),
 
             // Primitives
             "char" => Some(TokenKind::TypeChar),
             "int" => Some(TokenKind::TypeInt),
-            "str" => Some(TokenKind::TypeStr),
-            "array" => Some(TokenKind::TypeArray),
             "float" => Some(TokenKind::TypeFloat),
             "bool" => Some(TokenKind::TypeBool),
 
             // Context Types
-            "struct" => Some(TokenKind::TypeStruct),
             "scope" => Some(TokenKind::TypeScope),
-            "param" => Some(TokenKind::TypeParam),
-            "init" => Some(TokenKind::TypeInit),
+            "param" => Some(TokenKind::Param),
+            "init" => Some(TokenKind::Init),
             "blueprint" => Some(TokenKind::TypeBluePrint),
-            "flag" => Some(TokenKind::TypeFlag),
-            "generic" => Some(TokenKind::TypeGeneric),
+            "flag" => Some(TokenKind::Flag),
+            "generic" => Some(TokenKind::Generic),
+
             "type" => Some(TokenKind::TypeType),
-            "event" => Some(TokenKind::TypeEvent),
-            "handle" => Some(TokenKind::TypeHandle),
-            "keywords" => Some(TokenKind::TypeKeyword),
-            "variants" => Some(TokenKind::TypeVariants),
-            "public" => Some(TokenKind::TypePublic),
-            "private" => Some(TokenKind::TypePrivate),
+            "event" => Some(TokenKind::Event),
+            "handle" => Some(TokenKind::Handle),
+            "variants" => Some(TokenKind::Variants),
+            "public" => Some(TokenKind::Public),
+            "private" => Some(TokenKind::Private),
 
-            "static" => Some(TokenKind::TypeStatic),
+            "static" => Some(TokenKind::Static),
 
-            // for list and string types
-            "size" => Some(TokenKind::TypeSize),
             "length" => Some(TokenKind::TypeLength),
             "data" => Some(TokenKind::TypeData),
             // memory / instances
@@ -137,8 +140,8 @@ impl Scanner {
             "false" => Some(TokenKind::Bool(false)),
 
             // scope impl / unrestricted type
-            "statement" => Some(TokenKind::TypeStatement),
-            "custom" => Some(TokenKind::TypeCustom),
+            "statement" => Some(TokenKind::Statement),
+
             // for custom
             "index_access" => Some(TokenKind::CustomIndexAccess),
             "display" => Some(TokenKind::CustomDisplay),
@@ -162,10 +165,6 @@ impl Scanner {
             "all" => Some(TokenKind::All),
             "use" => Some(TokenKind::Use),
             "export" => Some(TokenKind::Export),
-
-            // constructor
-            "_" => Some(TokenKind::Underscore),
-
             _ => None,
         }
     }
@@ -195,7 +194,16 @@ impl Scanner {
                         break;
                     }
                 }
-                Self::check_keyword(&word).unwrap_or(TokenKind::Identifier(word.clone()))
+                if let Some(keyword) = Self::check_keyword(&word) {
+                    keyword
+                } else {
+                    let first_char = word.chars().next().unwrap();
+                    if first_char.is_uppercase() {
+                        TokenKind::MadeUpType(word)
+                    } else {
+                        TokenKind::Identifier(word.clone())
+                    }
+                }
             }
 
             '0'..='9' => {
@@ -426,6 +434,7 @@ impl Scanner {
                 }
             }
 
+            '_' => TokenKind::Underscore,
             other => TokenKind::Error(format!(
                 "Unexpected character '{}' at line {}",
                 other, start_line

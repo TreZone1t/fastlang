@@ -82,6 +82,9 @@ fn main() {
             let get_fs_path = |name: &str| -> String {
                 if name.starts_with("std/") {
                     format!("src/{}.fs", name)
+                } else if name == "std" {
+                    // `use std::{array}` → src/std/std.fs
+                    "src/std/std.fs".to_string()
                 } else {
                     format!("src/examples/{}.fs", name) // temporary fallback
                 }
@@ -105,6 +108,8 @@ fn main() {
         if !asts.contains_key(mod_name) {
             let actual_path = if mod_name.starts_with("std/") {
                 format!("src/{}.fs", mod_name)
+            } else if mod_name == "std" {
+                "src/std/std.fs".to_string()
             } else {
                 let test = format!("src/examples/{}.fs", mod_name);
                 if Path::new(&test).exists() {

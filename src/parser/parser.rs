@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::lexer::token::{Token, TokenKind};
 use crate::parser::ast::*;
 
@@ -13,14 +15,8 @@ const EOF_TOKEN: Token = Token {
 pub struct Parser {
     pub(crate) tokens: Vec<Token>,
     pub(crate) current: usize,
-    /// Custom scope keywords registered at parse-time (e.g. "array", "some").
-    /// Populated when a scope with `keyword -> "...";` is parsed.
-    pub(crate) custom_keywords: Vec<String>,
-    /// Built-in scope type tokens that are "activated" when a scope declares
-    /// `type -> array;` or `type -> str;`. Only these tokens are then valid
-    /// as types in variable declarations (e.g. `array<int(32)> x -> ...;`).
-    /// This avoids hardcoding std library names and keeps the system dynamic.
-    pub(crate) registered_builtin_type_tokens: Vec<TokenKind>,
+    pub(crate) metadata: HashMap<String, TypeMetadata>,
+    pub(crate) fn_metadata: HashMap<String, FnType>,
 }
 
 impl Parser {
@@ -28,8 +24,8 @@ impl Parser {
         Parser {
             tokens,
             current: 0,
-            custom_keywords: Vec::new(),
-            registered_builtin_type_tokens: Vec::new(),
+            metadata: HashMap::new(),
+            fn_metadata: HashMap::new(),
         }
     }
 

@@ -43,7 +43,9 @@ impl Parser {
             self.consume(TokenKind::LBrace, "Expected '{' to open custom body")?;
         }
         // now we are the same as the one being redirected by the scope parsing fn
-        // first we expect a enable line
+        // ==========================================
+        // 1. قراءة سطر الـ Enable بصرامة
+        // ==========================================
         if self.peek().kind == TokenKind::Enable {
             self.advance();
             let t = self.peek().kind.clone();
@@ -53,64 +55,105 @@ impl Parser {
                 self.consume(TokenKind::SemiColon, "Expected ';' after enable all")?;
             } else {
                 self.consume(TokenKind::LBracket, "Expected '[' or all after enable")?;
-                while !self.is_at_end() && self.peek().kind != TokenKind::RBracket {
-                    let t: TokenKind = self.peek().kind.clone();
-                    if self.is_valid_setting(t.clone()) {
-                        enabled_settings.push(t);
+
+                // اللوب الصارمة الجديدة
+                while !self.is_at_end() {
+                    let current_kind = self.peek().kind.clone();
+
+                    // كسر اللوب فوراً عند رؤية القوس الأيمن
+                    if current_kind == TokenKind::RBracket {
+                        break;
+                    }
+
+                    // التحقق من صحة الإعداد
+                    if self.is_valid_setting(current_kind.clone()) {
+                        enabled_settings.push(current_kind.clone());
                         self.advance();
-                    } else if t == TokenKind::Identifier("".to_string()) {
-                        let hm = self.get_handle_type(t);
+                    } else if current_kind == TokenKind::Identifier("".to_string()) {
+                        let hm = self.get_handle_type(current_kind.clone());
                         enabled_handle.push(hm);
                         self.advance();
                     } else {
-                        return Err(
-                            "Syntax Error: Unexpected token after enable at line {}, column {}"
-                                .to_string(),
-                        );
+                        return Err(format!(
+                            "Syntax Error: Invalid setting '{}' inside enable array",
+                            current_kind.as_str()
+                        ));
                     }
-                    if self.peek().kind == TokenKind::Comma {
-                        self.advance();
+
+                    // التأكد من وجود فاصلة أو نهاية القوس بعد كل إعداد
+                    let next_kind = self.peek().kind.clone();
+                    if next_kind == TokenKind::Comma {
+                        self.advance(); // نتخطى الفاصلة ونكمل
+                    } else if next_kind != TokenKind::RBracket {
+                        return Err(format!(
+                            "Syntax Error: Expected ',' or ']' after setting, found '{}'",
+                            next_kind.as_str()
+                        ));
                     }
                 }
-                self.consume(TokenKind::RBracket, "Expected ']' after enable")?;
-                self.consume(TokenKind::SemiColon, "Expected ';' after enable")?;
+
+                self.consume(TokenKind::RBracket, "Expected ']' after enable list")?;
+                self.consume(TokenKind::SemiColon, "Expected ';' after enable statement")?;
             }
         } else {
-            return Err("Syntax Error: Expected enable line after decide a custom scope type at line {}, column {}".to_string());
+            return Err(
+                "Syntax Error: Expected enable line after decide a custom scope type".to_string(),
+            );
         }
-        // now we expect a disable line or not
+
+        // ==========================================
+        // 2. قراءة سطر الـ Disable بصرامة (اختياري)
+        // ==========================================
         if self.peek().kind == TokenKind::Disable {
             self.advance();
             let t = self.peek().kind.clone();
             if t == TokenKind::All {
                 self.advance();
                 let predicate = |to: &mut crate::lexer::token::TokenKind| *to == TokenKind::All;
-                enabled_settings.pop_if(predicate); //we need to remove all from the enabled list
+                enabled_settings.pop_if(predicate);
                 self.consume(TokenKind::SemiColon, "Expected ';' after disable all")?;
             } else {
                 self.consume(TokenKind::LBracket, "Expected '[' or all after disable")?;
-                while !self.is_at_end() && self.peek().kind != TokenKind::RBracket {
-                    let t = self.peek().kind.clone();
-                    let sti = Setting::from_token(t.clone());
+
+                // اللوب الصارمة الجديدة للـ Disable
+                while !self.is_at_end() {
+                    let current_kind = self.peek().kind.clone();
+
+                    if current_kind == TokenKind::RBracket {
+                        break;
+                    }
+
+                    let sti = Setting::from_token(current_kind.clone());
                     if sti == Setting::NotFound {
-                        let predicate = |to: &mut crate::lexer::token::TokenKind| *to == t;
-                        enabled_settings.pop_if(predicate); //we need to remove all from the enabled list
+                        let predicate =
+                            |to: &mut crate::lexer::token::TokenKind| *to == current_kind;
+                        enabled_settings.pop_if(predicate);
                         self.advance();
-                    } else if t == TokenKind::Identifier("".to_string()) {
-                        let hm = self.get_handle_type(t);
+                    } else if current_kind == TokenKind::Identifier("".to_string()) {
+                        let hm = self.get_handle_type(current_kind.clone());
                         let predicate = |to: &mut crate::parser::ast::HandleMethods| *to == hm;
                         enabled_handle.pop_if(predicate);
                         self.advance();
                     } else {
-                        return Err(
-                            "Syntax Error: Unexpected token after disable at line {}, column {}"
-                                .to_string(),
-                        );
+                        return Err(format!(
+                            "Syntax Error: Invalid setting '{}' inside disable array",
+                            current_kind.as_str()
+                        ));
                     }
-                    if self.peek().kind == TokenKind::Comma {
+
+                    let next_kind = self.peek().kind.clone();
+                    if next_kind == TokenKind::Comma {
                         self.advance();
+                    } else if next_kind != TokenKind::RBracket {
+                        return Err(format!(
+                            "Syntax Error: Expected ',' or ']' after setting, found '{}'",
+                            next_kind.as_str()
+                        ));
                     }
                 }
+
+                self.consume(TokenKind::RBracket, "Expected ']' after disable list")?;
+                self.consume(TokenKind::SemiColon, "Expected ';' after disable statement")?;
             }
         }
         for e in enabled_settings {
@@ -137,7 +180,7 @@ impl Parser {
                 //====================================================================
                 // constructor    _ () -> { ... }
                 //====================================================================
-                if t == TokenKind::Underscore {
+                if t == TokenKind::Init {
                     match self.parse_constructor_decl() {
                         Ok(c) => constructor = Some(c),
                         Err(e) => {
@@ -150,81 +193,34 @@ impl Parser {
                 //====================================================================
                 // generic -> { ... }
                 //====================================================================
-                if t == TokenKind::TypeGeneric {
-                    self.advance(); // 'generic'
-                    self.consume(TokenKind::Arrow, "Expected '->' after 'generic'")?;
-                    self.consume(TokenKind::LBrace, "Expected '{' to open generic block")?;
-
-                    while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        match self.parse_statement() {
-                            Ok(Some(stmt)) => generic_block.push(stmt),
-                            Ok(None) => {
-                                if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                                    self.advance();
-                                }
-                            }
-                            Err(err) => return Err(err),
-                        }
-                    }
-
-                    self.consume(TokenKind::RBrace, "Expected '}' to close generic block")?;
+                if t == TokenKind::Generic {
+                    generic_block = self.parse_generic_block()?;
                 }
                 //====================================================================
                 // public -> { ... }
                 //====================================================================
-                if self.peek().kind == TokenKind::TypePublic {
-                    self.advance(); // 'public'
-                    self.consume(TokenKind::Arrow, "Expected '->' after 'public'")?;
-                    self.consume(TokenKind::LBrace, "Expected '{' to open public block")?;
-
-                    while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        match self.parse_statement() {
-                            Ok(Some(stmt)) => public_block.push(stmt),
-                            Ok(None) => {
-                                if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                                    self.advance();
-                                }
-                            }
-                            Err(err) => return Err(err),
-                        }
-                    }
-
-                    self.consume(TokenKind::RBrace, "Expected '}' to close public block")?;
-                    if self.peek().kind == TokenKind::SemiColon {
-                        self.advance();
-                    }
+                if self.peek().kind == TokenKind::Public {
+                    public_block = self.parse_field_block()?;
                     continue;
                 }
                 //====================================================================
                 // private -> { ... }
                 //====================================================================
-                if t == TokenKind::TypePrivate {
-                    self.advance(); // 'private'
-                    self.consume(TokenKind::Arrow, "Expected '->' after 'private'")?;
-                    self.consume(TokenKind::LBrace, "Expected '{' to open private block")?;
-
-                    while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        match self.parse_statement() {
-                            Ok(Some(stmt)) => private_block.push(stmt),
-                            Ok(None) => {
-                                if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                                    self.advance();
-                                }
-                            }
-                            Err(err) => return Err(err),
-                        }
-                    }
-
-                    self.consume(TokenKind::RBrace, "Expected '}' to close private block")?;
-                    if self.peek().kind == TokenKind::SemiColon {
-                        self.advance();
-                    }
+                if t == TokenKind::Private {
+                    private_block = self.parse_field_block()?;
+                    continue;
+                }
+                //====================================================================
+                // static -> { ... }
+                //====================================================================
+                if t == TokenKind::Static {
+                    static_block_ast = self.parse_field_block()?;
                     continue;
                 }
                 //====================================================================
                 // handle -> { fn1 , fn2 , ... }
                 //====================================================================
-                if t == TokenKind::TypeHandle {
+                if t == TokenKind::Handle {
                     self.advance(); // 'handle'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'handle'")?;
                     self.consume(TokenKind::LBrace, "Expected '{' to open handle block")?;
@@ -306,7 +302,7 @@ impl Parser {
                 //====================================================================
                 // variants -> { ... }
                 //====================================================================
-                if t == TokenKind::TypeVariants {
+                if t == TokenKind::Variants {
                     self.advance(); // 'variants'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'variants'")?;
                     self.consume(TokenKind::LBrace, "Expected '{' to open variants block")?;
@@ -344,7 +340,7 @@ impl Parser {
                 //====================================================================
                 // param -> { int a; int b; } ...
                 //====================================================================
-                if t == TokenKind::TypeParam {
+                if t == TokenKind::Param {
                     self.advance(); // 'param'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'param'")?;
                     self.consume(TokenKind::LBrace, "Expected '{' to open param block")?;
@@ -386,7 +382,7 @@ impl Parser {
                 //====================================================================
                 // statement -> {  ... }
                 //====================================================================
-                if t == TokenKind::TypeStatement {
+                if t == TokenKind::Statement {
                     self.advance(); // 'statement'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'statement'")?;
                     self.consume(TokenKind::LBrace, "Expected '{' to open statement block")?;
@@ -437,11 +433,12 @@ impl Parser {
                 //====================================================================
                 // keyword -> <str>;
                 //====================================================================
-                if t == TokenKind::TypeKeyword {
+                if t == TokenKind::Keyword {
                     self.advance(); // 'keyword'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'keyword'")?;
                     keyword = self.get_identifier("Expected keyword name")?;
-                    self.custom_keywords.push(keyword.clone());
+                    // key = الكلمة المخصصة, value = اسم الـ scope الأصلي
+                    self.custom_keywords.insert(keyword.clone(), name.clone());
                     self.consume(TokenKind::SemiColon, "Expected ';' after keyword name")?;
                     continue;
                 }
@@ -456,9 +453,9 @@ impl Parser {
                     continue;
                 }
             } else {
-                print!("DEBUG: Invalid feild found : {} , that is not allow  to use it \n\t -  enable some setting it will work if it valid" , t.as_str());
+                print!("DEBUG: Invalid field found : {} , that is not allow  to use it \n\t -  enable some setting it will work if it valid" , t.as_str());
                 return Err(
-                    ("Syntax Error: Invalid feild  declaration at line {}, column {}").to_string(),
+                    ("Syntax Error: Invalid field  declaration at line {}, column {}").to_string(),
                 );
             }
         }

@@ -160,23 +160,11 @@ impl Parser {
                         TokenKind::TypeArray => {
                             self.advance();
                             self.consume(TokenKind::SemiColon, "Expected ';' after scope type")?;
-                            // Register TypeArray so it can be used as a type in variable declarations
-                            if !self.registered_builtin_type_tokens.iter().any(|t| {
-                                core::mem::discriminant(t) == core::mem::discriminant(&TokenKind::TypeArray)
-                            }) {
-                                self.registered_builtin_type_tokens.push(TokenKind::TypeArray);
-                            }
                             ScopeType::Array
                         }
                         TokenKind::TypeStr => {
                             self.advance();
                             self.consume(TokenKind::SemiColon, "Expected ';' after scope type")?;
-                            // Register TypeStr so it can be used as a type in variable declarations
-                            if !self.registered_builtin_type_tokens.iter().any(|t| {
-                                core::mem::discriminant(t) == core::mem::discriminant(&TokenKind::TypeStr)
-                            }) {
-                                self.registered_builtin_type_tokens.push(TokenKind::TypeStr);
-                            }
                             ScopeType::String
                         }
                         TokenKind::TypeBlock => {

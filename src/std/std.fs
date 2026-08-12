@@ -10,14 +10,14 @@ export scope None -> {
             return false;
         }
     }
-}
+};
 
 export scope Some -> {
     type -> custom;
     enable [private, public, constructor, custom_keyword, custom_generic];
     keyword -> "some";
     generic -> {
-        type(size) T;
+        type T;
     }
     private -> {
         T value;
@@ -46,7 +46,7 @@ export scope Option -> {
     enable [private, public, constructor, custom_keyword, custom_generic];
     keyword -> "option";
     generic -> {
-        type(size) T;
+        type T;
     }
     private -> {
         T value;
@@ -72,12 +72,12 @@ export scope Option -> {
     }
 }
 
-//array<T>(length) name -> [ele1, ele2, ..., eleN];
-export scope Array -> {
-    type -> array;
+//array<T> name -> [ele1, ele2, ..., eleN];
+export scope Array_type -> {
+    type -> Array;
     keyword -> "array";
     generic -> {
-        type(size) T;
+        type T;
     }
     _(arr : name) -> {
         this.data -> arr; 
@@ -93,8 +93,8 @@ export scope Array -> {
     }
 }
 //str s -> "hello"; 
-export scope Str -> { 
-    type -> str;
+export scope Str_type -> {
+    type -> Str;
     keyword -> "str";
     param -> {
         int(32) len;

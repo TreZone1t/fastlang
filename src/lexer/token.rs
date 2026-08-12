@@ -12,7 +12,6 @@ pub enum TokenKind {
     Let,      // let
     Const,    // const
     Set,      // set
-    Log,      // log
     If,       // if
     Else,     // else
     Switch, // switch // i don't know how to implement it but it will be using scope we will make a new scope type for it.
@@ -51,43 +50,51 @@ pub enum TokenKind {
     // 3. Built-in Types
 
     // Primitives
-    TypeInt,   // int
-    TypeFloat, // float
-    TypeStr,   // str
-    TypeArray, // array
-    TypeChar,  // char
-    TypeBool,  // bool
-    TypeVoid,  // void
+    TypeInt,            // int
+    TypeFloat,          // float
+    TypeChar,           // char
+    TypeBool,           // bool
+    TypeVoid,           // void
+    TypeType,           // type
+    MadeUpType(String), // made up type
+
+    //temp
+    TypeError, //todo : remove this
+
+    // built-in fn
+    SizeOf,   // sizeof()
+    TypeOf,   // typeof()
+    ToString, // to_string()
+    Log,      // log()
 
     // Context Types
     TypeScope,     // scope
-    TypeStruct,    // struct
-    TypeBlock,     // block
-    TypeError,     // error
     TypeLength,    // length   //* with  array and str
-    TypeSize,      // size     //* with  array and str
     TypeData,      // data     //* with  array and str
-    TypeKeyword,   // keyword  //* with  array and str and oop scopes and custom
-    TypeParam,     // param    //*  with  scope and fn and custom and init
-    TypeInit,      // init for getting constructor   //* with  oop scopes and custom
+    TypeName,      // name
     TypeBluePrint, // blueprint  //* with objects
-    TypeGeneric,   // generic    //* for custom generics
-    TypeObject,    // object    //* with oop scopes and custom
-    TypeFlag,      // flag      //* with  scope and fn and looped and block and custom
-    TypeStatic,    // static    //* with  oop scopes and custom
-    TypePublic,    // public    //* with  class and struct and  custom and scope
-    TypePrivate,   // private   //* with  class and struct and  custom and scope
-    TypeType,      // type      //* with all type declaration
-    TypeEvent,     // event     //* with all meta-block: event.call -> { ... }
-    TypeHandle,    // handle    //* with all meta-block: handle.<flag> -> { ... }
-    TypeName,      // name      //*with all
-    TypeStatement, // statement //* with all meta-block: statement -> { ... }
-    TypeCustom,    // custom
+    //scopes types
+    TypeObject, // object    //* with oop scopes and custom
+    TypeCustom, // custom
+    TypeStruct, // struct
+    TypeBlock,  // block
+    TypeClass,  // class
+    TypeEnum,   // enum
+    TypeStr,    // str
+    TypeArray,  // array
+    //scopes fields
+    Param,     // param    //*  with  scope and fn and custom and init
+    Init,      // init for getting constructor   //* with  oop scopes and custom
+    Generic,   // generic    //* for custom generics
+    Flag,      // flag      //* with  scope and fn and looped and block and custom
+    Static,    // static    //* with  oop scopes and custom
+    Public,    // public    //* with  class and struct and  custom and scope
+    Private,   // private   //* with  class and struct and  custom and scope
+    Event,     // event     //* with all meta-block: event.call -> { ... }
+    Handle,    // handle    //* with all meta-block: handle.<flag> -> { ... }
+    Statement, // statement //* with all meta-block: statement -> { ... }
+    Variants,
 
-    TypeClass, // class
-
-    TypeEnum, // enum
-    TypeVariants,
     // for custom
     CustomIndexAccess, // index_access
     CustomConstructor, // constructor
@@ -109,7 +116,7 @@ pub enum TokenKind {
 
     PlusPlus,   // ++
     MinusMinus, // --
-
+    DotDotDot,  // ...  //todo: add it
     Mod,        // %
     Underscore, // _
 
@@ -143,7 +150,7 @@ pub enum TokenKind {
     Default, // legacy catch-all, no longer emitted by the scanner (kept so nothing
     // downstream that matches on it breaks); prefer Error(String) instead.
     Error(String), // lexical error with a human-readable message; scanning continues
-                         // afterward so the parser can still synchronize() and report more errors.
+                   // afterward so the parser can still synchronize() and report more errors.
 }
 impl TokenKind {
     pub fn as_str(&self) -> &str {
@@ -186,27 +193,27 @@ impl TokenKind {
             TokenKind::TypeClass => "class",
             TokenKind::TypeEnum => "enum",
             TokenKind::TypeError => "error",
-            TokenKind::TypeEvent => "event",
-            TokenKind::TypeHandle => "handle",
+            TokenKind::Event => "event",
+            TokenKind::Handle => "handle",
             TokenKind::TypeName => "name",
             TokenKind::TypeCustom => "custom",
-            TokenKind::TypePrivate => "private",
-            TokenKind::TypePublic => "public",
-            TokenKind::TypeStatic => "static",
+            TokenKind::Private => "private",
+            TokenKind::Public => "public",
+            TokenKind::Static => "static",
             TokenKind::TypeLength => "length",
-            TokenKind::TypeSize => "size",
+            TokenKind::SizeOf => "sizeof",
             TokenKind::TypeData => "data",
-            TokenKind::TypeStatement => "statement",
+            TokenKind::Statement => "statement",
             TokenKind::CustomConstructor => "constructor",
             TokenKind::CustomKeyword => "keyword",
             TokenKind::CustomGeneric => "generic",
             TokenKind::CustomIterator => "iterator",
             TokenKind::CustomDisplay => "display",
             TokenKind::CustomOperators => "operators",
-            TokenKind::TypeParam => "param",
-            TokenKind::TypeInit => "init",
+            TokenKind::Param => "param",
+            TokenKind::Init => "init",
             TokenKind::TypeBluePrint => "blueprint",
-            TokenKind::TypeFlag => "flag",
+            TokenKind::Flag => "flag",
             TokenKind::TypeType => "type",
             TokenKind::Assign => "=",
             TokenKind::Arrow => "->",
@@ -246,8 +253,7 @@ impl TokenKind {
         match self {
             TokenKind::TypeInt => Some("int"),
             TokenKind::TypeFloat => Some("float"),
-            TokenKind::TypeStr => Some("str"),
-            TokenKind::TypeArray => Some("array"),
+            TokenKind::TypeType => Some("type"),
             TokenKind::TypeBool => Some("bool"),
             TokenKind::TypeChar => Some("char"),
             TokenKind::TypeVoid => Some("void"),
