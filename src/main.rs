@@ -15,12 +15,28 @@ pub mod codegen;
 pub mod lexer;
 pub mod parser;
 pub mod semantic;
+pub fn report_visual_error(source: &str, line: usize, column: usize, err_msg: &str) {
+    let lines: Vec<&str> = source.lines().collect();
 
+    eprintln!("Error: {}", err_msg);
+    eprintln!("  --> line {}, column {}", line - 2, column);
+
+    if line > 0 && line <= lines.len() {
+        let code_line = lines[line - 1];
+
+        eprintln!("   |");
+        eprintln!("{:>2} | {}", line, code_line);
+
+        let padding = " ".repeat(column.saturating_sub(1));
+        eprintln!("   | {}{}", padding, "^");
+        eprintln!("   |");
+    }
+}
 fn parse_file(path: &str) -> Result<Vec<Stmt>, String> {
     let contents = fs::read_to_string(path)
         .unwrap_or_else(|_| panic!("Could not read '{}'. Make sure the file exists.", path));
 
-    let mut scanner = Scanner::new(contents);
+    let mut scanner = Scanner::new(contents.clone());
     let mut tokens = Vec::new();
 
     loop {
@@ -42,7 +58,42 @@ fn parse_file(path: &str) -> Result<Vec<Stmt>, String> {
     }
 
     let mut parser = Parser::new(tokens);
-    parser.parse_program().map(|program| program.statements)
+
+    match parser.parse_program() {
+        Ok(program) => Ok(program.statements),
+        Err(err_msg) => {
+            // محاولة استخراج السطر والعمود من الرسالة النصية اللي البارسر بيبعتها
+            // لو البارسر بيبعت رسالة زي: "Syntax Error: Expected X at line 11, column 14"
+            let mut line = 1;
+            let mut column = 1;
+            let mut clean_msg = err_msg.clone();
+
+            if let Some(line_idx) = err_msg.find("at line ") {
+                let after_line = &err_msg[line_idx + 8..];
+                if let Some(comma_idx) = after_line.find(',') {
+                    if let Ok(l) = after_line[..comma_idx].parse::<usize>() {
+                        line = l;
+                    }
+                    if let Some(col_idx) = after_line.find("column ") {
+                        let after_col = &after_line[col_idx + 7..];
+                        // تنظيف أي مسافات أو نقط في النهاية
+                        let num_str = after_col.trim_matches(|c: char| !c.is_ascii_digit());
+                        if let Ok(c) = num_str.parse::<usize>() {
+                            column = c;
+                        }
+                    }
+                }
+                // تنظيف الرسالة عشان نعرضها من غير كلمة "at line..."
+                clean_msg = err_msg[..line_idx].trim().to_string();
+            }
+
+            // استدعاء الدالة المرئية الجميلة بتاعتنا!
+            report_visual_error(&contents, line, column, &clean_msg);
+
+            // نرجع الإيرور عشان الكومبايلر يوقف
+            Err(err_msg)
+        }
+    }
 }
 
 fn main() {
@@ -60,7 +111,7 @@ fn main() {
             println!("AST Length: {}", ast.len());
             std::fs::write("ast_debug.txt", format!("{:#?}", ast)).unwrap();
             ast
-        },
+        }
         Err(err) => {
             eprintln!("{}", err);
             std::process::exit(1);

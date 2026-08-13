@@ -4,6 +4,11 @@ use crate::parser::parser::Parser;
 
 impl Parser {
     pub(crate) fn parse_statement(&mut self) -> Result<Option<Stmt>, String> {
+        eprintln!(
+            "DISPATCH: {:?} at line {}",
+            self.peek().kind,
+            self.peek().line
+        );
         let result = match &self.peek().kind {
             TokenKind::Use => self.parse_use_stmt(),
             TokenKind::Export => self.parse_exported_stmt(),
@@ -53,9 +58,27 @@ impl Parser {
             // Custom keyword: `my_list<int(32)> items -> [1, 2];`
             TokenKind::Identifier(id) => self.parse_expression_or_reassignment(),
             TokenKind::MadeUpType(id) => {
-                todo!()
+                let next_token = self.peek_at(1); // أو الدالة اللي بتستخدمها عشان تبص خطوة لقدام
+
+                match next_token.kind {
+                    // لو التوكن اللي بعده Identifier عادي، يبقى ده مليون في المية تعريف متغير
+                    // مثال: Node n
+                    TokenKind::Identifier(_) => self.parse_var_decl(),
+
+                    // لو التوكن اللي بعده نقطة، يبقى ده تعبير رياضي/استدعاء (Expression)
+                    // مثال: Node.do_something()
+                    TokenKind::Dot => self.parse_expression_stmt(),
+
+                    // أي حاجة تانية بنحولها لـ Expression Statement وهو هيتصرف معاها
+                    // (زي لو مثلاً بنبني Object جديد بدون متغير: Node() )
+                    _ => self.parse_expression_stmt(),
+                }
             }
             kind if self.is_type_token(kind) => self.parse_var_decl(),
+            TokenKind::SemiColon => {
+                self.advance();
+                return Ok(None); // empty statement, //todo: add a warning or something
+            }
             _ => self.parse_expression_stmt(),
         };
 
@@ -90,7 +113,7 @@ impl Parser {
 
                 if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
                     loop {
-                        selected.push(self.get_identifier("Expected import name in use list")?);
+                        selected.push(self.get_sc_type("Expected import name in use list")?);
 
                         if self.peek().kind == TokenKind::Comma {
                             self.advance();
@@ -553,72 +576,82 @@ impl Parser {
                 value,
             });
         }
-
-        self.consume(
-            TokenKind::SemiColon,
-            "Expected ';' after expression statement",
-        )?;
+        print!("DEBUG: parse_expression_reassign_stmt: expr: {:?}", expr);
+        if self.peek().kind == TokenKind::SemiColon {
+            self.consume(
+                TokenKind::SemiColon,
+                "Expected ';' after expression statement",
+            )?;
+        }
         Ok(Stmt::ExpressionStmt(expr))
     }
 
     /// يُعالج تعريف متغير باستخدام Custom Keyword:
     /// `my_list<int(32)> items -> [1, 2];`
     /// حيث `keyword_name` = "my_list" و `original_scope_name` = "array"
-    pub(crate) fn parse_custom_keyword_var_decl(
-        &mut self,
-        keyword_name: String,
-        original_scope_name: String,
-    ) -> Result<Stmt, String> {
-        // parse optional generic params: <int(32)>
-        let mut generics = Vec::new();
-        let mut _size: Option<i64> = None;
-        if self.peek().kind == crate::lexer::token::TokenKind::Less {
-            self.advance();
-            self.parse_generic_list(&mut generics, &mut _size, original_scope_name == "array")?;
+    // todo: remove this
+    /*   pub(crate) fn parse_custom_keyword_var_decl(
+            &mut self,
+            keyword_name: String,
+            original_scope_name: String,
+        ) -> Result<Stmt, String> {
+            // parse optional generic params: <int(32)>
+            let mut generics = Vec::new();
+            let mut _size: Option<i64> = None;
+            if self.peek().kind == crate::lexer::token::TokenKind::Less {
+                self.advance();
+                self.parse_generic_list(&mut generics, &mut _size, original_scope_name == "array")?;
+            }
+
+            // اسم المتغير
+            let name = self.get_identifier("Expected variable name after custom type keyword")?;
+
+            // '->' للتعيين
+            self.consume(
+                crate::lexer::token::TokenKind::Arrow,
+                "Expected '->' after variable name in custom keyword declaration",
+            )?;
+            let value = self.parse_expression()?;
+            self.consume(
+                crate::lexer::token::TokenKind::SemiColon,
+                "Expected ';' after custom keyword variable declaration",
+            )?;
+
+            let type_node = if generics.is_empty() {
+                crate::parser::ast::TypeNode::Simple(crate::parser::ast::TypeRef {
+                    base_type: keyword_name,
+                    size: None,
+                })
+            } else {
+                crate::parser::ast::TypeNode::Generic(crate::parser::ast::Generic {
+                    base_type: keyword_name,
+                    generics,
+                })
+            };
+
+            Ok(Stmt::VarDecl {
+                visibility: crate::parser::ast::Visibility::Private,
+                editability: crate::parser::ast::Editability::Editable,
+                type_node: Some(type_node),
+                name,
+                value,
+            })
         }
-
-        // اسم المتغير
-        let name = self.get_identifier("Expected variable name after custom type keyword")?;
-
-        // '->' للتعيين
-        self.consume(
-            crate::lexer::token::TokenKind::Arrow,
-            "Expected '->' after variable name in custom keyword declaration",
-        )?;
-        let value = self.parse_expression()?;
-        self.consume(
-            crate::lexer::token::TokenKind::SemiColon,
-            "Expected ';' after custom keyword variable declaration",
-        )?;
-
-        let type_node = if generics.is_empty() {
-            crate::parser::ast::TypeNode::Simple(crate::parser::ast::TypeRef {
-                base_type: keyword_name,
-                size: None,
-            })
-        } else {
-            crate::parser::ast::TypeNode::Generic(crate::parser::ast::Generic {
-                base_type: keyword_name,
-                generics,
-            })
-        };
-
-        Ok(Stmt::VarDecl {
-            visibility: crate::parser::ast::Visibility::Private,
-            editability: crate::parser::ast::Editability::Editable,
-            type_node: Some(type_node),
-            name,
-            value,
-        })
-    }
-
+    */
     pub(crate) fn parse_expression_stmt(&mut self) -> Result<Stmt, String> {
         let expr = self.parse_expression()?;
-
+        print!(
+            "DEBUG: parse_expression_stmt: 1. expr: {:?} \n",
+            self.peek().kind
+        );
         // --- Bare reassignment: x = 10; or this.x = 20; ---
         if self.peek().kind == TokenKind::Assign || self.peek().kind == TokenKind::Arrow {
             self.advance(); // consume '=' or '->'
             let value = self.parse_expression()?;
+            print!(
+                "DEBUG: parse_expression_stmt: 2. value: {:?} \n",
+                self.peek().kind
+            );
             self.consume(
                 TokenKind::SemiColon,
                 "Expected ';' after assignment statement",
@@ -628,11 +661,16 @@ impl Parser {
                 value,
             });
         }
-
-        self.consume(
-            TokenKind::SemiColon,
-            "Expected ';' after expression statement",
-        )?;
+        print!(
+            "DEBUG: parse_expression_stmt: 3. expr: {:?} \n",
+            self.peek().kind
+        );
+        if self.peek().kind == TokenKind::SemiColon {
+            self.consume(
+                TokenKind::SemiColon,
+                "Expected ';' after expression statement",
+            )?;
+        }
         Ok(Stmt::ExpressionStmt(expr))
     }
 

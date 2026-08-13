@@ -34,9 +34,8 @@ scope Node -> {
 }
 
 export scope LinkedList -> {
-    enable [private, public, custom_index_access, handle, custom_generic, custom_keyword, length];
+    enable [private, public, custom_index_access, handle, custom_generic, length];
     type -> custom;
-    keyword -> "list";
     generic -> {
         type(size) T;
     }

@@ -21,7 +21,7 @@ impl Parser {
             // `scope` is the general type for any scope value
             TokenKind::TypeScope | TokenKind::TypeName => true,
             // Custom keywords registered dynamically via `keyword -> "...";` in scope bodies
-            t => matches!(t, TokenKind::MadeUpType(n) if self.metadata.contains_key(n)),
+            t => matches!(t, TokenKind::MadeUpType(n) if self.metadata.contains_key(n) || true), // todo: remove true
         }
     }
 
@@ -363,9 +363,12 @@ impl Parser {
 
             // --- Keywords used as identifier expressions (e.g. `flag && check`) ---
             other => {
-                let kw_name = other.as_str().to_string();
-                self.advance();
-                Ok(Expr::Identifier(kw_name))
+                //debug
+                print!("DEBUG: Unexpected token '{}' in expression", other.as_str());
+                return Err(format!(
+                    "Syntax Error: Unexpected token '{}' in expression",
+                    other.as_str()
+                ));
             }
         }
     }

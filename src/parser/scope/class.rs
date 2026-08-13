@@ -11,7 +11,7 @@ impl Parser {
         let mut public_block: Vec<Stmt> = Vec::new();
         let mut private_block: Vec<Stmt> = Vec::new();
         let mut static_block: Vec<Stmt> = Vec::new();
-        let mut generic_block: Vec<Stmt> = Vec::new();
+        let mut generic_block: Vec<String> = Vec::new();
         let mut length: i64 = 0;
 
         //we need to ensure no duplicated extends
@@ -21,7 +21,6 @@ impl Parser {
         let mut keyword = name.clone();
         //adding the default settings to the class scope
         settings.push(crate::parser::ast::Setting::CustomIndexAccess);
-        settings.push(crate::parser::ast::Setting::CustomKeyword);
         settings.push(crate::parser::ast::Setting::Private);
         settings.push(crate::parser::ast::Setting::Public);
         settings.push(crate::parser::ast::Setting::Static);
@@ -55,7 +54,7 @@ impl Parser {
                 //====================================================================
                 if t == TokenKind::Init {
                     match self.parse_constructor_decl() {
-                        Ok(c) => constructor = Some(c),
+                        Ok(c) => constructor = c,
                         Err(e) => {
                             eprintln!("Syntax Error in scope constructor: {}", e);
                             self.synchronize();
@@ -68,83 +67,13 @@ impl Parser {
                 //====================================================================
                 if t == TokenKind::Generic {
                     generic_block = self.parse_generic_block()?;
+                    continue;
                 }
                 //====================================================================
                 // handle -> { fn1 , fn2 , ... }
                 //====================================================================
                 if t == TokenKind::Handle {
-                    self.advance(); // 'handle'
-                    self.consume(TokenKind::Arrow, "Expected '->' after 'handle'")?;
-                    self.consume(TokenKind::LBrace, "Expected '{' to open handle block")?;
-
-                    while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        // first we need to check if the function is a valid handle function and there is no other function with the same name
-                        // we need to check if it a fn in the first place no other thing is allowed
-                        if self.peek().kind == TokenKind::Fn {
-                            self.advance();
-                            let mut method_params: Vec<Param> = Vec::new();
-                            let return_type: TypeNode;
-                            if self.is_valid_handle(handles.clone(), self.peek().kind.clone()) {
-                                self.advance();
-                                if self.peek().kind == TokenKind::LParen {
-                                    self.advance();
-                                    if self.peek().kind != TokenKind::RParen {
-                                        // we expect a list of params
-                                        // (a : int(32), b : int(32)) -> void
-                                        loop {
-                                            let name: String =
-                                                self.get_identifier("Expected parameter name")?;
-                                            self.consume(
-                                                TokenKind::Colon,
-                                                "Expected ':' after parameter name",
-                                            )?;
-                                            let type_node = self.parse_type()?;
-                                            method_params.push(Param {
-                                                name,
-                                                type_node: Some(type_node),
-                                            });
-                                            if self.peek().kind == TokenKind::Comma {
-                                                self.advance();
-                                            } else {
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    self.consume(
-                                        TokenKind::RParen,
-                                        "Expected ')' after handle method parameters",
-                                    )?;
-                                    self.consume(
-                                        TokenKind::Arrow,
-                                        "Expected '->' after handle method parameters",
-                                    )?;
-                                    return_type = self.parse_type()?;
-                                    let body = self.parse_block()?;
-                                    self.consume(
-                                        TokenKind::SemiColon,
-                                        "Expected ';' after handle method body",
-                                    )?;
-                                    handle_block.push(Stmt::FnDecl {
-                                        is_exported: false,
-                                        name: name.as_str().to_string(),
-                                        params: method_params,
-                                        return_type: return_type,
-                                        body,
-                                    });
-                                }
-                                self.consume(
-                                    TokenKind::RBrace,
-                                    "Expected '}' to close handle block",
-                                )?;
-                            }
-                        } else {
-                            return Err("Syntax Error: this name is not a valid allowed handle method in this scope type (array) at line {}, column {}".to_string());
-                        }
-                    }
-                    self.consume(TokenKind::RBrace, "Expected '}' to close handle block")?;
-                    if self.peek().kind == TokenKind::SemiColon {
-                        self.advance();
-                    }
+                    handle_block = self.parse_handle_block(handles.clone())?;
                     continue;
                 }
                 //====================================================================
@@ -186,17 +115,7 @@ impl Parser {
                     };
                     continue;
                 }
-                //====================================================================
-                // keyword -> <str>;
-                //====================================================================
-                if t == TokenKind::Keyword {
-                    self.advance(); // 'keyword'
-                    self.consume(TokenKind::Arrow, "Expected '->' after 'keyword'")?;
-                    keyword = self.get_identifier("Expected keyword name")?;
-                    self.custom_keywords.insert(keyword.clone(), name.clone());
-                    self.consume(TokenKind::SemiColon, "Expected ';' after keyword name")?;
-                    continue;
-                }
+
                 //====================================================================
                 // extends -> <name>;
                 //====================================================================
@@ -223,7 +142,6 @@ impl Parser {
         return Ok(Stmt::ClassDecl {
             is_exported: false,
             name,
-            keyword,
             extends,
             handles,
             settings,

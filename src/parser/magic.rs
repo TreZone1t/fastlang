@@ -89,7 +89,6 @@ impl Parser {
             | TokenKind::Private
             | TokenKind::Event
             | TokenKind::Init
-            | TokenKind::Keyword
             | TokenKind::Variants
             | TokenKind::Generic
             | TokenKind::Flag

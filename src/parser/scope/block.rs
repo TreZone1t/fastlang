@@ -1,5 +1,3 @@
-use std::fmt::format;
-
 use crate::lexer::token::TokenKind;
 use crate::parser::ast::*;
 use crate::parser::parser::Parser;
@@ -32,23 +30,45 @@ impl Parser {
         }
         Ok(block)
     }
-
-    pub(crate) fn parse_generic_block(&mut self) -> Result<Vec<Stmt>, String> {
+    //  generic -> { T; U; V; W; X; Y; Z; }
+    pub(crate) fn parse_generics(&mut self) -> Result<Vec<TypeNode>, String> {
         self.advance(); // 'generic'
         self.consume(TokenKind::Arrow, "Expected '->' after 'generic'")?;
         self.consume(TokenKind::LBrace, "Expected '{' to open generic block")?;
-        let mut block = Vec::new();
+        let mut Types = Vec::new();
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-            // we only expect the type keyword
             let token = self.peek().kind.clone();
-            if token == TokenKind::TypeType {
-                self.advance(); // consume type
-                let type_name = self.get_identifier("Expected type name")?;
+            if matches!(token, TokenKind::MadeUpType(_)) {
+                let type_name = self.get_sc_type(
+                    format!(
+                        "Unexpected error happen in generic at line {}, column {}",
+                        self.peek().line,
+                        self.peek().column
+                    )
+                    .as_str(),
+                )?;
                 self.consume(TokenKind::SemiColon, "Expected ';' after type name")?;
+                Types.push(type_name);
                 continue;
+            } else if matches!(token, TokenKind::Identifier(_)) {
+                let type_name = self.get_identifier(
+                    format!(
+                        "Unexpected error happen in generic at line {}, column {}",
+                        self.peek().line,
+                        self.peek().column
+                    )
+                    .as_str(),
+                )?;
+                return Err(format!(
+                    "Expected Capital type name not {} in generic block at line {}, column {} \n\t - use Capital Type name ",
+                    type_name,
+                    self.peek().line,
+                    self.peek().column
+                ));
             } else {
                 return Err(format!(
-                    "Syntax Error: Expected only  type keyword in generic block at line {}, column {}",
+                    "Unexpected Token {} in generic block at line {}, column {} \n\t - use Capital Type name ",
+                    token.as_str(),
                     self.peek().line,
                     self.peek().column
                 ));
@@ -58,69 +78,84 @@ impl Parser {
         if self.peek().kind == TokenKind::SemiColon {
             self.advance();
         }
-        Ok(block)
+        Ok(Types)
     }
 
     pub(crate) fn parse_handle_block(
         &mut self,
-        allowed_methods: &[HandleMethods],
-    ) -> Result<(Vec<Stmt>, Vec<HandleMethods>), String> {
+        allowed_methods: Vec<HandleMethods>,
+    ) -> Result<(Vec<Stmt>), String> {
+        let mut handle_fn: Vec<Stmt> = vec![];
         self.advance(); // 'handle'
         self.consume(TokenKind::Arrow, "Expected '->' after 'handle'")?;
         self.consume(TokenKind::LBrace, "Expected '{' to open handle block")?;
-        let mut handles = Vec::new();
-        let mut handle_block = Vec::new();
+
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-            let stmt_opt = self.parse_statement()?;
-            if stmt_opt.is_none() {
-                continue;
-            }
-            let stmt = stmt_opt.unwrap();
-            if let Stmt::FnDecl {
-                name: ref fn_name, ..
-            } = stmt
-            {
-                let hm = match fn_name.as_str() {
-                    "index_access" => HandleMethods::IndexAccess,
-                    "display" => HandleMethods::Display,
-                    "add" => HandleMethods::Add,
-                    "sub" => HandleMethods::Sub,
-                    "mul" => HandleMethods::Mul,
-                    "div" => HandleMethods::Div,
-                    "mod" => HandleMethods::Mod,
-                    "iterator" => HandleMethods::Iterator,
-                    "next" => HandleMethods::Next,
-                    "length" => HandleMethods::Length,
-                    "size" => HandleMethods::Size,
-                    _ => {
-                        return Err(format!(
-                            "Semantic Error: Invalid handle function name '{}'.",
-                            fn_name
-                        ));
+            // first we need to check if the function is a valid handle function and there is no other function with the same name
+            // we need to check if it a fn in the first place no other thing is allowed
+            if self.peek().kind == TokenKind::Fn {
+                self.advance();
+                let mut method_params: Vec<Param> = Vec::new();
+                let return_type: TypeNode;
+                let method_name = self.peek().kind.clone().as_str().to_string();
+                if self.is_valid_handle(allowed_methods.clone(), self.peek().kind.clone()) {
+                    self.advance();
+                    if self.peek().kind == TokenKind::LParen {
+                        self.advance();
+                        if self.peek().kind != TokenKind::RParen {
+                            // we expect a list of params
+                            // (a : int(32), b : int(32)) -> void
+                            loop {
+                                let name: String =
+                                    self.get_identifier("Expected parameter name")?;
+                                self.consume(
+                                    TokenKind::Colon,
+                                    "Expected ':' after parameter name",
+                                )?;
+                                let type_node = self.parse_type()?;
+                                method_params.push(Param {
+                                    name,
+                                    type_node: Some(type_node),
+                                });
+                                if self.peek().kind == TokenKind::Comma {
+                                    self.advance();
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                        self.consume(
+                            TokenKind::RParen,
+                            "Expected ')' after handle method parameters",
+                        )?;
+                        self.consume(
+                            TokenKind::Arrow,
+                            "Expected '->' after handle method parameters",
+                        )?;
+                        return_type = self.parse_type()?;
+                        let body = self.parse_block()?;
+
+                        handle_fn.push(Stmt::FnDecl {
+                            is_exported: false,
+                            name: method_name.as_str().to_string(),
+                            params: method_params,
+                            return_type: return_type,
+                            body,
+                        });
                     }
-                };
-                let found = allowed_methods.iter().any(|a| *a == hm);
-                if found {
-                    handles.push(hm);
-                } else {
-                    return Err(format!(
-                        "Syntax Error: '{}' handle not allowed in this scope.",
-                        fn_name
-                    ));
                 }
+                //debug
+                print!("DEBUG: handle_fn: {:?}", method_name);
+                println!("DEBUG: token: {:?}", self.peek().kind);
+                self.consume(TokenKind::RBrace, "Expected '}' to close handle block")?;
             } else {
-                return Err("Syntax Error: Expected fn declaration inside handle block".to_string());
+                return Err(format!("Syntax Error: this {} is not a valid allowed handle method in this scope type (array) at line {}, column {}",self.peek().kind.as_str(), self.peek().line, self.peek().column));
             }
-            handle_block.push(stmt);
         }
-        self.consume(TokenKind::RBrace, "Expected '}' to close handle block")?;
-        if self.peek().kind == TokenKind::SemiColon {
-            self.advance();
-        }
-        Ok((handle_block, handles))
+        return Ok(handle_fn);
     }
 
-    pub(crate) fn parse_constructor_decl_block(
+    pub(crate) fn parse_constructor_decl(
         &mut self,
     ) -> Result<Option<crate::parser::ast::ConstructorDecl>, String> {
         self.advance(); // 'constructor'
@@ -133,6 +168,8 @@ impl Parser {
         };
 
         if self.peek().kind == TokenKind::Param {
+            //depug
+            println!("DEBUG: constructor {:?}", self.peek().kind);
             self.advance();
             self.consume(TokenKind::Arrow, "Expected '->' after 'param'")?;
             self.consume(
@@ -189,56 +226,57 @@ impl Parser {
                 Err(err) => return Err(err),
             }
         }
-        self.consume(TokenKind::RBrace, "Expected '}' to close block")?;
         Ok(stmts)
     }
 
     /// يقرأ constructor بالصيغة  `_(params) -> { ... }`
-    pub(crate) fn parse_constructor_decl(&mut self) -> Result<ConstructorDecl, String> {
-        self.advance(); // consume '_'
-        self.consume(TokenKind::LParen, "Expected '(' after constructor '_'")?;
+    /*
+       pub(crate) fn parse_constructor_decl(&mut self) -> Result<ConstructorDecl, String> {
+           self.advance(); // consume '_'
+           self.consume(TokenKind::LParen, "Expected '(' after constructor '_'")?;
 
-        let mut params: Vec<Param> = Vec::new();
-        if self.peek().kind != TokenKind::RParen {
-            loop {
-                let (name, type_node) = if matches!(self.peek().kind, TokenKind::Identifier(_))
-                    && self.tokens.get(self.current + 1).map(|token| &token.kind)
-                        == Some(&TokenKind::Colon)
-                {
-                    let name = self.get_identifier("Expected parameter name")?;
-                    self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
-                    (name, self.parse_type()?)
-                } else {
-                    let type_node = self.parse_type()?;
-                    let name = self.get_identifier("Expected parameter name")?;
-                    (name, type_node)
-                };
-                params.push(Param {
-                    name,
-                    type_node: Some(type_node),
-                });
-                if self.peek().kind == TokenKind::Comma {
-                    self.advance();
-                } else {
-                    break;
-                }
-            }
-        }
+           let mut params: Vec<Param> = Vec::new();
+           if self.peek().kind != TokenKind::RParen {
+               loop {
+                   let (name, type_node) = if matches!(self.peek().kind, TokenKind::Identifier(_))
+                       && self.tokens.get(self.current + 1).map(|token| &token.kind)
+                           == Some(&TokenKind::Colon)
+                   {
+                       let name = self.get_identifier("Expected parameter name")?;
+                       self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
+                       (name, self.parse_type()?)
+                   } else {
+                       let type_node = self.parse_type()?;
+                       let name = self.get_identifier("Expected parameter name")?;
+                       (name, type_node)
+                   };
+                   params.push(Param {
+                       name,
+                       type_node: Some(type_node),
+                   });
+                   if self.peek().kind == TokenKind::Comma {
+                       self.advance();
+                   } else {
+                       break;
+                   }
+               }
+           }
 
-        self.consume(TokenKind::RParen, "Expected ')' after constructor params")?;
-        self.consume(
-            TokenKind::Arrow,
-            "Expected '->' after constructor signature '_(...)'",
-        )?;
-        self.consume(TokenKind::LBrace, "Expected '{' for constructor body")?;
-        let body = self.parse_block()?;
+           self.consume(TokenKind::RParen, "Expected ')' after constructor params")?;
+           self.consume(
+               TokenKind::Arrow,
+               "Expected '->' after constructor signature '_(...)'",
+           )?;
+           self.consume(TokenKind::LBrace, "Expected '{' for constructor body")?;
+           let body = self.parse_block()?;
 
-        Ok(ConstructorDecl {
-            params,
-            expected_types: vec![],
-            body,
-        })
-    }
+           Ok(ConstructorDecl {
+               params,
+               expected_types: vec![],
+               body,
+           })
+       }
+    */
     pub(crate) fn parse_case_decl(&mut self) -> Result<(), String> {
         Err("Standalone case declarations are only valid inside switch blocks".to_string())
         /*

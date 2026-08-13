@@ -1,4 +1,4 @@
-use crate::parser::ast::{EitherBlock, Expr, Stmt};
+use crate::parser::ast::Stmt;
 
 pub struct CodeGenerator {
     pub(crate) output: String,

@@ -1,5 +1,3 @@
-use std::vec;
-
 //we will move parsing the scopes here
 // fn - function
 // block - block
@@ -26,9 +24,15 @@ impl Parser {
         return name;
     }
     pub fn is_valid_handle(&mut self, handles: Vec<HandleMethods>, t: TokenKind) -> bool {
+        eprintln!(
+            "HANDLE CHECK: as_str={:?} kind={:?}",
+            t.as_str(),
+            self.peek().kind
+        );
         let t_h = self.get_handle_type(t);
         for h in handles {
             if h == t_h {
+                eprintln!("HANDLE CHECK: FOUND");
                 return true;
             }
         }
@@ -39,7 +43,6 @@ impl Parser {
         let mut all_settings: Vec<Setting> = Vec::new();
         all_settings.push(Setting::CustomIndexAccess);
         all_settings.push(Setting::CustomConstructor);
-        all_settings.push(Setting::CustomKeyword);
         all_settings.push(Setting::CustomIterator);
         all_settings.push(Setting::CustomDisplay);
         all_settings.push(Setting::CustomGeneric);
@@ -74,26 +77,27 @@ impl Parser {
         let scope_type = match token_scope_type {
             TokenKind::TypeClass => {
                 self.advance();
-                if matches!(self.peek().kind, TokenKind::Identifier(_)) {
+                if matches!(self.peek().kind, TokenKind::MadeUpType(_)) {
                     // we need to change the value of name
-                    name = self.get_identifier("Expected scope name")?;
+                    name = self.get_sc_type("Expected scope name")?;
                     // consume the name then ->
                     self.consume(TokenKind::Arrow, "Expected '->' after scope name")?;
                     //{
                     self.advance();
                     ScopeType::Class
                 } else {
-                    return Err(
-                        "Syntax Error: Expected scope name after 'class' at line {}, column {}"
-                            .to_string(),
-                    );
+                    return Err(format!(
+                        "Syntax Error: Expected scope name after 'class' at line {}, column {}",
+                        self.peek().line,
+                        self.peek().column
+                    ));
                 }
             }
             TokenKind::TypeCustom => {
                 self.advance(); // consume 'custom'
-                if matches!(self.peek().kind, TokenKind::Identifier(_)) {
+                if matches!(self.peek().kind, TokenKind::MadeUpType(_)) {
                     // we need to change the value of name
-                    name = self.get_identifier("Expected scope name")?;
+                    name = self.get_sc_type("Expected scope name")?;
                     // consume the name then ->
                     self.consume(TokenKind::Arrow, "Expected '->' after scope name")?;
                     //{
@@ -105,15 +109,16 @@ impl Parser {
                     )?;
                     ScopeType::Custom
                 } else {
-                    return Err(
-                        "Syntax Error: Expected scope name after 'custom' at line {}, column {}"
-                            .to_string(),
-                    );
+                    return Err(format!(
+                        "Syntax Error: Expected scope name after 'class' at line {}, column {}",
+                        self.peek().line,
+                        self.peek().column
+                    ));
                 }
             }
             TokenKind::TypeEnum => {
                 self.advance(); // consume 'enum'
-                if matches!(self.peek().kind, TokenKind::Identifier(_)) {
+                if matches!(self.peek().kind, TokenKind::MadeUpType(_)) {
                     // we need to change the value of name
                     name = self.get_identifier("Expected scope name")?;
                     ScopeType::Enum
@@ -126,7 +131,7 @@ impl Parser {
             }
             TokenKind::TypeStruct => {
                 self.advance(); // consume 'struct'
-                if matches!(self.peek().kind, TokenKind::Identifier(_)) {
+                if matches!(self.peek().kind, TokenKind::MadeUpType(_)) {
                     // we need to change the value of name
                     name = self.get_identifier("Expected scope name")?;
                     ScopeType::Struct
@@ -140,9 +145,9 @@ impl Parser {
             TokenKind::TypeScope => {
                 self.advance(); // consume 'scope'
                                 // Check if next is 'name'
-                if matches!(self.peek().kind, TokenKind::Identifier(_)) {
+                if matches!(self.peek().kind, TokenKind::MadeUpType(_)) {
                     // we need to change the value of name
-                    name = self.get_identifier("Expected scope name")?;
+                    name = self.get_sc_type("Expected scope name")?;
                     // consume the name then ->
                     self.consume(TokenKind::Arrow, "Expected '->' after scope name")?;
                     //{
@@ -202,10 +207,11 @@ impl Parser {
                         }
                     }
                 } else {
-                    return Err(
-                        "Syntax Error: Expected scope name after 'scope' at line {}, column {}"
-                            .to_string(),
-                    );
+                    return Err(format!(
+                        "Syntax Error: Expected scope name after 'scope' at line {}, column {}",
+                        self.peek().line,
+                        self.peek().column
+                    ));
                 }
             }
             _ => todo!(),

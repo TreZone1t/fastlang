@@ -133,7 +133,7 @@ pub enum Setting {
     //custom
     CustomIndexAccess,
     CustomConstructor,
-    CustomKeyword,
+
     CustomGeneric,
     CustomIterator,
     CustomDisplay,
@@ -204,7 +204,6 @@ impl Setting {
             //custom -----
             Setting::CustomIndexAccess => "custom_index_access".to_string(),
             Setting::CustomConstructor => "custom_constructor".to_string(),
-            Setting::CustomKeyword => "custom_keyword".to_string(),
             Setting::CustomGeneric => "custom_generic".to_string(),
             Setting::CustomIterator => "custom_iterator".to_string(),
             Setting::CustomDisplay => "custom_display".to_string(),
@@ -351,7 +350,6 @@ pub enum Expr {
         operator: String,
     },
 }
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     VarDecl {
@@ -385,13 +383,16 @@ pub enum Stmt {
         flags: Option<Vec<Flag>>,
         events: Option<Vec<EventDecl>>,
         fields: Option<Vec<FieldDecl>>,
+        length: i64,
+        data: Option<Expr>,
+        extends: String,
         return_type: Option<TypeNode>,
         public_block: Option<Vec<Stmt>>,
         private_block: Option<Vec<Stmt>>,
         static_block: Option<Vec<Stmt>>,
         statements: Option<Vec<Stmt>>,
         variant_block: Option<Vec<EnumVariant>>,
-        generic_block: Option<Vec<Stmt>>,
+        generics: Option<TypeNode>,
         handle_block: Option<Vec<Stmt>>,
         constructor: Option<ConstructorDecl>,
     },
@@ -405,7 +406,7 @@ pub enum Stmt {
         public_block: Vec<Stmt>,
         private_block: Vec<Stmt>,
         static_block: Vec<Stmt>,
-        generic_block: Vec<Stmt>,
+        generics: Option<TypeNode>,
         handle_block: Vec<Stmt>,
         length: i64,
         constructor: Option<ConstructorDecl>,
@@ -419,7 +420,7 @@ pub enum Stmt {
         settings: Vec<Setting>,
         public_block: Vec<Stmt>,
         private_block: Vec<Stmt>,
-        generic_block: Vec<Stmt>,
+        generics: Option<TypeNode>,
         handle_block: Vec<Stmt>,
         constructor: Option<ConstructorDecl>,
     },
@@ -463,6 +464,7 @@ pub enum Stmt {
         handles: Vec<HandleMethods>,
         settings: Vec<Setting>,
         handle_block: Vec<Stmt>,
+        length: i64,
         variants: Vec<EnumVariant>,
     },
     FnDecl {

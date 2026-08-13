@@ -98,7 +98,6 @@ pub enum TokenKind {
     // for custom
     CustomIndexAccess, // index_access
     CustomConstructor, // constructor
-    CustomKeyword,     // custom_keyword
     CustomGeneric,     // custom_generic
     CustomIterator,    // iterator
     CustomDisplay,     // display
@@ -204,8 +203,8 @@ impl TokenKind {
             TokenKind::SizeOf => "sizeof",
             TokenKind::TypeData => "data",
             TokenKind::Statement => "statement",
+            TokenKind::CustomIndexAccess => "index_access",
             TokenKind::CustomConstructor => "constructor",
-            TokenKind::CustomKeyword => "keyword",
             TokenKind::CustomGeneric => "generic",
             TokenKind::CustomIterator => "iterator",
             TokenKind::CustomDisplay => "display",

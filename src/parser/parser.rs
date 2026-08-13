@@ -34,7 +34,11 @@ impl Parser {
         // Should not happen in practice since is_at_end() gates the main loops.
         self.tokens.get(self.current).unwrap_or(&EOF_TOKEN)
     }
-
+    pub(crate) fn peek_at(&self, offset: usize) -> &Token {
+        // NOTE: EOF placeholder for out-of-range access carries dummy position 0,0.
+        // Should not happen in practice since is_at_end() gates the main loops.
+        self.tokens.get(self.current + offset).unwrap_or(&EOF_TOKEN)
+    }
     pub(crate) fn previous(&self, n: Option<usize>) -> &Token {
         let n = n.unwrap_or(1);
         &self.tokens[self.current - n]
@@ -59,13 +63,25 @@ impl Parser {
         let mut statements = Vec::new();
 
         while !self.is_at_end() {
-            match self.parse_statement()? {
-                Some(stmt) => statements.push(stmt),
-                None => {}
+            match self.parse_statement() {
+                Ok(Some(stmt)) => statements.push(stmt),
+
+                // إضافة الاحتمال الناقص لتجاهل الجمل الفارغة
+                Ok(None) => continue,
+
+                Err(e) => {
+                    // =============== إضافة الـ Debug المؤقتة ===============
+                    println!("\n⚠️ ⚠️ ⚠️ ERROR OCCURRED! PRINTING AST BUILT SO FAR ⚠️ ⚠️ ⚠️");
+                    println!("{:#?}", statements);
+                    println!("=========================================================\n");
+
+                    return Err(e);
+                }
             }
         }
-
-        Ok(Program { statements })
+        Ok(Program {
+            statements: statements,
+        })
     }
 
     pub(crate) fn consume(

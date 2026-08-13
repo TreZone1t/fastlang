@@ -1,7 +1,6 @@
 export scope None -> {
     type -> custom;
-    enable [custom_keyword, public];
-    keyword -> "none";
+    enable [ public];
     public -> {
         fn is_none() -> bool {
             return true;
@@ -14,11 +13,8 @@ export scope None -> {
 
 export scope Some -> {
     type -> custom;
-    enable [private, public, constructor, custom_keyword, custom_generic];
-    keyword -> "some";
-    generic -> {
-        type T;
-    }
+    enable [private, public, constructor, custom_generic];
+    generic -> {T;};
     private -> {
         T value;
     }
@@ -36,18 +32,15 @@ export scope Some -> {
             return false;
         }
     }
-    _(T value) -> {
+    init(value: T) -> {
         this.value -> value;
     }
 }
 
 export scope Option -> {
     type -> custom;
-    enable [private, public, constructor, custom_keyword, custom_generic];
-    keyword -> "option";
-    generic -> {
-        type T;
-    }
+    enable [private, public, constructor,  custom_generic];
+    generic -> {T;};
     private -> {
         T value;
         bool is_some;
@@ -67,51 +60,45 @@ export scope Option -> {
             return this.is_some;
         }
     }
-    _() -> {
+    init() -> {
         this.is_some = false;
     }
 }
 
 //array<T> name -> [ele1, ele2, ..., eleN];
-export scope Array_type -> {
-    type -> Array;
-    keyword -> "array";
-    generic -> {
-        type T;
-    }
-    _(arr : name) -> {
-        this.data -> arr; 
-    }
+export scope Array -> {
+    type -> ARRAY;
+    generic -> {T;};
     private -> {
-        T data;
-        int(32) length = len;
+        Array<T> temp;
+        int(32) len_temp;
+    }
+    init(arr:Array<T>) -> {
+       this.temp -> arr;
     }
     handle -> {
         fn index_access(index : int(32)) -> T {
             return this.data[index];
-        }
+        };
     }
+    length -> 2;
+    data -> this.temp;
 }
 //str s -> "hello"; 
-export scope Str_type -> {
-    type -> Str;
-    keyword -> "str";
+export scope Str -> {
+    type -> STR;
     param -> {
         int(32) len;
     }
-    private -> {
-        name data;
-        int(32) length = len;
-    }
-    _(arr : name) -> {
+    init(arr : name) -> {
          this.data -> arr; 
     }
     handle -> {
-        fn add(b : str) -> str {
+        fn add(b : Str) -> Str {
             return this.data + b.data;
         }
         //data is has no use for now
-        fn data() -> array<char> {
+        fn data() -> Array<char> {
             return this.data;
         }
         fn length() -> int(32) {

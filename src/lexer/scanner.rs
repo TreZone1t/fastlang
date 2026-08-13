@@ -95,8 +95,8 @@ impl Scanner {
             "struct" => Some(TokenKind::TypeStruct),
             "enum" => Some(TokenKind::TypeEnum),
             "custom" => Some(TokenKind::TypeCustom),
-            "Str" => Some(TokenKind::TypeStr),
-            "Array" => Some(TokenKind::TypeArray),
+            "STR" => Some(TokenKind::TypeStr),
+            "ARRAY" => Some(TokenKind::TypeArray),
 
             "extends" => Some(TokenKind::Extends),
             "super" => Some(TokenKind::Super),
@@ -147,7 +147,7 @@ impl Scanner {
             "display" => Some(TokenKind::CustomDisplay),
             "iterator" => Some(TokenKind::CustomIterator),
             "operators" => Some(TokenKind::CustomOperators),
-            "custom_keyword" => Some(TokenKind::CustomKeyword),
+
             "custom_generic" => Some(TokenKind::CustomGeneric),
             "constructor" => Some(TokenKind::CustomConstructor),
             // context / magic types
@@ -165,6 +165,8 @@ impl Scanner {
             "all" => Some(TokenKind::All),
             "use" => Some(TokenKind::Use),
             "export" => Some(TokenKind::Export),
+
+            "_" => Some(TokenKind::Underscore),
             _ => None,
         }
     }
@@ -434,7 +436,6 @@ impl Scanner {
                 }
             }
 
-            '_' => TokenKind::Underscore,
             other => TokenKind::Error(format!(
                 "Unexpected character '{}' at line {}",
                 other, start_line

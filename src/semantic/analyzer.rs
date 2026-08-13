@@ -187,11 +187,13 @@ impl SemanticAnalyzer {
             Stmt::CustomDecl {
                 is_exported,
                 name,
-                keyword: _,
                 settings: _,
                 handles: _,
                 params,
                 flags,
+                length: _,
+                data: _,
+                extends: _,
                 events: _,
                 fields,
                 return_type: _,
@@ -356,7 +358,6 @@ impl SemanticAnalyzer {
             Stmt::ClassDecl {
                 is_exported,
                 name,
-                keyword: _,
                 extends: _,
                 handles: _,
                 settings: _,
@@ -428,7 +429,6 @@ impl SemanticAnalyzer {
             Stmt::ArrayDecl {
                 is_exported,
                 name,
-                keyword: _,
                 length: _,
                 data: _,
                 handles: _,
@@ -496,7 +496,6 @@ impl SemanticAnalyzer {
             Stmt::StrDecl {
                 is_exported,
                 name,
-                keyword: _,
                 length: _,
                 data: _,
                 handles: _,
@@ -560,7 +559,6 @@ impl SemanticAnalyzer {
             Stmt::StructDecl {
                 is_exported,
                 name,
-                keyword: _,
                 handles: _,
                 settings: _,
                 public_block,
@@ -626,7 +624,7 @@ impl SemanticAnalyzer {
             Stmt::EnumDecl {
                 is_exported,
                 name,
-                keyword: _,
+                length: _,
                 handles: _,
                 settings: _,
                 handle_block,
