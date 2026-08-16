@@ -48,6 +48,48 @@ fn run_all_fs_tests() {
                     "Test {} failed unexpectedly. Continuing...\nStdout:\n{}\nStderr:\n{}",
                     filename, stdout, stderr
                 );
+            } else {
+                // Compilation succeeded. Now check if we should run app.exe
+                // and verify output against `// EXPECT: ` comments.
+                let content = fs::read_to_string(&path).unwrap();
+                let mut expected_lines = Vec::new();
+                for line in content.lines() {
+                    if let Some(idx) = line.find("// EXPECT:") {
+                        let expected = line[idx + 10..].trim();
+                        expected_lines.push(expected.to_string());
+                    }
+                }
+
+                if !expected_lines.is_empty() {
+                    let exe_path = if cfg!(windows) {
+                        "./app.exe"
+                    } else {
+                        "./app" // Assuming linux/mac uses app without .exe if implemented
+                    };
+                    
+                    if Path::new(exe_path).exists() {
+                        let app_output = Command::new(exe_path)
+                            .output()
+                            .expect("failed to execute compiled app");
+                        
+                        let app_stdout = String::from_utf8_lossy(&app_output.stdout);
+                        let actual_lines: Vec<&str> = app_stdout.lines().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+                        
+                        let mut expected_idx = 0;
+                        for actual in actual_lines {
+                            if expected_idx < expected_lines.len() && actual == expected_lines[expected_idx] {
+                                expected_idx += 1;
+                            }
+                        }
+                        
+                        if expected_idx < expected_lines.len() {
+                            panic!(
+                                "Test {} failed output verification.\nExpected to find: '{}'\nActual Output:\n{}",
+                                filename, expected_lines[expected_idx], app_stdout
+                            );
+                        }
+                    }
+                }
             }
         }
     }

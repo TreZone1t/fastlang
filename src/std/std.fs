@@ -32,8 +32,10 @@ export scope Some -> {
             return false;
         }
     }
+    constructor -> {
     init(value: T) -> {
-        this.value -> value;
+        this.value = value;
+    }
     }
 }
 
@@ -60,12 +62,15 @@ export scope Option -> {
             return this.is_some;
         }
     }
+    constructor -> {
     init() -> {
         this.is_some = false;
     }
+    }
 }
-
+//todo : make array and str as a primitive type
 //array<T> name -> [ele1, ele2, ..., eleN];
+/*
 export scope Array -> {
     type -> ARRAY;
     generic -> {T;};
@@ -85,6 +90,7 @@ export scope Array -> {
     data -> this.temp;
 }
 //str s -> "hello"; 
+
 export scope Str -> {
     type -> STR;
     param -> {
@@ -106,4 +112,4 @@ export scope Str -> {
         }
     }
 }
-    
+*/

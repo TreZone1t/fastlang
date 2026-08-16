@@ -8,8 +8,9 @@ pub enum TokenKind {
     Char(char),
     Identifier(String),
     Bool(bool),
+    //we will make Str and Array as a primitive type
     // 2. Keywords
-    Let,      // let
+    //Let,      // let   we will remove let to make the syntax more simple
     Const,    // const
     Set,      // set
     If,       // if
@@ -25,10 +26,13 @@ pub enum TokenKind {
     Return, // return
     Fn,     // fn
     Del,    // del
-    Extends, // extends
-    Super,  // super
+    Add,    // add
 
-    Use,    // use
+    Constructor, // constructor
+    Extends,     // extends
+    Super,       // super
+
+    Import, // import
     Export, // export
     New,    // new
     Copy,   // copy
@@ -43,6 +47,13 @@ pub enum TokenKind {
     Disable, // disable
     All,     // all
 
+    //new meta
+    Leave,             // leave
+    Yield,             // yield
+    Goto,              // goto
+    Call,              // call
+    Label,             // label
+    LabelName(String), // label_name  @string
     // comments
     MultiLineComment,
     InlineComment,
@@ -50,13 +61,14 @@ pub enum TokenKind {
     // 3. Built-in Types
 
     // Primitives
-    TypeInt,            // int
-    TypeFloat,          // float
-    TypeChar,           // char
-    TypeBool,           // bool
-    TypeVoid,           // void
-    TypeType,           // type
-    MadeUpType(String), // made up type
+    TypeInt,   // int
+    TypeFloat, // float
+    TypeChar,  // char
+    TypeBool,  // bool
+    TypeVoid,  // void
+    TypeType,  // type
+    //the mabeuptype is removed and we will add a alternative for it as a ast node if we need it
+    // but i don't think so
 
     //temp
     TypeError, //todo : remove this
@@ -73,6 +85,8 @@ pub enum TokenKind {
     TypeData,      // data     //* with  array and str
     TypeName,      // name
     TypeBluePrint, // blueprint  //* with objects
+    // blueprint support
+    Impl, // impl
     //scopes types
     TypeObject, // object    //* with oop scopes and custom
     TypeCustom, // custom
@@ -80,8 +94,6 @@ pub enum TokenKind {
     TypeBlock,  // block
     TypeClass,  // class
     TypeEnum,   // enum
-    TypeStr,    // str
-    TypeArray,  // array
     //scopes fields
     Param,     // param    //*  with  scope and fn and custom and init
     Init,      // init for getting constructor   //* with  oop scopes and custom
@@ -90,7 +102,6 @@ pub enum TokenKind {
     Static,    // static    //* with  oop scopes and custom
     Public,    // public    //* with  class and struct and  custom and scope
     Private,   // private   //* with  class and struct and  custom and scope
-    Event,     // event     //* with all meta-block: event.call -> { ... }
     Handle,    // handle    //* with all meta-block: handle.<flag> -> { ... }
     Statement, // statement //* with all meta-block: statement -> { ... }
     Variants,
@@ -113,11 +124,15 @@ pub enum TokenKind {
     Multiply, // *
     Divide,   // /
 
-    PlusPlus,   // ++
-    MinusMinus, // --
-    DotDotDot,  // ...  //todo: add it
-    Mod,        // %
-    Underscore, // _
+    PlusPlus,    // ++
+    MinusMinus,  // --
+    PlusAssign,  // +=
+    MinusAssign, // -=
+    MulAssign,   // *=
+    DivAssign,   // /=
+    DotDotDot,   // ...  //todo: add it
+    Mod,         // %
+    Underscore,  // _
 
     // logical
     And, // && or and
@@ -132,6 +147,12 @@ pub enum TokenKind {
     LessEq,    // <=
 
     Ampersand, // &
+    At,        // @
+
+    //not used yet
+    Hash,       //#  we will use it in future update for hex and colors
+    DollarSign, //$
+    Tilde,      //~
 
     // Symbols
     LParen,      // (
@@ -160,10 +181,11 @@ impl TokenKind {
             TokenKind::Char(_) => "char",
             TokenKind::Identifier(v) => v,
             TokenKind::Bool(_) => "bool",
-            TokenKind::Let => "let",
+            //TokenKind::Let => "let",
             TokenKind::Const => "const",
             TokenKind::Set => "set",
             TokenKind::Log => "log",
+            TokenKind::ToString => "to_string",
             TokenKind::If => "if",
             TokenKind::Else => "else",
             TokenKind::Switch => "switch",
@@ -174,9 +196,10 @@ impl TokenKind {
             TokenKind::Return => "return",
             TokenKind::Fn => "fn",
             TokenKind::Del => "del",
+            TokenKind::Add => "add",
             TokenKind::Extends => "extends",
             TokenKind::Super => "super",
-            TokenKind::Use => "use",
+            TokenKind::Import => "import",
             TokenKind::Export => "export",
             TokenKind::New => "new",
             TokenKind::Copy => "copy",
@@ -189,10 +212,15 @@ impl TokenKind {
             TokenKind::Enable => "enable",
             TokenKind::Disable => "disable",
             TokenKind::All => "all",
+            TokenKind::Leave => "leave",
+            TokenKind::Yield => "yield",
+            TokenKind::Goto => "goto",
+            TokenKind::Call => "call",
+            TokenKind::Label => "label",
+            TokenKind::LabelName(v) => v,
             TokenKind::TypeClass => "class",
             TokenKind::TypeEnum => "enum",
             TokenKind::TypeError => "error",
-            TokenKind::Event => "event",
             TokenKind::Handle => "handle",
             TokenKind::TypeName => "name",
             TokenKind::TypeCustom => "custom",
@@ -223,6 +251,10 @@ impl TokenKind {
             TokenKind::Minus => "-",
             TokenKind::Multiply => "*",
             TokenKind::Divide => "/",
+            TokenKind::PlusAssign => "+=",
+            TokenKind::MinusAssign => "-=",
+            TokenKind::MulAssign => "*=",
+            TokenKind::DivAssign => "/=",
             TokenKind::Mod => "%",
             TokenKind::LBrace => "{",
             TokenKind::RBrace => "}",

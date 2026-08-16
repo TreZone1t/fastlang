@@ -1,26 +1,28 @@
-use std::{array};
 scope Main -> {
     type -> fn;
     statement -> {
-        let int(32) y = 10;
+        int(32) y = 10;
         fn test_magic() -> void {
             // Test 1: modify with let
-            let name x = modify y;
+            name x = modify y;
             log(&x);
             // Test 2: copy with let
-            Array<int(32)> arr2 -> [1,2,3];
+            array<int(32)> arr2 -> [1,2,3];
             // Test 3: Magic cast 
-            struct Node {
+            struct Node -> {
                 public -> {
                    int(32) value;
                 }
-                init(int(32) value) ->{
+                constructor -> {
+                init(value : int(32)) ->{
                     this.value = value;
                 }
+                }
             }
-            let int(32) temp = 10;
+            int(32) temp = 10;
             Node n -> new Node(temp);
     }
+    return 0;
     };
     return -> int(32);
     };

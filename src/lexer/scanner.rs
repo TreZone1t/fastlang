@@ -61,10 +61,11 @@ impl Scanner {
     fn check_keyword(word: &str) -> Option<TokenKind> {
         match word {
             // Keywords
-            "let" => Some(TokenKind::Let),
+            //"let" => Some(TokenKind::Let),
             "const" => Some(TokenKind::Const),
             "set" => Some(TokenKind::Set),
             "del" => Some(TokenKind::Del),
+            "add" => Some(TokenKind::Add),
 
             // built-in fn
             "log" => Some(TokenKind::Log),
@@ -95,11 +96,14 @@ impl Scanner {
             "struct" => Some(TokenKind::TypeStruct),
             "enum" => Some(TokenKind::TypeEnum),
             "custom" => Some(TokenKind::TypeCustom),
-            "STR" => Some(TokenKind::TypeStr),
-            "ARRAY" => Some(TokenKind::TypeArray),
 
             "extends" => Some(TokenKind::Extends),
             "super" => Some(TokenKind::Super),
+            "label" => Some(TokenKind::Label),
+            "goto" => Some(TokenKind::Goto),
+            "call" => Some(TokenKind::Call),
+            "yield" => Some(TokenKind::Yield),
+            "leave" => Some(TokenKind::Leave),
 
             // Primitives
             "char" => Some(TokenKind::TypeChar),
@@ -112,11 +116,11 @@ impl Scanner {
             "param" => Some(TokenKind::Param),
             "init" => Some(TokenKind::Init),
             "blueprint" => Some(TokenKind::TypeBluePrint),
+            "impl" => Some(TokenKind::Impl),
             "flag" => Some(TokenKind::Flag),
             "generic" => Some(TokenKind::Generic),
 
             "type" => Some(TokenKind::TypeType),
-            "event" => Some(TokenKind::Event),
             "handle" => Some(TokenKind::Handle),
             "variants" => Some(TokenKind::Variants),
             "public" => Some(TokenKind::Public),
@@ -149,7 +153,8 @@ impl Scanner {
             "operators" => Some(TokenKind::CustomOperators),
 
             "custom_generic" => Some(TokenKind::CustomGeneric),
-            "constructor" => Some(TokenKind::CustomConstructor),
+            "custom_constructor" => Some(TokenKind::CustomConstructor),
+            "constructor" => Some(TokenKind::Constructor),
             // context / magic types
             "name" => Some(TokenKind::TypeName),
             "void" => Some(TokenKind::TypeVoid),
@@ -163,7 +168,7 @@ impl Scanner {
             "enable" => Some(TokenKind::Enable),
             "disable" => Some(TokenKind::Disable),
             "all" => Some(TokenKind::All),
-            "use" => Some(TokenKind::Use),
+            "import" => Some(TokenKind::Import),
             "export" => Some(TokenKind::Export),
 
             "_" => Some(TokenKind::Underscore),
@@ -199,15 +204,21 @@ impl Scanner {
                 if let Some(keyword) = Self::check_keyword(&word) {
                     keyword
                 } else {
-                    let first_char = word.chars().next().unwrap();
-                    if first_char.is_uppercase() {
-                        TokenKind::MadeUpType(word)
-                    } else {
-                        TokenKind::Identifier(word.clone())
-                    }
+                    TokenKind::Identifier(word.clone())
                 }
             }
-
+            '@' => {
+                let mut word = String::new();
+                word.push(c);
+                while let Some(next_c) = self.peek() {
+                    if next_c.is_alphanumeric() || next_c == '_' {
+                        word.push(self.advance().unwrap());
+                    } else {
+                        break;
+                    }
+                }
+                TokenKind::LabelName(word.clone())
+            }
             '0'..='9' => {
                 let mut num_str = String::new();
                 num_str.push(c);
@@ -339,6 +350,9 @@ impl Scanner {
                             start_line
                         ))
                     }
+                } else if let Some('=') = self.peek() {
+                    self.advance();
+                    TokenKind::DivAssign
                 } else {
                     TokenKind::Divide
                 }
@@ -358,11 +372,21 @@ impl Scanner {
                 if let Some('+') = self.peek() {
                     self.advance();
                     TokenKind::PlusPlus
+                } else if let Some('=') = self.peek() {
+                    self.advance();
+                    TokenKind::PlusAssign
                 } else {
                     TokenKind::Plus
                 }
             }
-            '*' => TokenKind::Multiply,
+            '*' => {
+                if let Some('=') = self.peek() {
+                    self.advance();
+                    TokenKind::MulAssign
+                } else {
+                    TokenKind::Multiply
+                }
+            }
             '%' => TokenKind::Mod,
             '{' => TokenKind::LBrace,
             '}' => TokenKind::RBrace,
@@ -390,12 +414,15 @@ impl Scanner {
                 }
             }
             '-' => {
-                if let Some('>') = self.peek() {
-                    self.advance();
-                    TokenKind::Arrow
-                } else if let Some('-') = self.peek() {
+                if let Some('-') = self.peek() {
                     self.advance();
                     TokenKind::MinusMinus
+                } else if let Some('>') = self.peek() {
+                    self.advance();
+                    TokenKind::Arrow
+                } else if let Some('=') = self.peek() {
+                    self.advance();
+                    TokenKind::MinusAssign
                 } else {
                     TokenKind::Minus
                 }

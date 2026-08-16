@@ -1,13 +1,9 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
 use std::rc::Rc;
 
-use crate::lexer::scanner::Scanner;
-use crate::lexer::token::TokenKind;
-use crate::parser::ast::Stmt;
-use crate::parser::parser::Parser;
+use crate::parser::ast::*;
 use crate::semantic::analyzer::SemanticAnalyzer;
 use crate::semantic::environment::Environment;
 
@@ -15,195 +11,115 @@ pub mod codegen;
 pub mod lexer;
 pub mod parser;
 pub mod semantic;
+pub mod loader;
+pub mod ir;
+
 pub fn report_visual_error(source: &str, line: usize, column: usize, err_msg: &str) {
     let lines: Vec<&str> = source.lines().collect();
 
-    eprintln!("Error: {}", err_msg);
-    eprintln!("  --> line {}, column {}", line - 2, column);
+    let context_lines = 2;
+    let start_line = if line > context_lines {
+        line - context_lines
+    } else {
+        1
+    };
+    let end_line = std::cmp::min(line + context_lines, lines.len());
 
-    if line > 0 && line <= lines.len() {
-        let code_line = lines[line - 1];
+    println!("\n\x1b[31;1mError:\x1b[0m {}", err_msg);
+    println!("  \x1b[34m-->\x1b[0m line {}:{}", line, column);
+    println!("   \x1b[34m|\x1b[0m");
 
-        eprintln!("   |");
-        eprintln!("{:>2} | {}", line, code_line);
-
-        let padding = " ".repeat(column.saturating_sub(1));
-        eprintln!("   | {}{}", padding, "^");
-        eprintln!("   |");
-    }
-}
-fn parse_file(path: &str) -> Result<Vec<Stmt>, String> {
-    let contents = fs::read_to_string(path)
-        .unwrap_or_else(|_| panic!("Could not read '{}'. Make sure the file exists.", path));
-
-    let mut scanner = Scanner::new(contents.clone());
-    let mut tokens = Vec::new();
-
-    loop {
-        let tok = scanner.next_token();
-        let is_eof = tok.kind == TokenKind::EOF;
-
-        if let TokenKind::Error(ref msg) = tok.kind {
-            eprintln!("[Lexer Error in {}] {}", path, msg);
-        }
-
-        match tok.kind {
-            TokenKind::InlineComment | TokenKind::MultiLineComment => {}
-            _ => tokens.push(tok),
-        }
-
-        if is_eof {
-            break;
-        }
-    }
-
-    let mut parser = Parser::new(tokens);
-
-    match parser.parse_program() {
-        Ok(program) => Ok(program.statements),
-        Err(err_msg) => {
-            // محاولة استخراج السطر والعمود من الرسالة النصية اللي البارسر بيبعتها
-            // لو البارسر بيبعت رسالة زي: "Syntax Error: Expected X at line 11, column 14"
-            let mut line = 1;
-            let mut column = 1;
-            let mut clean_msg = err_msg.clone();
-
-            if let Some(line_idx) = err_msg.find("at line ") {
-                let after_line = &err_msg[line_idx + 8..];
-                if let Some(comma_idx) = after_line.find(',') {
-                    if let Ok(l) = after_line[..comma_idx].parse::<usize>() {
-                        line = l;
-                    }
-                    if let Some(col_idx) = after_line.find("column ") {
-                        let after_col = &after_line[col_idx + 7..];
-                        // تنظيف أي مسافات أو نقط في النهاية
-                        let num_str = after_col.trim_matches(|c: char| !c.is_ascii_digit());
-                        if let Ok(c) = num_str.parse::<usize>() {
-                            column = c;
-                        }
-                    }
-                }
-                // تنظيف الرسالة عشان نعرضها من غير كلمة "at line..."
-                clean_msg = err_msg[..line_idx].trim().to_string();
+    for i in start_line..=end_line {
+        let i_minus_1 = i - 1;
+        if i_minus_1 < lines.len() {
+            let l_text = lines[i_minus_1];
+            if i == line {
+                println!("{:3}\x1b[34m |\x1b[0m {}", i, l_text);
+                let padding = " ".repeat(column);
+                println!("    \x1b[34m|\x1b[0m{}\x1b[31;1m^-- Here\x1b[0m", padding);
+            } else {
+                println!("{:3}\x1b[34m |\x1b[0m {}", i, l_text);
             }
-
-            // استدعاء الدالة المرئية الجميلة بتاعتنا!
-            report_visual_error(&contents, line, column, &clean_msg);
-
-            // نرجع الإيرور عشان الكومبايلر يوقف
-            Err(err_msg)
         }
     }
+    println!("   \x1b[34m|\x1b[0m\n");
 }
 
 fn main() {
-    let path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "fast.fs".to_string());
+    let args: Vec<String> = std::env::args().collect();
+    let mut path = "fast.fs".to_string();
+    let mut target = None;
+    let mut custom_includes = Vec::new();
+    let mut backend = "cpp".to_string();
+    let mut emit_ir = false;
 
-    // Multi-file state
-    let mut asts: HashMap<String, Vec<Stmt>> = HashMap::new();
-    let mut envs: HashMap<String, Rc<RefCell<Environment>>> = HashMap::new();
-
-    println!("Compiling {}...", path);
-    let main_ast = match parse_file(&path) {
-        Ok(ast) => {
-            println!("AST Length: {}", ast.len());
-            std::fs::write("ast_debug.txt", format!("{:#?}", ast)).unwrap();
-            ast
+    let mut i = 1;
+    while i < args.len() {
+        if args[i] == "--target" && i + 1 < args.len() {
+            target = Some(args[i + 1].clone());
+            i += 2;
+        } else if (args[i] == "-I" || args[i] == "--include") && i + 1 < args.len() {
+            let include_path = args[i + 1].clone();
+            let include_path = if include_path.ends_with('/') || include_path.ends_with('\\') {
+                include_path
+            } else {
+                format!("{}/", include_path)
+            };
+            custom_includes.push(include_path);
+            i += 2;
+        } else if (args[i] == "--backend" || args[i] == "-b") && i + 1 < args.len() {
+            backend = args[i + 1].clone();
+            i += 2;
+        } else if args[i] == "--print-ir" || args[i] == "--emit-ir" {
+            emit_ir = true;
+            i += 1;
+        } else {
+            path = args[i].clone();
+            i += 1;
         }
-        Err(err) => {
-            eprintln!("{}", err);
+    }
+
+    let mut loader = loader::ProjectLoader::new();
+    for inc in custom_includes {
+        loader.include_paths.push(inc);
+    }
+    
+    let program = match loader.load(&path, target.as_deref()) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{}", e);
             std::process::exit(1);
         }
     };
 
-    // Collect dependencies
-    let mut deps = Vec::new();
-    for stmt in &main_ast {
-        if let Stmt::Use {
-            module_path,
-            imports,
-        } = stmt
-        {
-            let mut path = module_path.clone();
-            let mut mod_name = path.join("/");
-            let mut actual_imports = imports.clone();
+    println!("AST Length: {}", program.main_ast.len());
+    std::fs::write("ast_debug.txt", format!("{:#?}", program.main_ast)).unwrap();
 
-            let get_fs_path = |name: &str| -> String {
-                if name.starts_with("std/") {
-                    format!("src/{}.fs", name)
-                } else if name == "std" {
-                    // `use std::{array}` → src/std/std.fs
-                    "src/std/std.fs".to_string()
-                } else {
-                    format!("src/examples/{}.fs", name) // temporary fallback
-                }
-            };
-
-            if !Path::new(&get_fs_path(&mod_name)).exists() && path.len() > 1 {
-                let last = path.pop().unwrap();
-                let parent_mod = path.join("/");
-                if Path::new(&get_fs_path(&parent_mod)).exists() {
-                    mod_name = parent_mod;
-                    actual_imports = Some(vec![last]);
-                }
-            }
-
-            deps.push((mod_name, actual_imports));
-        }
-    }
+    let mut envs: HashMap<String, Rc<RefCell<Environment>>> = HashMap::new();
 
     // Parse and analyze dependencies
-    for (mod_name, _) in &deps {
-        if !asts.contains_key(mod_name) {
-            let actual_path = if mod_name.starts_with("std/") {
-                format!("src/{}.fs", mod_name)
-            } else if mod_name == "std" {
-                "src/std/std.fs".to_string()
-            } else {
-                let test = format!("src/examples/{}.fs", mod_name);
-                if Path::new(&test).exists() {
-                    test
-                } else {
-                    format!("{}.fs", mod_name)
-                }
-            };
-
-            println!("Loading module {}...", mod_name);
-            let mod_ast = match parse_file(&actual_path) {
-                Ok(ast) => ast,
-                Err(err) => {
-                    eprintln!("{}", err);
-                    std::process::exit(1);
-                }
-            };
-
-            let mut analyzer = SemanticAnalyzer::new();
-            if let Err(e) = analyzer.analyze(&mod_ast) {
-                eprintln!("Semantic Error in module {}: {}", mod_name, e);
-                std::process::exit(1);
-            }
-
-            envs.insert(mod_name.clone(), analyzer.current_env);
-            asts.insert(mod_name.clone(), mod_ast);
+    for module in &program.modules {
+        let mut analyzer = SemanticAnalyzer::new(program.global_metadata.clone());
+        if let Err(e) = analyzer.analyze(&module.ast) {
+            eprintln!("Semantic Error in module {}: {}", module.name, e);
+            std::process::exit(1);
         }
+        envs.insert(module.name.clone(), analyzer.current_env);
     }
 
     // Analyze main file
     println!("\n=== Semantic Analysis ===");
-    let mut main_analyzer = SemanticAnalyzer::new();
+    let mut main_analyzer = SemanticAnalyzer::new(program.global_metadata.clone());
 
     // Inject exported symbols
-    for (mod_name, imports) in &deps {
+    for (mod_name, imports) in &program.main_deps {
         if let Some(env) = envs.get(mod_name) {
             let symbols = env.borrow().symbols.clone();
             for (sym_name, info) in symbols {
-                if info.visibility == crate::parser::ast::Visibility::Public {
-                    // Check if selective imports are used
+                if info.visibility == Visibility::Public {
                     let should_inject = match imports {
                         Some(selected) => selected.contains(&sym_name),
-                        None => true, // inject all if no curly braces used
+                        None => true,
                     };
 
                     if should_inject {
@@ -212,7 +128,7 @@ fn main() {
                             .current_env
                             .borrow_mut()
                             .define(sym_name, info)
-                            .ok(); // ignore if already defined (e.g. stdlib)
+                            .ok();
                     }
                 }
             }
@@ -222,8 +138,8 @@ fn main() {
         }
     }
 
-    match main_analyzer.analyze(&main_ast) {
-        Ok(_) => println!("Semantic Analysis Passed successfully! ✅"),
+    match main_analyzer.analyze(&program.main_ast) {
+        Ok(_) => println!("Semantic Analysis Passed successfully! ?"),
         Err(e) => {
             eprintln!("{}", e);
             std::process::exit(1);
@@ -231,47 +147,72 @@ fn main() {
     }
 
     // Code Generation
+    if backend == "cranelift" {
+        println!("\n=== Code Generation (Cranelift IR) ===");
+        
+        let builder = crate::ir::builder::IRBuilder::new("main".to_string(), &program.global_metadata);
+        let ir_module = builder.build(&program.main_ast);
+        println!("Generated Custom IR Module with {} functions.", ir_module.functions.len());
+        
+        if emit_ir {
+            println!("\n=== Custom IR Output ===");
+            println!("{}", ir_module);
+            println!("========================\n");
+            return;
+        }
+
+        let mut cl_backend = crate::codegen::cranelift::CraneliftBackend::new();
+        cl_backend.compile_module(&ir_module);
+        cl_backend.finalize();
+        println!("Cranelift JIT execution completed!");
+        return;
+    }
+
     println!("\n=== Code Generation (C++) ===");
     let mut final_cpp = String::new();
 
-    // Generate headers once
     let mut header_gen = crate::codegen::generator::CodeGenerator::new();
     final_cpp.push_str(&header_gen.generate(&vec![], true, false));
 
-    // Generate modules
-    for (name, ast) in &asts {
-        let cpp_namespace = name.replace("/", "_");
+    for module in &program.modules {
+        let cpp_namespace = module.name.replace("/", "_");
         final_cpp.push_str(&format!("namespace {} {{\n", cpp_namespace));
         let mut codegen = crate::codegen::generator::CodeGenerator::new();
-        let module_cpp = codegen.generate(ast, false, false);
+        let module_cpp = codegen.generate(&module.ast, false, false);
         final_cpp.push_str(&module_cpp);
         final_cpp.push_str(&format!("\n}} // namespace {}\n\n", cpp_namespace));
     }
 
-    // Generate main
     let mut main_codegen = crate::codegen::generator::CodeGenerator::new();
-    let main_cpp = main_codegen.generate(&main_ast, false, true);
+    let main_cpp = main_codegen.generate(&program.main_ast, false, true);
     final_cpp.push_str(&main_cpp);
 
-    let out_path = "output.cpp";
+    // Create build directory if it doesn't exist
+    if let Err(e) = fs::create_dir_all("build") {
+        eprintln!("Failed to create build directory: {}", e);
+        std::process::exit(1);
+    }
+
+    let out_path = "build/output.cpp";
+    let exe_path = "build/app.exe";
     fs::write(out_path, &final_cpp).expect("Failed to write output.cpp");
 
     println!("Successfully generated C++ code to {}", out_path);
-    println!("Compiling to app.exe...");
+    println!("Compiling to {}...", exe_path);
 
     let status = std::process::Command::new("g++")
         .arg(out_path)
         .arg("-o")
-        .arg("app.exe")
+        .arg(exe_path)
         .arg("-std=c++20")
         .status();
 
     match status {
         Ok(s) if s.success() => {
-            println!("Compilation successful! Executable is app.exe 🚀");
+            println!("Compilation successful! Executable is {} 🚀", exe_path);
         }
         _ => {
-            eprintln!("C++ compilation failed! Check output.cpp for errors.");
+            eprintln!("C++ compilation failed! Check {} for errors.", out_path);
         }
     }
 }

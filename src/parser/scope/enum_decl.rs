@@ -4,20 +4,23 @@ use crate::parser::parser::Parser;
 
 impl Parser {
     pub(crate) fn parse_enum_decl(&mut self, name: String) -> Result<Stmt, String> {
-        let mut settings: Vec<crate::parser::ast::Setting> = Vec::new();
-        let mut handles: Vec<crate::parser::ast::HandleMethods> = Vec::new();
+        println!("DEBUG: parse_enum_decl called with name='{}'", name);
+        let mut settings: Vec<Setting> = Vec::new();
+        let mut handles: Vec<HandleMethods> = Vec::new();
+        let mut used_handles: Vec<HandleMethods> = Vec::new();
+        let mut used_settings: std::collections::HashSet<Setting> = std::collections::HashSet::new();
         let mut handle_block: Vec<Stmt> = Vec::new(); //*
         let mut variants: Vec<EnumVariant> = Vec::new();
         let mut length: i64 = 0; //*
         let mut name = name.clone(); //*
         let is_not_in_scope = name == "";
         //adding the default settings to the array c
-        settings.push(crate::parser::ast::Setting::Length);
+        settings.push(Setting::Length);
         // adding allowed handles
         //we have display , iterator , next , length , size
-        handles.push(crate::parser::ast::HandleMethods::Display);
-        handles.push(crate::parser::ast::HandleMethods::Length);
-        if !is_not_in_scope {
+        handles.push(HandleMethods::Display);
+        handles.push(HandleMethods::Length);
+        if is_not_in_scope {
             //we not been redirect by the scope parsing fn
             name = self.get_identifier("Expected enum name")?;
             self.consume(TokenKind::Arrow, "Expected '->' to open enum body")?;
@@ -52,16 +55,18 @@ impl Parser {
             } else {
                 // 2. we are in a scope and we need to parse the scope body
                 //====================================================================
-                // handle -> { fn1 , fn2 , ... }
-                //====================================================================
                 let t = self.peek().kind.clone();
                 if t == TokenKind::Handle {
-                    handle_block = self.parse_handle_block(handles.clone())?;
-                }
-                //====================================================================
-                // variants -> { ... }
-                //====================================================================
-                if t == TokenKind::Variants {
+                    if used_settings.contains(&Setting::Handle) {
+                        return Err(format!("Syntax Error: Duplicate 'handle' block in enum '{}'", name));
+                    }
+                    used_settings.insert(Setting::Handle);
+                    handle_block = self.parse_handle_block(&mut handles, &mut used_handles)?;
+                } else if t == TokenKind::Variants {
+                    if used_settings.contains(&Setting::Custom) { // Using Custom for Variants flag
+                        return Err(format!("Syntax Error: Duplicate 'variants' block in enum '{}'", name));
+                    }
+                    used_settings.insert(Setting::Custom);
                     self.advance(); // 'variants'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'variants'")?;
                     self.consume(TokenKind::LBrace, "Expected '{' to open variants block")?;
@@ -77,46 +82,71 @@ impl Parser {
                                 TokenKind::RParen,
                                 "Expected ')' after enum variant size",
                             )?;
-                            self.consume(TokenKind::Comma, "Expected ',' after enum variant size")?;
                             variants.push(EnumVariant {
                                 name: variant_name,
                                 data_types: Some(data_types),
                             });
-                            continue;
                         } else {
                             variants.push(EnumVariant {
                                 name: variant_name,
                                 data_types: None,
                             });
-                            continue;
                         }
+                        if self.peek().kind == TokenKind::Comma {
+                            self.advance();
+                        }
+                        continue;
                     }
 
                     self.consume(TokenKind::RBrace, "Expected '}' to close variants block")?;
                     self.consume(TokenKind::SemiColon, "Expected ';' after variants block")?;
-                    continue;
-                }
-                //====================================================================
-                // length -> <value>;
-                //====================================================================
-                if t == TokenKind::TypeLength {
+                } else if t == TokenKind::TypeLength {
+                    if used_settings.contains(&Setting::Length) {
+                        return Err(format!("Syntax Error: Duplicate 'length' block in enum '{}'", name));
+                    }
+                    used_settings.insert(Setting::Length);
                     self.advance(); // consume 'length'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'length'")?;
                     let value = self.parse_expression()?;
                     self.consume(TokenKind::SemiColon, "Expected ';' after length value")?;
                     let temp = match value {
                         Expr::LiteralInt(i) => i,
-                        _ => {
-                            return Err(
-                                "Syntax Error: Expected integer value for length".to_string()
-                            )
-                        }
+                        _ => return Err("Syntax Error: Expected integer value for length".to_string())
                     };
                     length = temp;
-                    continue;
+                } else {
+                    return Err(format!("Syntax Error: Unsupported setting block '{}' in enum", t.as_str()));
                 }
             }
         }
+        let mut meta = TypeMetadata {
+            name: name.clone(),
+            fields: std::collections::HashMap::new(),
+            constructor: None,
+            params: Vec::new(),
+            generics: Vec::new(),
+            methods: std::collections::HashMap::new(),
+            handles: used_handles,
+            vars: std::collections::HashMap::new(),
+            is_enum: true,
+            variants: Some(variants.clone()),
+        };
+        for variant in &variants {
+            meta.fields.insert(
+                variant.name.clone(),
+                TypeNode::Simple(TypeRef {
+                    base_type: BaseType::from_str(&name),
+                    size: None,
+                }),
+            );
+        }
+        self.metadata.insert(name.clone(), meta);
+
+        self.consume(TokenKind::RBrace, "Expected '}' to close enum block")?;
+        if self.peek().kind == TokenKind::SemiColon {
+            self.advance();
+        }
+
         return Ok(Stmt::EnumDecl {
             is_exported: false,
             name,

@@ -14,10 +14,69 @@ pub enum Editability {
     Editable,
     NotEditable,
 }
-
+#[derive(Debug, Clone, PartialEq)]
+pub enum BaseType {
+    //todo : use it instead of string
+    Int,
+    Float,
+    Char,
+    Bool,
+    Name(Box<BaseType>), //it will contain other type inside it
+    Type(Box<BaseType>), //it will contain other type inside it
+    //Str,
+    Array(String),  //will contain the type of the array elements
+    Object(String), //will contain the name of the Struct or Class or the Blueprint it came from
+    //Block,
+    Custom(String), //will contain the name of the Custom Scope it came from
+    Unknown,        //it is the state when we don't know the type yet
+    Error,
+    Void,
+    New(String), //it is will be used when we are creating a new type
+}
+impl BaseType {
+    pub fn as_str(&self) -> String {
+        match self {
+            BaseType::Int => "int".to_string(),
+            BaseType::Float => "float".to_string(),
+            BaseType::Char => "char".to_string(),
+            BaseType::Bool => "bool".to_string(),
+            BaseType::Name(t) => format!("name<{}>", t.as_str()),
+            BaseType::Type(t) => format!("type<{}>", t.as_str()),
+            //Str,
+            BaseType::Array(t) => format!("array<{}>", t),
+            BaseType::Object(t) => format!("object<{}>", t),
+            //Block,
+            BaseType::Custom(t) => format!("custom<{}>", t),
+            BaseType::Unknown => "unknown".to_string(),
+            BaseType::Error => "error".to_string(),
+            BaseType::Void => "void".to_string(),
+            BaseType::New(t) => format!("new<{}>", t),
+        }
+    }
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "int" => BaseType::Int,
+            "float" => BaseType::Float,
+            "char" => BaseType::Char,
+            "bool" => BaseType::Bool,
+            "name" => BaseType::Name(Box::new(BaseType::Unknown)),
+            "type" => BaseType::Type(Box::new(BaseType::Unknown)),
+            //"str" => BaseType::Str,
+            "array" => BaseType::Array("".to_string()),
+            "object" => BaseType::Object("".to_string()),
+            //"block" => BaseType::Block,
+            "custom" => BaseType::Custom("".to_string()),
+            "unknown" => BaseType::Unknown,
+            "error" => BaseType::Error,
+            "void" => BaseType::Void,
+            "new" => BaseType::New("".to_string()),
+            _ => BaseType::Unknown,
+        }
+    }
+}
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeRef {
-    pub base_type: String,
+    pub base_type: BaseType,
     pub size: Option<i64>,
 }
 
@@ -28,27 +87,39 @@ pub enum TypeNode {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnType {
-    name: String,
-    params: Vec<Param>,
-    return_type: TypeRef,
+    pub name: String,
+    pub params: Vec<Param>,
+    pub return_type: TypeNode,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstructorType {
-    name: String,
-    params: Vec<Param>,
+    pub name: String,
+    pub params: Vec<Param>,
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct VarMetadata {
+    pub name: String,
+    pub type_node: TypeNode,
+    pub visibility: Visibility,
+    pub editability: Editability,
+    pub is_array: bool,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeMetadata {
-    name: String,                     // "Node"
-    fields: HashMap<String, TypeRef>, // {"data": Int, "next": UserType("Node")}
-    constructor: Option<ConstructorType>,
-    params: Vec<Param>,               // {"value": Int}
-    generics: Vec<TypeNode>,          // {"T": UserType("Type")}
-    methods: HashMap<String, FnType>, // {"set_next": Node.set_next -> void}
+    pub name: String,                      // "Node"
+    pub fields: HashMap<String, TypeNode>, // {"data": Int, "next": UserType("Node")}
+    pub constructor: Option<Vec<ConstructorType>>,
+    pub params: Vec<Param>,               // {"value": Int}
+    pub generics: Vec<TypeNode>,          // {"T": UserType("Type")}
+    pub methods: HashMap<String, FnType>, // {"set_next": Node.set_next -> void}
+    pub handles: Vec<HandleMethods>,
+    pub vars: HashMap<String, VarMetadata>,
+    pub is_enum: bool,
+    pub variants: Option<Vec<EnumVariant>>,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct Generic {
-    pub base_type: String,
+    pub base_type: BaseType,
     pub generics: Vec<TypeNode>,
 }
 
@@ -83,11 +154,8 @@ pub enum ScopeType {
     //todo : add looped  so we will add setting for that instead
     // Case, //todo : the same
     Switch,
-    Array,
     Enum,
-    String,
 }
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: String,
@@ -96,40 +164,50 @@ pub struct Param {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Flag {
-    IsReturn,
-    IsBreak,
-    IsThrow,
-    IsSwitch,
-    IsExit,
+    HasReturn,
+    HasBreak,
+    HasThrow,
+    HasError,
+    HasSwitch,
+    HasExit,
     Custom(String),
 }
 
 impl Flag {
     pub fn from_str(s: &str) -> Self {
         match s {
-            "is_return" => Flag::IsReturn,
-            "is_break" => Flag::IsBreak,
-            "is_throw" => Flag::IsThrow,
-            "is_switch" => Flag::IsSwitch,
-            "is_exit" => Flag::IsExit,
+            "has_return" => Flag::HasReturn,
+            "has_break" => Flag::HasBreak,
+            "has_throw" => Flag::HasThrow,
+            "has_switch" => Flag::HasSwitch,
+            "has_error" => Flag::HasError,
+            "has_exit" => Flag::HasExit,
             _ => Flag::Custom(s.to_string()),
         }
     }
 
     pub fn as_str(&self) -> String {
         match self {
-            Flag::IsReturn => "is_return".to_string(),
-            Flag::IsBreak => "is_break".to_string(),
-            Flag::IsThrow => "is_throw".to_string(),
-            Flag::IsSwitch => "is_switch".to_string(),
-            Flag::IsExit => "is_exit".to_string(),
+            Flag::HasReturn => "has_return".to_string(),
+            Flag::HasBreak => "has_break".to_string(),
+            Flag::HasThrow => "has_throw".to_string(),
+            Flag::HasError => "has_error".to_string(),
+            Flag::HasSwitch => "has_switch".to_string(),
+            Flag::HasExit => "has_exit".to_string(),
             Flag::Custom(s) => s.clone(),
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Setting {
+    //global to add a list of settings
+    All,      // all of the settings
+    OOP,      // private , public , static , extends , constructor
+    Function, // param , statement , return
+    Debug,    // error , break , throw , exit , return
+    State,    // leave , yield , goto , label , call
+    Custom, // custom_index_access , custom_constructor , custom_generic , custom_iterator , custom_display , custom_operators
     //custom
     CustomIndexAccess,
     CustomConstructor,
@@ -151,22 +229,36 @@ pub enum Setting {
     Static,
     Extends,
     Constructor,
-    //enum
+    // enum
     Variants,
+    // scope settings
+    Leave,
+    Yield,
+    Goto,
+    Label,
+    Call,
     // array and str
     Length,
     Data,
     Size,
     //all
+    Throw,
     Error,
+    Exit,
     Handle,
-    Custom(String),
     NotFound,
 }
 
 impl Setting {
     pub fn from_str(s: &str) -> Self {
         match s {
+            //global -------
+            "all" => Setting::All,
+            "oop" => Setting::OOP,
+            "function" => Setting::Function,
+            "debug" => Setting::Debug,
+            "state" => Setting::State,
+            "custom" => Setting::Custom,
             //custom -------
             "index_access" | "custom_index_access" => Setting::CustomIndexAccess,
             "constructor" | "custom_constructor" => Setting::CustomConstructor,
@@ -174,7 +266,7 @@ impl Setting {
             "iterator" | "custom_iterator" => Setting::CustomIterator,
             "display" | "custom_display" => Setting::CustomDisplay,
             "operators" | "custom_operators" => Setting::CustomOperators,
-            //fn -------
+            //fn ---
             "param" => Setting::Param,
             "statement" => Setting::Statement,
             "return" => Setting::Return,
@@ -187,6 +279,11 @@ impl Setting {
             "public" => Setting::Public,
             "static" => Setting::Static,
             "extends" => Setting::Extends,
+            "leave" => Setting::Leave,
+            "yield" => Setting::Yield,
+            "goto" => Setting::Goto,
+            "label" => Setting::Label,
+            "call" => Setting::Call,
             //enum --
             "variants" => Setting::Variants,
             //array and str -------
@@ -201,6 +298,13 @@ impl Setting {
 
     pub fn as_str(&self) -> String {
         match self {
+            //global -----
+            Setting::All => "all".to_string(),
+            Setting::OOP => "oop".to_string(),
+            Setting::Function => "function".to_string(),
+            Setting::Debug => "debug".to_string(),
+            Setting::State => "state".to_string(),
+            Setting::Custom => "custom".to_string(),
             //custom -----
             Setting::CustomIndexAccess => "custom_index_access".to_string(),
             Setting::CustomConstructor => "custom_constructor".to_string(),
@@ -220,7 +324,12 @@ impl Setting {
             Setting::Public => "public".to_string(),
             Setting::Static => "static".to_string(),
             Setting::Extends => "extends".to_string(),
-            Setting::Constructor => "init".to_string(),
+            Setting::Constructor => "constructor".to_string(),
+            Setting::Leave => "leave".to_string(),
+            Setting::Yield => "yield".to_string(),
+            Setting::Goto => "goto".to_string(),
+            Setting::Label => "label".to_string(),
+            Setting::Call => "call".to_string(),
             //enum -------
             Setting::Variants => "variants".to_string(),
             //array and str -------
@@ -229,9 +338,10 @@ impl Setting {
             Setting::Data => "data".to_string(),
             //all ------
             Setting::Error => "error".to_string(),
+            Setting::Exit => "exit".to_string(),
+            Self::Throw => "throw".to_string(),
             Setting::Handle => "handle".to_string(),
             Setting::NotFound => "not_found".to_string(),
-            Setting::Custom(s) => s.clone(),
         }
     }
     pub fn from_token(t: TokenKind) -> Self {
@@ -239,7 +349,7 @@ impl Setting {
         return Setting::from_str(s);
     }
 }
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(Debug, Clone, PartialEq, Copy, Eq, Hash)]
 pub enum HandleMethods {
     IndexAccess,
     Display,
@@ -252,6 +362,16 @@ pub enum HandleMethods {
     Next,
     Length,
     Size,
+    Call,
+    Label,
+    Goto,
+    Leave,
+    Yield,
+    Data,
+    Break,
+    Error,
+    Exit,
+    Drop, //todo:  make it essentially the same as exit and the user has to implement it specifically in custom scope
     NotFound,
 }
 impl HandleMethods {
@@ -268,6 +388,14 @@ impl HandleMethods {
             "next" => HandleMethods::Next,
             "length" => HandleMethods::Length,
             "size" => HandleMethods::Size,
+            "call" => HandleMethods::Call,
+            "label" => HandleMethods::Label,
+            "goto" => HandleMethods::Goto,
+            "leave" => HandleMethods::Leave,
+            "yield" => HandleMethods::Yield,
+            "data" => HandleMethods::Data,
+            "has_error" => HandleMethods::Error,
+            "exit" => HandleMethods::Exit,
             _ => {
                 println!("DEBUG: Handle method not found: {}", s);
                 HandleMethods::NotFound
@@ -345,6 +473,10 @@ pub enum Expr {
         right: Box<Expr>,
     },
 
+    PrefixUpdate {
+        operator: String, // "++" or "--"
+        right: Box<Expr>,
+    },
     PostfixUpdate {
         left: Box<Expr>,
         operator: String,
@@ -357,6 +489,14 @@ pub enum Stmt {
         editability: Editability,
         type_node: Option<TypeNode>,
         name: String,
+        value: Expr,
+    },
+    ArrayDecl {
+        visibility: Visibility,
+        editability: Editability,
+        type_node: Option<TypeNode>,
+        name: String,
+        length: Expr,
         value: Expr,
     },
     Reassign {
@@ -381,6 +521,7 @@ pub enum Stmt {
         handles: Option<Vec<HandleMethods>>,
         params: Option<Vec<Param>>,
         flags: Option<Vec<Flag>>,
+        labels: Option<Vec<String>>,
         events: Option<Vec<EventDecl>>,
         fields: Option<Vec<FieldDecl>>,
         length: i64,
@@ -392,9 +533,9 @@ pub enum Stmt {
         static_block: Option<Vec<Stmt>>,
         statements: Option<Vec<Stmt>>,
         variant_block: Option<Vec<EnumVariant>>,
-        generics: Option<TypeNode>,
+        generics: Option<Vec<TypeNode>>,
         handle_block: Option<Vec<Stmt>>,
-        constructor: Option<ConstructorDecl>,
+        constructor: Option<Vec<ConstructorDecl>>,
     },
 
     ClassDecl {
@@ -406,35 +547,10 @@ pub enum Stmt {
         public_block: Vec<Stmt>,
         private_block: Vec<Stmt>,
         static_block: Vec<Stmt>,
-        generics: Option<TypeNode>,
+        generics: Option<Vec<TypeNode>>,
         handle_block: Vec<Stmt>,
         length: i64,
-        constructor: Option<ConstructorDecl>,
-    },
-    ArrayDecl {
-        is_exported: bool,
-        name: String,
-        length: i64,
-        data: String,
-        handles: Vec<HandleMethods>,
-        settings: Vec<Setting>,
-        public_block: Vec<Stmt>,
-        private_block: Vec<Stmt>,
-        generics: Option<TypeNode>,
-        handle_block: Vec<Stmt>,
-        constructor: Option<ConstructorDecl>,
-    },
-    StrDecl {
-        is_exported: bool,
-        name: String,
-        length: i64,
-        data: String,
-        handles: Vec<HandleMethods>,
-        settings: Vec<Setting>,
-        public_block: Vec<Stmt>,
-        private_block: Vec<Stmt>,
-        handle_block: Vec<Stmt>,
-        constructor: Option<ConstructorDecl>,
+        constructor: Option<Vec<ConstructorDecl>>,
     },
     BlueprintDecl {
         is_exported: bool,
@@ -455,7 +571,7 @@ pub enum Stmt {
         private_block: Vec<Stmt>,
         handle_block: Vec<Stmt>,
         static_block: Vec<Stmt>,
-        constructor: Option<ConstructorDecl>,
+        constructor: Option<Vec<ConstructorDecl>>,
     },
 
     EnumDecl {
@@ -492,8 +608,11 @@ pub enum Stmt {
     },
     BreakStmt,
     ContinueStmt,
+    LeaveStmt,
+    YieldStmt(Option<Expr>),
+    CallStmt(Expr),
     ExpressionStmt(Expr),
-
+     
     ThrowStmt(Expr),
     TryCatchStmt {
         try_block: Vec<Stmt>,
@@ -512,8 +631,15 @@ pub enum Stmt {
         target: Expr,
         value: Expr,
     },
-
-    /// `if (cond) { ... } else { ... }`
+    AddPropertyStmt {
+        kind_name: String, // "label" or "flag"
+        value: Expr,
+    },
+    LabelDecl {
+        name: String,
+        body: Vec<Stmt>,
+    },
+    GotoStmt(Expr),
     IfStmt {
         condition: Expr,
         then_block: Vec<Stmt>,
@@ -540,11 +666,18 @@ pub enum Stmt {
     ForStmt {
         init: Option<Box<Stmt>>,
         condition: Option<Expr>,
-        increment: Option<Expr>,
+        increment: Option<Box<Stmt>>,
         body: EitherBlock,
     },
 
-    Use {
+    /// `for (item in iterable) -> { ... }`
+    ForInStmt {
+        item: Box<Stmt>,
+        iterable: Expr,
+        body: EitherBlock,
+    },
+
+    Import {
         module_path: Vec<String>,
         imports: Option<Vec<String>>,
     },

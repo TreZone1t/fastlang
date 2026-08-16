@@ -1,11 +1,10 @@
-use crate::parser::ast::Stmt;
+use crate::parser::ast::*;
 
 pub struct CodeGenerator {
     pub(crate) output: String,
     pub(crate) indent_level: usize,
-    pub(crate) in_class_def: bool,
-    pub(crate) in_switch: bool,
-    pub(crate) current_switch_type: String,
+    pub(crate) custom_scopes: std::collections::HashSet<String>,
+    pub(crate) yield_counter: usize,
 }
 
 impl CodeGenerator {
@@ -13,9 +12,80 @@ impl CodeGenerator {
         CodeGenerator {
             output: String::new(),
             indent_level: 0,
-            in_switch: false,
-            current_switch_type: String::new(),
-            in_class_def: false,
+            custom_scopes: std::collections::HashSet::new(),
+            yield_counter: 0,
+        }
+    }
+
+    pub(crate) fn emit_operator_overloads(&mut self, handle_block: &Option<Vec<Stmt>>) {
+        if let Some(handles) = handle_block {
+            for h in handles {
+                if let Stmt::FnDecl {
+                    name,
+                    params,
+                    return_type,
+                    ..
+                } = h
+                {
+                    let op = match name.as_str() {
+                        "add" => Some("+"),
+                        "sub" => Some("-"),
+                        "mul" => Some("*"),
+                        "div" => Some("/"),
+                        "mod" => Some("%"),
+                        _ => None,
+                    };
+
+                    let ret_str = match return_type {
+                        TypeNode::Simple(r) => self.map_type(Some(r.base_type.as_str().as_str()), r.size),
+                        TypeNode::Generic(g) => self.map_type(Some(g.base_type.as_str().as_str()), None),
+                    };
+
+                    if let Some(o) = op {
+                        if params.len() == 1 {
+                            let param_type = match &params[0].type_node {
+                                Some(TypeNode::Simple(r)) => {
+                                    self.map_type(Some(r.base_type.as_str().as_str()), r.size)
+                                }
+                                Some(TypeNode::Generic(g)) => {
+                                    self.map_type(Some(g.base_type.as_str().as_str()), None)
+                                }
+                                None => "auto".to_string(),
+                            };
+                            let param_name = &params[0].name;
+                            self.emit(&format!(
+                                "{} operator{}({} {}) {{",
+                                ret_str, o, param_type, param_name
+                            ));
+                            self.indent_level += 1;
+                            self.emit(&format!("return this->{}({});", name, param_name));
+                            self.indent_level -= 1;
+                            self.emit("}");
+                        }
+                    } else if name == "index_access" {
+                        if params.len() == 1 {
+                            let param_type = match &params[0].type_node {
+                                Some(TypeNode::Simple(r)) => {
+                                    self.map_type(Some(r.base_type.as_str().as_str()), r.size)
+                                }
+                                Some(TypeNode::Generic(g)) => {
+                                    self.map_type(Some(g.base_type.as_str().as_str()), None)
+                                }
+                                None => "auto".to_string(),
+                            };
+                            let param_name = &params[0].name;
+                            self.emit(&format!(
+                                "{} operator[]({} {}) {{",
+                                ret_str, param_type, param_name
+                            ));
+                            self.indent_level += 1;
+                            self.emit(&format!("return this->index_access({});", param_name));
+                            self.indent_level -= 1;
+                            self.emit("}");
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -41,20 +111,67 @@ impl CodeGenerator {
             self.emit("");
         }
 
+        // Pre-pass for Blueprints and Impls
+        let mut blueprints = std::collections::HashMap::new();
+        let mut impls = std::collections::HashMap::new();
+
+        for stmt in ast {
+            if let Stmt::BlueprintDecl {
+                name, definition, ..
+            } = stmt
+            {
+                blueprints.insert(name.clone(), definition.clone());
+            } else if let Stmt::ImplDecl { target, methods } = stmt {
+                impls
+                    .entry(target.clone())
+                    .or_insert_with(Vec::new)
+                    .extend(methods.clone());
+            }
+        }
+
+        for (name, definition) in blueprints {
+            match definition {
+                BlueprintDef::Explicit(fields) => {
+                    self.emit(&format!("struct {} {{", name));
+                    self.indent_level += 1;
+
+                    for field in fields {
+                        let type_str = match &field.type_node {
+                            TypeNode::Simple(r) => self.map_type(Some(r.base_type.as_str().as_str()), r.size),
+                            _ => "auto".to_string(),
+                        };
+                        self.emit(&format!("{} {};", type_str, field.name));
+                    }
+
+                    if let Some(methods) = impls.get(&name) {
+                        for m in methods {
+                            // Methods are emitted directly inside the struct body
+                            self.visit_statement(m);
+                        }
+                    }
+
+                    self.indent_level -= 1;
+                    self.emit("};");
+                }
+                _ => {
+                    self.emit(&format!("// Unsupported BlueprintDef for {}", name));
+                }
+            }
+        }
+
         // Generate top-level non-main functions, classes, structs, globals first
         for stmt in ast {
             match stmt {
                 Stmt::ClassDecl { .. }
                 | Stmt::StructDecl { .. }
                 | Stmt::ArrayDecl { .. }
-                | Stmt::StrDecl { .. }
                 | Stmt::CustomDecl { .. }
                 | Stmt::EnumDecl { .. }
                 | Stmt::FnDecl { .. }
                 | Stmt::VarDecl { .. } => {
                     self.visit_statement(stmt);
                 }
-                Stmt::Use {
+                Stmt::Import {
                     module_path,
                     imports,
                 } => {
@@ -92,13 +209,14 @@ impl CodeGenerator {
                         Stmt::ClassDecl { .. }
                         | Stmt::StructDecl { .. }
                         | Stmt::ArrayDecl { .. }
-                        | Stmt::StrDecl { .. }
                         | Stmt::VarDecl { .. }
                         | Stmt::BlockDecl { .. }
                         | Stmt::CustomDecl { .. }
                         | Stmt::EnumDecl { .. }
+                        | Stmt::BlueprintDecl { .. }
+                        | Stmt::ImplDecl { .. }
                         | Stmt::FnDecl { .. }
-                        | Stmt::Use { .. } => {}
+                        | Stmt::Import { .. } => {}
                         _ => {
                             self.visit_statement(stmt);
                         }
@@ -131,34 +249,33 @@ impl CodeGenerator {
         };
         let resolved_size = type_size.or(size);
 
-        if type_name.starts_with("array<") {
-            let inner = type_name.trim_start_matches("array<").trim_end_matches(">");
+        if let Some(inner) = type_name
+            .strip_prefix("array<")
+            .and_then(|s| s.strip_suffix(">"))
+        {
             let mapped_inner = self.map_type(Some(inner), None);
-            if let Some(len) = resolved_size {
-                if len == -1 {
-                    return format!("std::vector<{}>", mapped_inner);
-                }
-                return format!("std::array<{}, {}>", mapped_inner, len);
-            }
-            return format!("std::vector<{}>", mapped_inner);
-        }
-        if type_name.starts_with("list<") {
-            let inner = type_name.trim_start_matches("list<").trim_end_matches(">");
-            let mapped_inner = self.map_type(Some(inner), None);
-            return format!("std_list::LinkedList<{}>", mapped_inner);
-        }
-        if type_name.starts_with("Option<") {
-            let inner = type_name
-                .trim_start_matches("Option<")
-                .trim_end_matches(">");
-            let mapped_inner = self.map_type(Some(inner), None);
-            return format!("std::optional<{}>", mapped_inner);
+            return match resolved_size {
+                Some(len) if len >= 0 => format!("std::array<{}, {}>", mapped_inner, len),
+                _ => format!("std::vector<{}>", mapped_inner),
+            };
         }
 
-        if type_name == "Node" {
-            // Hardcode map for linked list Node ptr
-            return "std_list::Node<T>*".to_string();
+        if type_name.starts_with("name<") {
+            let inner = type_name.trim_start_matches("name<").trim_end_matches(">");
+            let mapped_inner = self.map_type(Some(inner), None);
+            return format!("std::unique_ptr<{}>", mapped_inner);
         }
+
+        if type_name.starts_with("custom<") {
+            let inner = type_name.trim_start_matches("custom<").trim_end_matches(">");
+            return self.map_type(Some(inner), None);
+        }
+
+        if type_name.starts_with("object<") {
+            let inner = type_name.trim_start_matches("object<").trim_end_matches(">");
+            return self.map_type(Some(inner), None);
+        }
+
         self.map_type_spec(type_name, resolved_size)
     }
 
@@ -185,24 +302,25 @@ impl CodeGenerator {
                 Some(64) => "double".to_string(),
                 _ => "float".to_string(),
             },
-            "str" | "string" => {
+            "str" => {
+                //
                 if let Some(len) = resolved_size {
-                    format!("str<{}>", len)
+                    format!("std::array<char, {}>", len)
                 } else {
-                    "str".to_string()
+                    "std::string".to_string()
                 }
             }
             "bool" => "bool".to_string(),
-            "list" => "auto".to_string(),
             "name" => "void*".to_string(),
-            "param" | "blueprint" | "init" => "auto".to_string(),
-            "Option" => "std::optional".to_string(),
+            "blueprint" => "auto".to_string(),
             "length" | "size" => "size_t".to_string(),
+            "error" => "std::string".to_string(),
             "array" => {
                 if let Some(len) = resolved_size {
-                    format!("array<auto, {}>", len)
+                    format!("array<auto, {}>", len) //? error : 'auto' is not allowed hereC/C++(1598)
                 } else {
-                    "array<auto>".to_string()
+                    "array<auto>".to_string() //todo: error : 'auto' is not allowed hereC/C++(1598)
+                                              //? error : too few arguments for class template "std::array"C/C++(442)
                 }
             }
             user_type => user_type.to_string(),

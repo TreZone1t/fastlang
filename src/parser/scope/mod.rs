@@ -40,6 +40,9 @@ impl Parser {
     }
 
     pub fn is_valid_setting(&mut self, t: TokenKind) -> bool {
+        if let TokenKind::LabelName(_) = t {
+            return true;
+        }
         let mut all_settings: Vec<Setting> = Vec::new();
         all_settings.push(Setting::CustomIndexAccess);
         all_settings.push(Setting::CustomConstructor);
@@ -52,10 +55,14 @@ impl Parser {
         all_settings.push(Setting::Public);
         all_settings.push(Setting::Static);
         all_settings.push(Setting::Length);
-        all_settings.push(Setting::Size);
         all_settings.push(Setting::Extends);
         all_settings.push(Setting::Variants);
+        all_settings.push(Setting::Leave);
+        all_settings.push(Setting::Yield);
+        all_settings.push(Setting::Goto);
+        all_settings.push(Setting::Label);
         all_settings.push(Setting::Data);
+        all_settings.push(Setting::Call);
         all_settings.push(Setting::Error);
         all_settings.push(Setting::Statement);
         all_settings.push(Setting::Constructor);
@@ -77,9 +84,9 @@ impl Parser {
         let scope_type = match token_scope_type {
             TokenKind::TypeClass => {
                 self.advance();
-                if matches!(self.peek().kind, TokenKind::MadeUpType(_)) {
+                if matches!(self.peek().kind, TokenKind::Identifier(_)) {
                     // we need to change the value of name
-                    name = self.get_sc_type("Expected scope name")?;
+                    name = self.get_identifier("Expected scope name")?;
                     // consume the name then ->
                     self.consume(TokenKind::Arrow, "Expected '->' after scope name")?;
                     //{
@@ -95,9 +102,9 @@ impl Parser {
             }
             TokenKind::TypeCustom => {
                 self.advance(); // consume 'custom'
-                if matches!(self.peek().kind, TokenKind::MadeUpType(_)) {
+                if matches!(self.peek().kind, TokenKind::Identifier(_)) {
                     // we need to change the value of name
-                    name = self.get_sc_type("Expected scope name")?;
+                    name = self.get_identifier("Expected scope name")?;
                     // consume the name then ->
                     self.consume(TokenKind::Arrow, "Expected '->' after scope name")?;
                     //{
@@ -118,7 +125,7 @@ impl Parser {
             }
             TokenKind::TypeEnum => {
                 self.advance(); // consume 'enum'
-                if matches!(self.peek().kind, TokenKind::MadeUpType(_)) {
+                if matches!(self.peek().kind, TokenKind::Identifier(_)) {
                     // we need to change the value of name
                     name = self.get_identifier("Expected scope name")?;
                     ScopeType::Enum
@@ -131,7 +138,7 @@ impl Parser {
             }
             TokenKind::TypeStruct => {
                 self.advance(); // consume 'struct'
-                if matches!(self.peek().kind, TokenKind::MadeUpType(_)) {
+                if matches!(self.peek().kind, TokenKind::Identifier(_)) {
                     // we need to change the value of name
                     name = self.get_identifier("Expected scope name")?;
                     ScopeType::Struct
@@ -145,9 +152,9 @@ impl Parser {
             TokenKind::TypeScope => {
                 self.advance(); // consume 'scope'
                                 // Check if next is 'name'
-                if matches!(self.peek().kind, TokenKind::MadeUpType(_)) {
+                if matches!(self.peek().kind, TokenKind::Identifier(_)) {
                     // we need to change the value of name
-                    name = self.get_sc_type("Expected scope name")?;
+                    name = self.get_identifier("Expected scope name")?;
                     // consume the name then ->
                     self.consume(TokenKind::Arrow, "Expected '->' after scope name")?;
                     //{
@@ -162,16 +169,6 @@ impl Parser {
                     // we expect one of the following types
                     //array , str , block , class , struct , enum , fn , custom
                     match type_node {
-                        TokenKind::TypeArray => {
-                            self.advance();
-                            self.consume(TokenKind::SemiColon, "Expected ';' after scope type")?;
-                            ScopeType::Array
-                        }
-                        TokenKind::TypeStr => {
-                            self.advance();
-                            self.consume(TokenKind::SemiColon, "Expected ';' after scope type")?;
-                            ScopeType::String
-                        }
                         TokenKind::TypeBlock => {
                             self.advance();
                             self.consume(TokenKind::SemiColon, "Expected ';' after scope type")?;
@@ -217,13 +214,11 @@ impl Parser {
             _ => todo!(),
         };
         res = match scope_type {
-            ScopeType::Array => self.parse_array_decl(name), //* */
             ScopeType::Block => self.parse_block_decl(name),
             ScopeType::Class => self.parse_class_decl(name), // */
             ScopeType::Custom => self.parse_custom_decl(name), //*  */
             ScopeType::Enum => self.parse_enum_decl(name),   //* */
             ScopeType::Fn => self.parse_fn_decl(name),       //*  */
-            ScopeType::String => self.parse_str_decl(name),  //*  */
             ScopeType::Struct => self.parse_struct_decl(name), //* */
             _ => {
                 return Err("unknown scope type error".to_string());

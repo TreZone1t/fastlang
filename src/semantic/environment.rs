@@ -1,3 +1,4 @@
+use crate::parser::ast::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -5,10 +6,12 @@ use std::rc::Rc;
 #[derive(Debug, Clone)]
 pub struct SymbolInfo {
     pub name: String,
-    pub type_node: Option<crate::parser::ast::TypeNode>,
-    pub visibility: crate::parser::ast::Visibility,
-    pub editability: crate::parser::ast::Editability,
-    pub settings: std::collections::HashSet<crate::parser::ast::Setting>,
+    pub type_node: Option<TypeNode>,
+    pub visibility: Visibility,
+    pub editability: Editability,
+    pub settings: std::collections::HashSet<Setting>,
+    pub is_array: bool,
+    pub dependencies: Vec<String>,
 }
 
 pub struct Environment {
@@ -51,4 +54,16 @@ impl Environment {
         }
         None
     }
+
+    pub fn update(&mut self, name: &str, info: SymbolInfo) -> bool {
+        if self.symbols.contains_key(name) {
+            self.symbols.insert(name.to_string(), info);
+            return true;
+        }
+        if let Some(ref parent) = self.parent {
+            return parent.borrow_mut().update(name, info);
+        }
+        false
+    }
 }
+

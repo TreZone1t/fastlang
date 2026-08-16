@@ -1,40 +1,52 @@
+use std::collections::HashMap;
+
 use crate::lexer::token::TokenKind;
 use crate::parser::ast::*;
 use crate::parser::parser::Parser;
 
 impl Parser {
     pub(crate) fn parse_custom_decl(&mut self, name: String) -> Result<Stmt, String> {
-        let mut settings: Vec<crate::parser::ast::Setting> = Vec::new();
-        let mut handles: Vec<crate::parser::ast::HandleMethods> = Vec::new();
-        let mut enabled_settings: Vec<TokenKind> = Vec::new();
+        let mut settings: Vec<Setting> = Vec::new();
+        let mut handles: Vec<HandleMethods> = Vec::new();
+        let mut used_handles: Vec<HandleMethods> = Vec::new();
+        let mut enabled_settings: Vec<Setting> = Vec::new();
         let mut enabled_handle: Vec<HandleMethods> = Vec::new();
 
         let mut public_block: Vec<Stmt> = Vec::new();
         let mut private_block: Vec<Stmt> = Vec::new();
         let mut static_block_ast: Vec<Stmt> = Vec::new();
-        let mut generic_block: Vec<String> = Vec::new();
+        let mut generics: Option<Vec<TypeNode>> = None;
         let mut statement_block: Vec<Stmt> = Vec::new();
         let mut handle_block: Vec<Stmt> = Vec::new();
-        let mut constructor: Option<ConstructorDecl> = None;
+        let mut constructor: Option<Vec<ConstructorDecl>> = None;
 
         let mut variants: Vec<EnumVariant> = Vec::new();
 
-        let mut statement: Vec<Stmt> = Vec::new();
         let mut extends = String::new();
-        let mut return_type: crate::parser::ast::TypeNode =
-            crate::parser::ast::TypeNode::Simple(crate::parser::ast::TypeRef {
-                base_type: "".to_string(),
-                size: None,
-            });
+        let mut return_type: TypeNode = TypeNode::Simple(TypeRef {
+            base_type: BaseType::Unknown,
+            size: None,
+        });
         let mut params: Vec<Param> = Vec::new();
         let mut flags: Vec<Flag> = Vec::new();
+        let mut labels: Vec<String> = Vec::new();
+        let mut fields: Vec<FieldDecl> = Vec::new(); //todo  and also  add
         let mut events: Vec<EventDecl> = Vec::new();
 
-        let mut fields: Vec<FieldDecl> = Vec::new(); //todo  and also  add
-
         let mut length: i64 = 0;
-        let mut data = Expr::Identifier("__param__".to_string());
+        let mut data: Option<Expr> = None;
         let mut name = name.clone();
+
+        let mut meta = TypeMetadata {
+            name: name.clone(),
+            fields: HashMap::new(),
+            constructor: None,
+            params: Vec::new(),
+            generics: Vec::new(),
+            methods: HashMap::new(),
+            handles: Vec::new(),
+            vars: HashMap::new(),
+         is_enum: false, variants: None, };
 
         if name == "" {
             //we not been redirect by the scope parsing fn
@@ -47,127 +59,76 @@ impl Parser {
         // 1. قراءة سطر الـ Enable بصرامة
         // ==========================================
         if self.peek().kind == TokenKind::Enable {
-            self.advance();
-            let t = self.peek().kind.clone();
-            if t == TokenKind::All {
-                self.advance();
-                enabled_settings.push(TokenKind::All);
-                self.consume(TokenKind::SemiColon, "Expected ';' after enable all")?;
-            } else {
-                self.consume(TokenKind::LBracket, "Expected '[' or all after enable")?;
-
-                // اللوب الصارمة الجديدة
-                while !self.is_at_end() {
-                    let current_kind = self.peek().kind.clone();
-
-                    // كسر اللوب فوراً عند رؤية القوس الأيمن
-                    if current_kind == TokenKind::RBracket {
-                        break;
-                    }
-
-                    // التحقق من صحة الإعداد
-                    if self.is_valid_setting(current_kind.clone()) {
-                        enabled_settings.push(current_kind.clone());
-                        self.advance();
-                    } else if current_kind == TokenKind::Identifier("".to_string()) {
-                        let hm = self.get_handle_type(current_kind.clone());
-                        enabled_handle.push(hm);
-                        self.advance();
-                    } else {
-                        return Err(format!(
-                            "Syntax Error: Invalid setting '{}' inside enable custom block",
-                            current_kind.as_str()
-                        ));
-                    }
-
-                    // التأكد من وجود فاصلة أو نهاية القوس بعد كل إعداد
-                    let next_kind = self.peek().kind.clone();
-                    if next_kind == TokenKind::Comma {
-                        self.advance(); // نتخطى الفاصلة ونكمل
-                    } else if next_kind != TokenKind::RBracket {
-                        return Err(format!(
-                            "Syntax Error: Expected ',' or ']' after setting, found '{}'",
-                            next_kind.as_str()
-                        ));
-                    }
-                }
-
-                self.consume(TokenKind::RBracket, "Expected ']' after enable list")?;
-                self.consume(TokenKind::SemiColon, "Expected ';' after enable statement")?;
-            }
-        } else {
-            return Err(
-                "Syntax Error: Expected enable line after decide a custom scope type".to_string(),
-            );
+            self.parse_enable(&mut enabled_settings, &mut enabled_handle, &mut flags)?;
         }
 
-        // ==========================================
-        // 2. قراءة سطر الـ Disable بصرامة (اختياري)
-        // ==========================================
         if self.peek().kind == TokenKind::Disable {
+            self.parse_disable(&mut enabled_settings, &mut enabled_handle, &mut flags)?;
+        }
+
+        while self.peek().kind == TokenKind::Add {
             self.advance();
-            let t = self.peek().kind.clone();
-            if t == TokenKind::All {
+            let mut is_flags = false;
+            let mut is_labels = false;
+
+            let kind = self.peek().kind.clone();
+            if let TokenKind::Identifier(name) = &kind {
+                if name == "flags" || name == "flag" {
+                    is_flags = true;
+                } else if name == "labels" || name == "label" {
+                    is_labels = true;
+                } else {
+                    return Err(
+                        "Syntax Error: Expected 'flags' or 'labels' after 'add'".to_string()
+                    );
+                }
                 self.advance();
-                let predicate = |to: &mut crate::lexer::token::TokenKind| *to == TokenKind::All;
-                enabled_settings.pop_if(predicate);
-                self.consume(TokenKind::SemiColon, "Expected ';' after disable all")?;
+            } else if kind == TokenKind::Label {
+                is_labels = true;
+                self.advance();
             } else {
-                self.consume(TokenKind::LBracket, "Expected '[' or all after disable")?;
+                return Err("Syntax Error: Expected 'flags' or 'labels' after 'add'".to_string());
+            }
 
-                // اللوب الصارمة الجديدة للـ Disable
-                while !self.is_at_end() {
-                    let current_kind = self.peek().kind.clone();
+            if self.peek().kind == TokenKind::Arrow {
+                self.advance();
+            }
 
-                    if current_kind == TokenKind::RBracket {
-                        break;
+            while !self.is_at_end() && self.peek().kind != TokenKind::SemiColon {
+                let kind = self.peek().kind.clone();
+                if let TokenKind::Identifier(name) = &kind {
+                    if is_flags {
+                        flags.push(Flag::Custom(name.clone()));
+                    } else if is_labels {
+                        labels.push(name.clone());
                     }
-
-                    let sti = Setting::from_token(current_kind.clone());
-                    if sti == Setting::NotFound {
-                        let predicate =
-                            |to: &mut crate::lexer::token::TokenKind| *to == current_kind;
-                        enabled_settings.pop_if(predicate);
-                        self.advance();
-                    } else if current_kind == TokenKind::Identifier("".to_string()) {
-                        let hm = self.get_handle_type(current_kind.clone());
-                        let predicate = |to: &mut crate::parser::ast::HandleMethods| *to == hm;
-                        enabled_handle.pop_if(predicate);
-                        self.advance();
+                    self.advance();
+                } else if let TokenKind::LabelName(name) = &kind {
+                    if is_labels {
+                        labels.push(name.clone());
                     } else {
-                        return Err(format!(
-                            "Syntax Error: Invalid setting '{}' inside disable array",
-                            current_kind.as_str()
-                        ));
+                        return Err("Syntax Error: Expected flag identifier".to_string());
                     }
-
-                    let next_kind = self.peek().kind.clone();
-                    if next_kind == TokenKind::Comma {
-                        self.advance();
-                    } else if next_kind != TokenKind::RBracket {
-                        return Err(format!(
-                            "Syntax Error: Expected ',' or ']' after setting, found '{}'",
-                            next_kind.as_str()
-                        ));
-                    }
+                    self.advance();
+                } else {
+                    return Err(format!(
+                        "Syntax Error: Expected identifier or label name, found {:?}",
+                        kind
+                    ));
                 }
 
-                self.consume(TokenKind::RBracket, "Expected ']' after disable list")?;
-                self.consume(TokenKind::SemiColon, "Expected ';' after disable statement")?;
+                if self.peek().kind == TokenKind::Comma {
+                    self.advance();
+                } else if self.peek().kind != TokenKind::SemiColon {
+                    return Err("Syntax Error: Expected ',' or ';' after add item".to_string());
+                }
             }
+            self.consume(TokenKind::SemiColon, "Expected ';' after add statement")?;
         }
         for e in enabled_settings {
-            // we will check if the enable is in the settings
-            if self.is_valid_setting(e.clone()) {
-                settings.push(Setting::from_token(e.clone()));
-            } else {
-                return Err(format!(
-                    "Syntax Error: Invalid custom setting '{}' in custom scope",
-                    e.as_str()
-                ));
-            }
+            settings.push(e.clone());
         }
-        for e in enabled_handle {
+        for e in enabled_handle.clone() {
             // we will check if the enable is in the settings
             handles.push(e);
         }
@@ -180,8 +141,8 @@ impl Parser {
                 //====================================================================
                 // constructor    _ () -> { ... }
                 //====================================================================
-                if t == TokenKind::Init {
-                    match self.parse_constructor_decl() {
+                if t == TokenKind::Constructor {
+                    match self.parse_constructor_decl(&mut meta) {
                         Ok(c) => constructor = c,
                         Err(e) => {
                             eprintln!("Syntax Error in scope constructor: {}", e);
@@ -194,35 +155,38 @@ impl Parser {
                 // generic -> { ... }
                 //====================================================================
                 if t == TokenKind::Generic {
-                    generic_block = self.parse_generic_block()?;
+                    self.parse_generics(&mut generics)?;
                     continue;
                 }
                 //====================================================================
                 // public -> { ... }
                 //====================================================================
                 if self.peek().kind == TokenKind::Public {
-                    public_block = self.parse_field_block()?;
+                    public_block =
+                        self.parse_field_block(&mut meta, Visibility::Public, generics.clone())?;
                     continue;
                 }
                 //====================================================================
                 // private -> { ... }
                 //====================================================================
                 if t == TokenKind::Private {
-                    private_block = self.parse_field_block()?;
+                    private_block =
+                        self.parse_field_block(&mut meta, Visibility::Private, generics.clone())?;
                     continue;
                 }
                 //====================================================================
                 // static -> { ... }
                 //====================================================================
                 if t == TokenKind::Static {
-                    static_block_ast = self.parse_field_block()?;
+                    static_block_ast =
+                        self.parse_field_block(&mut meta, Visibility::Static, generics.clone())?;
                     continue;
                 }
                 //====================================================================
                 // handle -> { fn1 , fn2 , ... }
                 //====================================================================
                 if t == TokenKind::Handle {
-                    handle_block = self.parse_handle_block(handles.clone())?;
+                    handle_block = self.parse_handle_block(&mut handles, &mut used_handles)?;
                     continue;
                 }
                 //====================================================================
@@ -249,14 +213,16 @@ impl Parser {
                                 name: variant_name,
                                 data_types: Some(data_types),
                             });
-                            continue;
                         } else {
                             variants.push(EnumVariant {
                                 name: variant_name,
                                 data_types: None,
                             });
-                            continue;
                         }
+                        if self.peek().kind == TokenKind::Comma {
+                            self.advance();
+                        }
+                        continue;
                     }
 
                     self.consume(TokenKind::RBrace, "Expected '}' to close variants block")?;
@@ -272,11 +238,15 @@ impl Parser {
                     self.consume(TokenKind::LBrace, "Expected '{' to open param block")?;
 
                     while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        match self.parse_var_decl() {
-                            Ok(crate::parser::ast::Stmt::VarDecl {
+                        match self.parse_var_decl(false, false) {
+                            Ok(Stmt::VarDecl {
                                 name, type_node, ..
                             }) => {
-                                params.push(crate::parser::ast::Param { name, type_node });
+                                params.push(Param {
+                                    name: name.clone(),
+                                    type_node: type_node.clone(),
+                                });
+                                meta.params.push(Param { name, type_node });
                             }
                             Ok(_) => {
                                 return Err(
@@ -352,7 +322,8 @@ impl Parser {
                 if t == TokenKind::TypeData {
                     self.advance(); // consume 'data'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'data'")?;
-                    data = self.parse_expression()?;
+                    let data_expr = self.parse_expression()?;
+                    data = Some(data_expr);
                     self.consume(TokenKind::SemiColon, "Expected ';' after data name")?;
                     continue;
                 }
@@ -364,6 +335,27 @@ impl Parser {
                     self.advance(); // 'extends'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'extends'")?;
                     extends = self.get_identifier("Expected parent class name after 'extends'")?;
+                    continue;
+                }
+
+                if let TokenKind::LabelName(trigger_name) = t.clone() {
+                    self.advance(); // consume label
+                    self.consume(TokenKind::Arrow, "Expected '->' after label block")?;
+                    self.consume(TokenKind::LBrace, "Expected '{' to open label block")?;
+                    let mut body = Vec::new();
+                    while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                        match self.parse_statement() {
+                            Ok(Some(stmt)) => body.push(stmt),
+                            Ok(None) => {
+                                if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                                    self.advance();
+                                }
+                            }
+                            Err(err) => return Err(err),
+                        }
+                    }
+                    self.consume(TokenKind::RBrace, "Expected '}' to close label block")?;
+                    events.push(EventDecl { trigger_name, body });
                     continue;
                 }
             } else {
@@ -381,25 +373,106 @@ impl Parser {
         if self.peek().kind == TokenKind::SemiColon {
             self.advance();
         }
+        for stmt in &handle_block {
+            if let Stmt::FnDecl { name: fn_name, params, return_type, .. } = stmt {
+                let fn_type = FnType {
+                    name: fn_name.clone(),
+                    params: params.clone(),
+                    return_type: return_type.clone(),
+                };
+                meta.methods.insert(fn_name.clone(), fn_type);
+            }
+        }
+        if let Some(ref data_expr) = data {
+            let inferred_base_type = match data_expr {
+                Expr::LiteralInt(_) => BaseType::Int,
+                Expr::LiteralFloat(_) => BaseType::Float,
+                Expr::LiteralString(_) => BaseType::Unknown,
+                Expr::LiteralChar(_) => BaseType::Char,
+                Expr::LiteralBool(_) => BaseType::Bool,
+                Expr::NamespaceAccess { ref namespace, .. } => BaseType::from_str(&namespace),
+                Expr::Instantiate { ref target, .. } => {
+                    if let Expr::Identifier(ref n) = **target { BaseType::from_str(n) } else { BaseType::Unknown }
+                },
+                Expr::Identifier(ref var_name) => {
+                    if let Some(var_meta) = meta.vars.get(var_name) {
+                        match &var_meta.type_node {
+                            TypeNode::Simple(r) => r.base_type.clone(),
+                            TypeNode::Generic(g) => g.base_type.clone(),
+                        }
+                    } else {
+                        BaseType::Unknown
+                    }
+                },
+                Expr::PropertyAccess { ref object, ref property } => {
+                    if let Expr::This = **object {
+                        if let Some(var_meta) = meta.vars.get(property) {
+                            match &var_meta.type_node {
+                                TypeNode::Simple(r) => r.base_type.clone(),
+                                TypeNode::Generic(g) => g.base_type.clone(),
+                            }
+                        } else {
+                            BaseType::Unknown
+                        }
+                    } else {
+                        BaseType::Unknown
+                    }
+                },
+                _ => BaseType::Unknown,
+            };
+
+            meta.vars.insert(
+                "data".to_string(),
+                VarMetadata {
+                    name: "data".to_string(),
+                    type_node: TypeNode::Simple(TypeRef {
+                        base_type: inferred_base_type,
+                        size: None,
+                    }),
+                    visibility: Visibility::Public,
+                    editability: Editability::Editable,
+                    is_array: false,
+                },
+            );
+        }
+
+        self.metadata.insert(name.clone(), meta);
         return Ok(Stmt::CustomDecl {
             is_exported: false,
             name,
             settings: Some(settings),
-            handles: Some(handles),
-            params: Some(params),
-            flags: Some(flags),
-            events: Some(events),
-            fields: Some(fields),
-            length: length,
-            data: Some(data),
-            extends: extends,
+            handles: Some(enabled_handle),
+            params: if params.is_empty() {
+                None
+            } else {
+                Some(params)
+            },
+            flags: if flags.is_empty() { None } else { Some(flags) },
+            labels: if labels.is_empty() {
+                None
+            } else {
+                Some(labels)
+            },
+            events: if events.is_empty() {
+                None
+            } else {
+                Some(events)
+            },
+            fields: if fields.is_empty() {
+                None
+            } else {
+                Some(fields)
+            },
+            length,
+            data,
+            extends,
             return_type: Some(return_type),
             public_block: Some(public_block),
             private_block: Some(private_block),
             static_block: Some(static_block_ast),
-            statements: Some(statement),
+            statements: Some(statement_block),
             variant_block: Some(variants),
-            generic_block: Some(generic_block),
+            generics,
             handle_block: Some(handle_block),
             constructor,
         });

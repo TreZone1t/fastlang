@@ -1,7 +1,6 @@
 use crate::lexer::token::TokenKind;
 use crate::parser::ast::*;
 use crate::parser::parser::Parser;
-use crate::parser::scope::{builtins, class, custom, enum_decl, struct_decl};
 impl Parser {
     pub(crate) fn is_type_token(&self, kind: &TokenKind) -> bool {
         match kind {
@@ -14,42 +13,23 @@ impl Parser {
             | TokenKind::TypeType
             | TokenKind::TypeData
             | TokenKind::TypeVoid => true,
-
-            // Built-in scope-backed types — always valid (array/str are first-class type keywords)
-            TokenKind::TypeArray | TokenKind::TypeStr => true,
-
             // `scope` is the general type for any scope value
             TokenKind::TypeScope | TokenKind::TypeName => true,
             // Custom keywords registered dynamically via `keyword -> "...";` in scope bodies
-            t => matches!(t, TokenKind::MadeUpType(n) if self.metadata.contains_key(n) || true), // todo: remove true
+            t => matches!(t, TokenKind::Identifier(n) if self.metadata.contains_key(n) || true), // todo: remove true
         }
     }
 
-    /// Helper موحد — يقرأ token يمثل type ويرجع اسمه كـ String.
-    /// يقبل:
-    ///   Primitives: int, float, str, bool, char
-    ///   Context/Magic types: name, length, size, scope, flag, param,
-    ///                        type, blueprint, init, static, public, private,
-    ///                        event, handle, custom
-    /// يرجع None لو الـ token الحالي مش type أصلاً.
     pub(crate) fn parse_generic_list(
         &mut self,
-        generics: &mut Vec<crate::parser::ast::TypeNode>,
+        generics: &mut Vec<TypeNode>,
         size: &mut Option<i64>,
-        is_array: bool,
     ) -> Result<(), String> {
         if self.peek().kind != TokenKind::Greater {
             generics.push(self.parse_type()?);
 
             while self.peek().kind == TokenKind::Comma {
                 self.advance();
-                if is_array && generics.len() == 1 {
-                    if let TokenKind::Int(s) = self.peek().kind {
-                        *size = Some(s);
-                        self.advance();
-                        break;
-                    }
-                }
                 generics.push(self.parse_type()?);
             }
         }
@@ -57,25 +37,29 @@ impl Parser {
         Ok(())
     }
 
-    pub(crate) fn parse_type(&mut self) -> Result<crate::parser::ast::TypeNode, String> {
-        let result = match &self.peek().kind {
+    pub(crate) fn parse_type(&mut self) -> Result<TypeNode, String> {
+        let result: BaseType = match &self.peek().kind {
             // Primitives
-            TokenKind::TypeInt => "int".to_string(),
-            TokenKind::TypeFloat => "float".to_string(),
-            TokenKind::TypeBool => "bool".to_string(),
-            TokenKind::TypeChar => "char".to_string(),
+            TokenKind::TypeInt => BaseType::Int,
+            TokenKind::TypeFloat => BaseType::Float,
+            TokenKind::TypeBool => BaseType::Bool,
+            TokenKind::TypeChar => BaseType::Char,
             // Magic value types
-            TokenKind::TypeName => "name".to_string(),
-            TokenKind::TypeLength => "length".to_string(),
-            TokenKind::TypeData => "data".to_string(),
+            TokenKind::TypeName => {
+                //todo : improve this
+                BaseType::Name(Box::new(BaseType::Unknown))
+            }
+            TokenKind::TypeLength => BaseType::Unknown,
 
-            TokenKind::TypeType => "type".to_string(),
-            TokenKind::TypeVoid => "void".to_string(),
-            // Built-in scope-backed types: always valid as first-class type keywords
-            // Custom scope keywords — registered dynamically via `keyword -> "...";`
-            TokenKind::MadeUpType(n) => n.to_string(),
-            // User-defined type names (struct/class instances) via bare Identifier
-            TokenKind::Identifier(n) => n.to_string(),
+            TokenKind::TypeData => BaseType::Unknown,
+
+            TokenKind::TypeType => BaseType::Type(Box::new(BaseType::Unknown)),
+            TokenKind::TypeVoid => BaseType::Void,
+            TokenKind::TypeError => BaseType::Error,
+
+            TokenKind::Identifier(n) => {
+                BaseType::Custom(n.to_string())
+            }
             _ => {
                 return Err(format!(
                     "Syntax Error: Expected a type, found '{}'. at line {}, column {}",
@@ -90,17 +74,17 @@ impl Parser {
         let mut size = None;
         let mut generics = Vec::new();
 
-        if result == "int" || result == "float" || result == "str" || result == "string" {
+        if result == BaseType::Int || result == BaseType::Float {
             if self.peek().kind == TokenKind::LParen {
                 self.advance();
                 if let TokenKind::Int(s) = self.peek().kind {
-                    if result == "int" && ![8, 16, 32, 64, 128].contains(&s) {
+                    if result == BaseType::Int && ![8, 16, 32, 64, 128].contains(&s) {
                         return Err(format!(
                             "Syntax Error: Invalid size {} for int. Allowed: 8, 16, 32, 64, 128",
                             s
                         ));
                     }
-                    if result == "float" && ![32, 64].contains(&s) {
+                    if result == BaseType::Float && ![32, 64].contains(&s) {
                         return Err(format!(
                             "Syntax Error: Invalid size {} for float. Allowed: 32, 64",
                             s
@@ -111,53 +95,45 @@ impl Parser {
                 } else {
                     return Err(format!(
                         "Syntax Error: Expected integer size for type {}",
-                        result
+                        result.as_str()
                     ));
                 }
                 self.consume(TokenKind::RParen, "Expected ')' after type size")?;
-            } else if result == "int" || result == "float" {
+            } else if result == BaseType::Int || result == BaseType::Float {
                 return Err(format!(
                     "Syntax Error: Type '{}' requires a size, e.g., {}(32)",
-                    result, result
+                    result.as_str(),
+                    result.as_str()
                 ));
             }
 
-            return Ok(crate::parser::ast::TypeNode::Simple(
-                crate::parser::ast::TypeRef {
-                    base_type: result,
-                    size,
-                },
-            ));
+            return Ok(TypeNode::Simple(TypeRef {
+                base_type: result,
+                size,
+            }));
         }
         if self.peek().kind == TokenKind::Less {
             self.advance();
-            self.parse_generic_list(&mut generics, &mut size, result == "array")?;
+            self.parse_generic_list(&mut generics, &mut size)?;
         }
 
         if !generics.is_empty() {
-            return Ok(crate::parser::ast::TypeNode::Generic(
-                crate::parser::ast::Generic {
-                    base_type: result,
-                    generics,
-                },
-            ));
+            return Ok(TypeNode::Generic(Generic {
+                base_type: result,
+                generics,
+            }));
         }
 
-        Ok(crate::parser::ast::TypeNode::Simple(
-            crate::parser::ast::TypeRef {
-                base_type: result,
-                size,
-            },
-        ))
+        Ok(TypeNode::Simple(TypeRef {
+            base_type: result,
+            size,
+        }))
     }
     pub(crate) fn parse_expression(&mut self) -> Result<Expr, String> {
         self.parse_expr(0)
     }
 
-    /// الدالة الأساسية لـ Pratt Parser.
-    /// `min_bp`: أدنى binding power مقبول في الجانب الأيمن.
     pub(crate) fn parse_expr(&mut self, min_bp: u8) -> Result<Expr, String> {
-        // --- Prefix: اقرأ الـ left-hand side أولاً ---
         let mut lhs = self.parse_prefix()?;
 
         // --- Infix / Postfix: استمر طالما في operators بقوة كافية ---
@@ -195,11 +171,7 @@ impl Parser {
         Ok(lhs)
     }
 
-    /// يقرأ prefix expressions: literals، identifiers، unary ops، grouped.
     pub(crate) fn parse_prefix(&mut self) -> Result<Expr, String> {
-        let line = self.peek().line;
-        let col = self.peek().column;
-
         match &self.peek().kind.clone() {
             // --- Literals ---
             TokenKind::Super => {
@@ -252,6 +224,36 @@ impl Parser {
 
                 Ok(Expr::Identifier(val.to_string()))
             }
+            TokenKind::TypeOf => {
+                self.advance();
+                self.consume(TokenKind::LParen, "Expected '(' after typeof")?;
+                let target = self.parse_expression()?;
+                self.consume(TokenKind::RParen, "Expected ')' after typeof target")?;
+                Ok(Expr::TypeOf {
+                    target: Box::new(target),
+                })
+            }
+            TokenKind::SizeOf => {
+                self.advance();
+                self.consume(TokenKind::LParen, "Expected '(' after sizeof")?;
+                let target = self.parse_expression()?;
+                self.consume(TokenKind::RParen, "Expected ')' after sizeof target")?;
+                Ok(Expr::SizeOf {
+                    target: Box::new(target),
+                })
+            }
+            TokenKind::Log => {
+                self.advance();
+                Ok(Expr::Identifier("log".to_string()))
+            }
+            TokenKind::ToString => {
+                self.advance();
+                Ok(Expr::Identifier("to_string".to_string()))
+            }
+            TokenKind::TypeError => {
+                self.advance();
+                Ok(Expr::Identifier("error".to_string()))
+            }
 
             // --- Unary: !expr ---
             TokenKind::Not => {
@@ -265,14 +267,30 @@ impl Parser {
 
             // --- Unary: -expr ---
             TokenKind::Minus => {
-                self.advance();
-                let operand = self.parse_expr(7)?;
+                let operand = self.parse_prefix()?;
                 Ok(Expr::UnaryOp {
                     operator: "-".to_string(),
                     operand: Box::new(operand),
                 })
             }
-
+            // --- Prefix: ++expr ---
+            TokenKind::PlusPlus => {
+                self.advance();
+                let operand = self.parse_expr(7)?;
+                Ok(Expr::PrefixUpdate {
+                    right: Box::new(operand),
+                    operator: "++".to_string(),
+                })
+            }
+            // --- Prefix: --expr ---
+            TokenKind::MinusMinus => {
+                self.advance();
+                let operand = self.parse_expr(7)?;
+                Ok(Expr::PrefixUpdate {
+                    right: Box::new(operand),
+                    operator: "--".to_string(),
+                })
+            }
             // --- Unary: &expr ---
             TokenKind::Ampersand => {
                 self.advance();
@@ -303,7 +321,7 @@ impl Parser {
             // --- Instantiate: new Target(args) ---
             TokenKind::New => {
                 self.advance();
-                let target = self.parse_expr(9)?;
+                let target = self.parse_prefix()?;
                 let mut args = Vec::new();
                 if self.peek().kind == TokenKind::LParen {
                     self.advance();
@@ -358,6 +376,7 @@ impl Parser {
             TokenKind::LBrace => {
                 self.advance(); // نتخطى '{'
                 let stmts = self.parse_block()?;
+                self.consume(TokenKind::RBrace, "Expected '}' after object literal")?;
                 Ok(Expr::ObjectLiteral(stmts))
             }
 
@@ -377,11 +396,12 @@ impl Parser {
     /// None لو اللي قدامنا مش postfix operator.
     pub(crate) fn postfix_binding_power(&self) -> Option<u8> {
         match &self.peek().kind {
-            TokenKind::Dot => Some(8),        // property access: obj.field
-            TokenKind::LParen => Some(8),     // function call:   foo(...)
-            TokenKind::LBracket => Some(8),   // array indexing: arr[0]
-            TokenKind::PlusPlus => Some(9),   // postfix ++
-            TokenKind::MinusMinus => Some(9), // postfix --
+            TokenKind::Dot => Some(20),         // property access: obj.field
+            TokenKind::DoubleColon => Some(20), // static access: Class::field
+            TokenKind::LParen => Some(20),      // function call:   foo(...)
+            TokenKind::LBracket => Some(20),    // array indexing: arr[0]
+            TokenKind::PlusPlus => Some(21),    // postfix ++
+            TokenKind::MinusMinus => Some(21),  // postfix --
             _ => None,
         }
     }
@@ -391,8 +411,8 @@ impl Parser {
         match &self.peek().kind.clone() {
             // --- Property Access: lhs.identifier ---
             TokenKind::Dot => {
-                self.advance(); // نتخطى '.'
-                                // نقبل identifiers وكمان keywords كـ field names (زي .length, .size)
+                self.advance();
+
                 let mut prop = String::new();
                 if let TokenKind::Identifier(name) = &self.peek().kind.clone() {
                     prop = name.to_string();
@@ -410,7 +430,8 @@ impl Parser {
 
             // --- Namespace Access: lhs::identifier ---
             TokenKind::DoubleColon => {
-                self.advance(); // نتخطى '::'
+                //todo : update check if the visibility is static in analyzer at least
+                self.advance();
                 let prop = if let TokenKind::Identifier(name) = &self.peek().kind.clone() {
                     let n = name.clone();
                     self.advance();
@@ -517,9 +538,6 @@ impl Parser {
             _ => None,
         }
     }
-
-    /// يرجع string representation للـ operator اللي قدامنا حالياً.
-    /// يُستدعى قبل advance() في parse_expr.
     pub(crate) fn current_op_str(&self) -> String {
         match &self.peek().kind {
             TokenKind::Plus => "+".to_string(),

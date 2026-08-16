@@ -1,20 +1,14 @@
-// 1. تعريف متغيرات أساسية للاختبار
-let int(32) number = 42;
-//let length my_array = [1, 2, 3];
+fn main() -> void {
+    int(32) number = 42;
+    int(32) my_array[5] = [1,2,3,4,5];
 
-// 2. اختبار الـ Pointers (الـ name)
-// مؤشر للقراءة فقط (ReadOnly)
-let name safe_ptr =  number; 
+    name safe_ptr = number; 
 
-// مؤشر قابل للتعديل (ReadWrite)
-let name mut_ptr = modify number; 
-
-// 3. اختبار خصائص الذاكرة (length, size, data)
-//let length arr_len =  my_array;
-//let size arr_size =  my_array;
-
-// استخراج الـ Raw Data Pointer
-//let data arr_data =  my_array; 
-
-// 4. اختبار معرفة النوع وقت الترجمة
-//let type num_type =  number;
+    name mut_ptr -> modify number; 
+    
+    name not_safe_ptr -> [1,2,3,4,5];
+    // del not_safe_ptr;  // that will delete the temp value and make the name empty
+    not_safe_ptr -> my_array;   // Error: must delete a temp value before reassigning to insure memory safety
+    
+    name bad_ptr -> safe_ptr;   //Warning : nested and linked ptr you must to be manged correctly
+}

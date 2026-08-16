@@ -16,6 +16,7 @@ pub struct Parser {
     pub(crate) tokens: Vec<Token>,
     pub(crate) current: usize,
     pub(crate) metadata: HashMap<String, TypeMetadata>,
+    pub(crate) var_metadata: HashMap<String, VarMetadata>,
     pub(crate) fn_metadata: HashMap<String, FnType>,
 }
 
@@ -25,6 +26,7 @@ impl Parser {
             tokens,
             current: 0,
             metadata: HashMap::new(),
+            var_metadata: HashMap::new(),
             fn_metadata: HashMap::new(),
         }
     }
@@ -113,8 +115,7 @@ impl Parser {
             }
 
             match &self.peek().kind {
-                TokenKind::Let
-                | TokenKind::Set
+                TokenKind::Set
                 | TokenKind::If
                 | TokenKind::Else
                 | TokenKind::While

@@ -1,4 +1,6 @@
-use crate::lexer::token::{Token, TokenKind};
+use std::collections::HashMap;
+
+use crate::lexer::token::TokenKind;
 use crate::parser::ast::*;
 use crate::parser::parser::Parser;
 
@@ -10,9 +12,23 @@ impl Parser {
             self.peek().line
         );
         let result = match &self.peek().kind {
-            TokenKind::Use => self.parse_use_stmt(),
+            TokenKind::SemiColon => {
+                self.advance();
+                return Ok(None);
+            }
+            TokenKind::Import => self.parse_import_stmt(),
             TokenKind::Export => self.parse_exported_stmt(),
-            TokenKind::Let | TokenKind::Const => self.parse_var_decl(),
+            TokenKind::Const
+            | TokenKind::TypeInt
+            | TokenKind::TypeFloat
+            | TokenKind::TypeChar
+            | TokenKind::TypeBool
+            | TokenKind::TypeName
+            | TokenKind::TypeType
+            | TokenKind::TypeObject
+            | TokenKind::TypeCustom => self.parse_var_decl(true, false),
+            TokenKind::TypeBluePrint => self.parse_blueprint_decl(),
+            TokenKind::Impl => self.parse_impl_decl(),
             TokenKind::Set => self.parse_reassign_stmt(),
             TokenKind::If => self.parse_if_stmt(),
             TokenKind::For => self.parse_for_stmt(),
@@ -25,6 +41,13 @@ impl Parser {
             TokenKind::TypeStruct => self.parse_struct_decl("".to_string()),
             TokenKind::TypeEnum => self.parse_enum_decl("".to_string()),
             TokenKind::Del => self.parse_del_stmt(),
+            TokenKind::Leave => {
+                self.advance();
+                self.consume(TokenKind::SemiColon, "Expected ';' after leave")?;
+                Ok(Stmt::LeaveStmt)
+            }
+            TokenKind::Yield => self.parse_yield_stmt(),
+            TokenKind::Call => self.parse_call_stmt(),
             TokenKind::Break => {
                 self.advance();
                 self.consume(TokenKind::SemiColon, "Expected ';' after break")?;
@@ -56,29 +79,11 @@ impl Parser {
             TokenKind::Throw => self.parse_throw_stmt(),
             TokenKind::Try => self.parse_try_catch_stmt(),
             // Custom keyword: `my_list<int(32)> items -> [1, 2];`
-            TokenKind::Identifier(id) => self.parse_expression_or_reassignment(),
-            TokenKind::MadeUpType(id) => {
-                let next_token = self.peek_at(1); // أو الدالة اللي بتستخدمها عشان تبص خطوة لقدام
-
-                match next_token.kind {
-                    // لو التوكن اللي بعده Identifier عادي، يبقى ده مليون في المية تعريف متغير
-                    // مثال: Node n
-                    TokenKind::Identifier(_) => self.parse_var_decl(),
-
-                    // لو التوكن اللي بعده نقطة، يبقى ده تعبير رياضي/استدعاء (Expression)
-                    // مثال: Node.do_something()
-                    TokenKind::Dot => self.parse_expression_stmt(),
-
-                    // أي حاجة تانية بنحولها لـ Expression Statement وهو هيتصرف معاها
-                    // (زي لو مثلاً بنبني Object جديد بدون متغير: Node() )
-                    _ => self.parse_expression_stmt(),
-                }
-            }
-            kind if self.is_type_token(kind) => self.parse_var_decl(),
-            TokenKind::SemiColon => {
-                self.advance();
-                return Ok(None); // empty statement, //todo: add a warning or something
-            }
+            TokenKind::Identifier(_) => self.parse_expression_or_reassignment(),
+            TokenKind::This => self.parse_expression_or_reassignment(),
+            TokenKind::Super => self.parse_expression_or_reassignment(),
+            TokenKind::Goto => self.parse_goto_stmt(),
+            TokenKind::LabelName(_) => self.parse_label_decl(),
             _ => self.parse_expression_stmt(),
         };
 
@@ -97,12 +102,12 @@ impl Parser {
         }
     }
 
-    pub(crate) fn parse_use_stmt(&mut self) -> Result<Stmt, String> {
-        self.advance(); // consume 'use'
+    pub(crate) fn parse_import_stmt(&mut self) -> Result<Stmt, String> {
+        self.advance(); // consume 'import'
         let mut module_path: Vec<String> = Vec::new();
         let mut imports: Option<Vec<String>> = None;
 
-        module_path.push(self.get_identifier("Expected module name after 'use'")?);
+        module_path.push(self.get_identifier("Expected module name after 'import'")?);
 
         while self.peek().kind == TokenKind::DoubleColon {
             self.advance();
@@ -113,7 +118,7 @@ impl Parser {
 
                 if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
                     loop {
-                        selected.push(self.get_sc_type("Expected import name in use list")?);
+                        selected.push(self.get_identifier("Expected import name in import list")?);
 
                         if self.peek().kind == TokenKind::Comma {
                             self.advance();
@@ -127,13 +132,14 @@ impl Parser {
 
                 imports = Some(selected);
                 break;
+            } else {
+                module_path.push(self.get_identifier("Expected module name after '::'")?);
             }
-
-            module_path.push(self.get_identifier("Expected module name after '::'")?);
         }
 
-        self.consume(TokenKind::SemiColon, "Expected ';' after use statement")?;
-        Ok(Stmt::Use {
+        self.consume(TokenKind::SemiColon, "Expected ';' after import statement")?;
+
+        Ok(Stmt::Import {
             module_path,
             imports,
         })
@@ -149,7 +155,6 @@ impl Parser {
             TokenKind::TypeClass => self.parse_class_decl("".to_string())?,
             TokenKind::TypeStruct => self.parse_struct_decl("".to_string())?,
             TokenKind::TypeEnum => self.parse_enum_decl("".to_string())?,
-            TokenKind::Let => self.parse_var_decl()?,
             kind => return Err(format!("Syntax Error: Cannot export '{:?}', only let, fn, scope, class, struct, and enum can be exported", kind)),
         };
 
@@ -160,80 +165,69 @@ impl Parser {
             Stmt::CustomDecl { is_exported, .. } => *is_exported = true,
             Stmt::ClassDecl { is_exported, .. } => *is_exported = true,
             Stmt::StructDecl { is_exported, .. } => *is_exported = true,
-            Stmt::ArrayDecl { is_exported, .. } => *is_exported = true,
-            Stmt::StrDecl { is_exported, .. } => *is_exported = true,
             Stmt::EnumDecl { is_exported, .. } => *is_exported = true,
-            Stmt::VarDecl { visibility, .. } => {
-                *visibility = crate::parser::ast::Visibility::Public
-            }
+            Stmt::VarDecl { visibility, .. } => *visibility = Visibility::Public,
+            Stmt::ArrayDecl { visibility, .. } => *visibility = Visibility::Public,
             _ => {}
         }
 
         Ok(stmt)
     }
 
-    // يحلل تعريف المتغير: let int : 8 a = 5; أو let a : i8 = 5; أو const ...
-    pub(crate) fn parse_var_decl(&mut self) -> Result<Stmt, String> {
-        let mut is_const = false;
-        if self.peek().kind == TokenKind::Const {
-            //const type name -> value;
-            is_const = true;
-        }
-        if self.peek().kind == TokenKind::Let {
-            //let type name = value;
-            if is_const {
-                return Err("Syntax Error: Unexpected 'let' after 'const'".to_string());
-            }
+    pub(crate) fn parse_var_decl(&mut self, is_global: bool, no_semi: bool) -> Result<Stmt, String> {
+        let is_const = if self.peek().kind == TokenKind::Const {
             self.advance();
-            let type_node = self.parse_type()?;
-            let name = self.get_identifier("Expected variable name after 'let'")?;
-            let mut value = Expr::Identifier("__param__".to_string());
-
-            if self.peek().kind == TokenKind::Assign {
-                self.advance();
-                value = self.parse_expression()?;
-                self.consume(
-                    TokenKind::SemiColon,
-                    "Expected ';' after variable declaration",
-                )?;
-            } else {
-                self.consume(
-                    TokenKind::SemiColon,
-                    "Expected ';' after variable declaration",
-                )?;
-            }
-            return Ok(Stmt::VarDecl {
-                visibility: Visibility::Private,
-                editability: if is_const {
-                    Editability::NotEditable
-                } else {
-                    Editability::Editable
-                },
-                type_node: Some(type_node),
-                name,
-                value,
-            });
+            true
         } else {
-            let type_node = self.parse_type()?;
-
-            let name = self.get_identifier("Expected variable name after type")?;
-
-            let mut value = Expr::Identifier("__param__".to_string());
-
-            if self.peek().kind == TokenKind::Arrow {
-                self.advance();
-                value = self.parse_expression()?;
-                self.consume(
-                    TokenKind::SemiColon,
-                    "Expected ';' after variable declaration",
-                )?;
+            false
+        };
+        let mut var_meta: VarMetadata;
+        let type_node = self.parse_type()?;
+        let name = self.get_identifier("Expected variable name after type")?;
+        let mut size = None;
+        if self.peek().kind == TokenKind::LBracket {
+            //[size]
+            self.advance();
+            if matches!(self.peek().kind, TokenKind::Int(_)) {
+                size = Some(self.parse_expression()?);
             } else {
-                self.consume(
-                    TokenKind::SemiColon,
-                    "Expected ';' after variable declaration",
-                )?;
+                return Err("Syntax Error: Expected size for array".to_string());
             }
-            return Ok(Stmt::VarDecl {
+            self.consume(TokenKind::RBracket, "Expected ']' after array size")?;
+        }
+        let mut value = Expr::Identifier("__default__".to_string());
+
+        if self.peek().kind == TokenKind::Arrow || self.peek().kind == TokenKind::Assign {
+            self.advance();
+            value = self.parse_expression()?;
+        }
+
+        if !no_semi {
+            self.consume(
+                TokenKind::SemiColon,
+                "Expected ';' after variable declaration",
+            )?;
+        }
+        if size.is_none() {
+            var_meta = VarMetadata {
+                name: name.clone(),
+                type_node: type_node.clone(),
+                visibility: if is_global {
+                    Visibility::Public
+                } else {
+                    Visibility::Private
+                },
+                editability: if is_const {
+                    Editability::NotEditable
+                } else {
+                    Editability::Editable
+                },
+                is_array: false,
+            };
+            if is_global {
+                self.var_metadata.insert(name.clone(), var_meta);
+            }
+            Ok(Stmt::VarDecl {
                 visibility: Visibility::Private,
                 editability: if is_const {
                     Editability::NotEditable
@@ -243,7 +237,38 @@ impl Parser {
                 type_node: Some(type_node),
                 name,
                 value,
-            });
+            })
+        } else {
+            var_meta = VarMetadata {
+                name: name.clone(),
+                type_node: type_node.clone(),
+                visibility: if is_global {
+                    Visibility::Public
+                } else {
+                    Visibility::Private
+                },
+                editability: if is_const {
+                    Editability::NotEditable
+                } else {
+                    Editability::Editable
+                },
+                is_array: true,
+            };
+            if is_global {
+                self.var_metadata.insert(name.clone(), var_meta);
+            }
+            Ok(Stmt::ArrayDecl {
+                visibility: Visibility::Private,
+                editability: if is_const {
+                    Editability::NotEditable
+                } else {
+                    Editability::Editable
+                },
+                type_node: Some(type_node),
+                name,
+                length: size.unwrap(),
+                value,
+            })
         }
     }
 
@@ -292,6 +317,7 @@ impl Parser {
         // then block
         self.consume(TokenKind::LBrace, "Expected '{' to open if body")?;
         let then_block = self.parse_block()?;
+        self.consume(TokenKind::RBrace, "Expected '}' to close if body")?;
 
         // else block — اختياري
         let else_block = if self.peek().kind == TokenKind::Else {
@@ -307,7 +333,9 @@ impl Parser {
                     self.advance();
                 }
                 self.consume(TokenKind::LBrace, "Expected '{' after 'else'")?;
-                Some(self.parse_block()?)
+                let blk = self.parse_block()?;
+                self.consume(TokenKind::RBrace, "Expected '}' to close else block")?;
+                Some(blk)
             }
         } else {
             None
@@ -341,14 +369,15 @@ impl Parser {
         let body = if self.peek().kind == TokenKind::LBrace {
             self.advance(); // '{'
             let stmts = self.parse_block()?;
-            crate::parser::ast::EitherBlock::Inline(stmts)
+            self.consume(TokenKind::RBrace, "Expected '}' to close loop body")?;
+            EitherBlock::Inline(stmts)
         } else {
             // scope_name(args) أو scope_name بدون أرغومنتس
             let expr = self.parse_expression()?;
             if self.peek().kind == TokenKind::SemiColon {
                 self.advance();
             }
-            crate::parser::ast::EitherBlock::External(expr)
+            EitherBlock::External(expr)
         };
 
         Ok(Stmt::LoopStmt { count, body })
@@ -367,13 +396,14 @@ impl Parser {
         let body = if self.peek().kind == TokenKind::LBrace {
             self.advance(); // '{'
             let stmts = self.parse_block()?;
-            crate::parser::ast::EitherBlock::Inline(stmts)
+            self.consume(TokenKind::RBrace, "Expected '}' to close while body")?;
+            EitherBlock::Inline(stmts)
         } else {
             let expr = self.parse_expression()?;
             if self.peek().kind == TokenKind::SemiColon {
                 self.advance();
             }
-            crate::parser::ast::EitherBlock::External(expr)
+            EitherBlock::External(expr)
         };
 
         Ok(Stmt::WhileStmt { condition, body })
@@ -398,7 +428,9 @@ impl Parser {
 
                     let case_body = if self.peek().kind == TokenKind::LBrace {
                         self.advance();
-                        self.parse_block()?
+                        let b = self.parse_block()?;
+                        self.consume(TokenKind::RBrace, "Expected '}' to close case block")?;
+                        b
                     } else {
                         return Err("Syntax Error: Expected '{' after '=>' in case".to_string());
                     };
@@ -414,7 +446,9 @@ impl Parser {
 
                     let def_body = if self.peek().kind == TokenKind::LBrace {
                         self.advance();
-                        self.parse_block()?
+                        let b = self.parse_block()?;
+                        self.consume(TokenKind::RBrace, "Expected '}' to close default block")?;
+                        b
                     } else {
                         return Err(
                             "Syntax Error: Expected '{' after '=>' in default case".to_string()
@@ -458,18 +492,54 @@ impl Parser {
         self.advance(); // 'for'
         self.consume(TokenKind::LParen, "Expected '(' after 'for'")?;
 
+        // Lookahead to see if it's a for-in loop
+        let mut is_for_in = false;
+        let mut lookahead = self.current;
+        let mut paren_depth = 1; // We already consumed the first LParen
+        while lookahead < self.tokens.len() {
+            match &self.tokens[lookahead].kind {
+                TokenKind::In => {
+                    if paren_depth == 1 {
+                        is_for_in = true;
+                        break;
+                    }
+                }
+                TokenKind::LParen => {
+                    paren_depth += 1;
+                }
+                TokenKind::RParen => {
+                    paren_depth -= 1;
+                    if paren_depth == 0 {
+                        break;
+                    }
+                }
+                TokenKind::SemiColon => {
+                    if paren_depth == 1 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            lookahead += 1;
+        }
+
+        if is_for_in {
+            return self.parse_for_in_stmt_body();
+        }
+
         let init = if self.peek().kind == TokenKind::SemiColon {
             self.advance(); // skip ';'
             None
         } else {
-            let stmt = if self.peek().kind == TokenKind::Let {
-                self.parse_var_decl()?
-            } else if self.peek().kind == TokenKind::Set {
-                self.parse_reassign_stmt()?
-            } else {
-                self.parse_expression_stmt()?
+            let stmt = match self.peek().kind {
+                TokenKind::Const
+                | TokenKind::TypeInt
+                | TokenKind::TypeFloat
+                | TokenKind::TypeChar
+                | TokenKind::TypeBool
+                | TokenKind::TypeName => self.parse_var_decl(false, false)?,
+                _ => self.parse_expression_stmt()?,
             };
-            // Note: parse_var_decl, parse_reassign_stmt, and parse_expression_stmt consume the ';'
             Some(Box::new(stmt))
         };
 
@@ -482,8 +552,41 @@ impl Parser {
 
         let increment = if self.peek().kind == TokenKind::RParen {
             None
-        } else {
-            Some(self.parse_expression()?)
+        }  else {
+            let expr = self.parse_expression()?;
+            let op = self.peek().kind.clone();
+            if op == TokenKind::Arrow || op == TokenKind::Assign || op == TokenKind::PlusAssign || op == TokenKind::MinusAssign || op == TokenKind::MulAssign || op == TokenKind::DivAssign {
+                self.advance();
+                let mut value = self.parse_expression()?;
+                if op == TokenKind::PlusAssign {
+                    value = Expr::BinaryOp {
+                        left: Box::new(expr.clone()),
+                        operator: "+".to_string(),
+                        right: Box::new(value),
+                    };
+                } else if op == TokenKind::MinusAssign {
+                    value = Expr::BinaryOp {
+                        left: Box::new(expr.clone()),
+                        operator: "-".to_string(),
+                        right: Box::new(value),
+                    };
+                } else if op == TokenKind::MulAssign {
+                    value = Expr::BinaryOp {
+                        left: Box::new(expr.clone()),
+                        operator: "*".to_string(),
+                        right: Box::new(value),
+                    };
+                } else if op == TokenKind::DivAssign {
+                    value = Expr::BinaryOp {
+                        left: Box::new(expr.clone()),
+                        operator: "/".to_string(),
+                        right: Box::new(value),
+                    };
+                }
+                Some(Box::new(Stmt::ReassignStmt { target: expr, value }))
+            } else {
+                Some(Box::new(Stmt::ExpressionStmt(expr)))
+            }
         };
         self.consume(TokenKind::RParen, "Expected ')' after for clauses")?;
 
@@ -492,13 +595,14 @@ impl Parser {
         let body = if self.peek().kind == TokenKind::LBrace {
             self.advance();
             let stmts = self.parse_block()?;
-            crate::parser::ast::EitherBlock::Inline(stmts)
+            self.consume(TokenKind::RBrace, "Expected '}' to close for body")?;
+            EitherBlock::Inline(stmts)
         } else {
             let expr = self.parse_expression()?;
             if self.peek().kind == TokenKind::SemiColon {
                 self.advance();
             }
-            crate::parser::ast::EitherBlock::External(expr)
+            EitherBlock::External(expr)
         };
 
         Ok(Stmt::ForStmt {
@@ -509,10 +613,54 @@ impl Parser {
         })
     }
 
+    pub(crate) fn parse_for_in_stmt_body(&mut self) -> Result<Stmt, String> {
+        // We already consumed `for (`
+        // Now we parse the item
+        let item = match self.peek().kind {
+            TokenKind::Const
+            | TokenKind::TypeInt
+            | TokenKind::TypeFloat
+            | TokenKind::TypeChar
+            | TokenKind::TypeBool
+            | TokenKind::TypeName => self.parse_var_decl(false, true)?, // pass true for `no_semi`
+            _ => {
+                let expr = self.parse_expression()?;
+                Stmt::ExpressionStmt(expr)
+            }
+        };
+
+        self.consume(TokenKind::In, "Expected 'in' in for-in loop")?;
+        let iterable = self.parse_expression()?;
+        self.consume(TokenKind::RParen, "Expected ')' after for-in clauses")?;
+        self.consume(TokenKind::Arrow, "Expected '->' after 'for-in' clauses")?;
+
+        let body = if self.peek().kind == TokenKind::LBrace {
+            self.advance();
+            let stmts = self.parse_block()?;
+            self.consume(TokenKind::RBrace, "Expected '}' to close for-in body")?;
+            EitherBlock::Inline(stmts)
+        } else {
+            let expr = self.parse_expression()?;
+            if self.peek().kind == TokenKind::SemiColon {
+                self.advance();
+            }
+            EitherBlock::External(expr)
+        };
+
+        Ok(Stmt::ForInStmt {
+            item: Box::new(item),
+            iterable,
+            body,
+        })
+    }
+
     pub(crate) fn parse_throw_stmt(&mut self) -> Result<Stmt, String> {
+        //todo : we will make throw work only in fn and custom scope so you can take the name of the scope as a parameter
+        //todo :  and update the scope data the flag has_throw to true and the error flied to the string that we will throw to  allow the user to catch it or handle it using the scope handler
+        //! check 21_throw.fs to see how it will work
         self.advance(); // 'throw'
 
-        // Optional 'new' (like: throw new error("..."))
+        // Optional 'new' (like: throw new error("...")) //todo: we will make it not optional
         if self.peek().kind == TokenKind::New {
             self.advance();
         }
@@ -522,12 +670,83 @@ impl Parser {
         Ok(Stmt::ThrowStmt(expr))
     }
 
-    /// يُعالج سطراً يبدأ بـ Identifier عادي (مش custom keyword):
-    /// إما إعادة تعيين: `items -> [1];`  أو  expression: `foo.bar();`
+    pub(crate) fn parse_label_decl(&mut self) -> Result<Stmt, String> {
+        let label_name = if let TokenKind::LabelName(name) = self.peek().kind.clone() {
+            self.advance();
+            name
+        } else {
+            return Err("Expected label name".to_string());
+        };
+
+        let mut body = Vec::new();
+
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance();
+        }
+
+        if self.peek().kind == TokenKind::LBrace {
+            self.advance(); // consume '{'
+            while self.peek().kind != TokenKind::RBrace && self.peek().kind != TokenKind::EOF {
+                if let Some(stmt) = self.parse_statement()? {
+                    body.push(stmt);
+                }
+            }
+            self.consume(TokenKind::RBrace, "Expected '}' after label block")?;
+        } else if self.peek().kind == TokenKind::SemiColon {
+            self.advance(); // consume ';'
+        } else {
+            return Err(format!("Expected '{{' or ';' after label '{}'", label_name));
+        }
+
+        Ok(Stmt::LabelDecl {
+            name: label_name,
+            body,
+        })
+    }
+
+    pub(crate) fn parse_goto_stmt(&mut self) -> Result<Stmt, String> {
+        self.advance(); // consume 'goto'
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance();
+        }
+        let target = if let TokenKind::LabelName(name) = self.peek().kind.clone() {
+            self.advance();
+            name
+        } else if let TokenKind::Identifier(name) = self.peek().kind.clone() {
+            self.advance();
+            name
+        } else {
+            return Err("Expected label name after 'goto'".to_string());
+        };
+
+        self.consume(TokenKind::SemiColon, "Expected ';' after goto statement")?;
+
+        Ok(Stmt::GotoStmt(Expr::Identifier(target)))
+    }
+
+    pub(crate) fn parse_call_stmt(&mut self) -> Result<Stmt, String> {
+        self.advance(); // consume 'call'
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance();
+        }
+        let target = self.parse_expression()?;
+        self.consume(TokenKind::SemiColon, "Expected ';' after call statement")?;
+        Ok(Stmt::CallStmt(target))
+    }
+
+    pub(crate) fn parse_yield_stmt(&mut self) -> Result<Stmt, String> {
+        self.advance(); // consume 'yield'
+        let mut expr = None;
+        if self.peek().kind != TokenKind::SemiColon {
+            expr = Some(self.parse_expression()?);
+        }
+        self.consume(TokenKind::SemiColon, "Expected ';' after yield")?;
+        Ok(Stmt::YieldStmt(expr))
+    }
+
+    //TODO: fix this or remove it and build a better system for it
     pub(crate) fn parse_expression_or_reassignment(&mut self) -> Result<Stmt, String> {
-        // Look-ahead: `TypeName varName ->` يعني VarDecl بـ user-defined type
-        // مثل `Node n -> new Node(temp);` أو `Node<T> n -> ...;`
-        if let TokenKind::Identifier(type_name) = self.peek().kind.clone() {
+        if let TokenKind::Identifier(_) = self.peek().kind.clone() {
             let next1 = self.tokens.get(self.current + 1).map(|t| &t.kind);
             let next2 = self.tokens.get(self.current + 2).map(|t| &t.kind);
 
@@ -560,16 +779,50 @@ impl Parser {
             };
 
             if is_var_decl {
-                return self.parse_var_decl();
+                return self.parse_var_decl(true, false);
             }
         }
 
         let expr = self.parse_expression()?;
 
-        // إعادة تعيين: target -> value;   أو   target = value;
-        if self.peek().kind == TokenKind::Arrow || self.peek().kind == TokenKind::Assign {
-            self.advance(); // consume '->' or '='
-            let value = self.parse_expression()?;
+        // `target -> value;` or `target = value;`
+        let op = self.peek().kind.clone();
+        if op == TokenKind::Arrow
+            || op == TokenKind::Assign
+            || op == TokenKind::PlusAssign
+            || op == TokenKind::MinusAssign
+            || op == TokenKind::MulAssign
+            || op == TokenKind::DivAssign
+        {
+            self.advance(); // consume '->' or '=' or '+=' etc.
+            let mut value = self.parse_expression()?;
+
+            if op == TokenKind::PlusAssign {
+                value = Expr::BinaryOp {
+                    left: Box::new(expr.clone()),
+                    operator: "+".to_string(),
+                    right: Box::new(value),
+                };
+            } else if op == TokenKind::MinusAssign {
+                value = Expr::BinaryOp {
+                    left: Box::new(expr.clone()),
+                    operator: "-".to_string(),
+                    right: Box::new(value),
+                };
+            } else if op == TokenKind::MulAssign {
+                value = Expr::BinaryOp {
+                    left: Box::new(expr.clone()),
+                    operator: "*".to_string(),
+                    right: Box::new(value),
+                };
+            } else if op == TokenKind::DivAssign {
+                value = Expr::BinaryOp {
+                    left: Box::new(expr.clone()),
+                    operator: "/".to_string(),
+                    right: Box::new(value),
+                };
+            }
+
             self.consume(TokenKind::SemiColon, "Expected ';' after reassignment")?;
             return Ok(Stmt::ReassignStmt {
                 target: expr,
@@ -618,20 +871,20 @@ impl Parser {
             )?;
 
             let type_node = if generics.is_empty() {
-                crate::parser::ast::TypeNode::Simple(crate::parser::ast::TypeRef {
+                 TypeNode::Simple( TypeRef {
                     base_type: keyword_name,
                     size: None,
                 })
             } else {
-                crate::parser::ast::TypeNode::Generic(crate::parser::ast::Generic {
+                 TypeNode::Generic( Generic {
                     base_type: keyword_name,
                     generics,
                 })
             };
 
             Ok(Stmt::VarDecl {
-                visibility: crate::parser::ast::Visibility::Private,
-                editability: crate::parser::ast::Editability::Editable,
+                visibility:  Visibility::Private,
+                editability:  Editability::Editable,
                 type_node: Some(type_node),
                 name,
                 value,
@@ -645,13 +898,43 @@ impl Parser {
             self.peek().kind
         );
         // --- Bare reassignment: x = 10; or this.x = 20; ---
-        if self.peek().kind == TokenKind::Assign || self.peek().kind == TokenKind::Arrow {
-            self.advance(); // consume '=' or '->'
-            let value = self.parse_expression()?;
-            print!(
-                "DEBUG: parse_expression_stmt: 2. value: {:?} \n",
-                self.peek().kind
-            );
+        let op = self.peek().kind.clone();
+        if op == TokenKind::Assign
+            || op == TokenKind::Arrow
+            || op == TokenKind::PlusAssign
+            || op == TokenKind::MinusAssign
+            || op == TokenKind::MulAssign
+            || op == TokenKind::DivAssign
+        {
+            self.advance(); // consume '=' or '->' or '+=' etc
+            let mut value = self.parse_expression()?;
+
+            if op == TokenKind::PlusAssign {
+                value = Expr::BinaryOp {
+                    left: Box::new(expr.clone()),
+                    operator: "+".to_string(),
+                    right: Box::new(value),
+                };
+            } else if op == TokenKind::MinusAssign {
+                value = Expr::BinaryOp {
+                    left: Box::new(expr.clone()),
+                    operator: "-".to_string(),
+                    right: Box::new(value),
+                };
+            } else if op == TokenKind::MulAssign {
+                value = Expr::BinaryOp {
+                    left: Box::new(expr.clone()),
+                    operator: "*".to_string(),
+                    right: Box::new(value),
+                };
+            } else if op == TokenKind::DivAssign {
+                value = Expr::BinaryOp {
+                    left: Box::new(expr.clone()),
+                    operator: "/".to_string(),
+                    right: Box::new(value),
+                };
+            }
+
             self.consume(
                 TokenKind::SemiColon,
                 "Expected ';' after assignment statement",
@@ -679,6 +962,7 @@ impl Parser {
         self.consume(TokenKind::Arrow, "Expected '->' after 'try'")?;
         self.consume(TokenKind::LBrace, "Expected '{' to open try block")?;
         let try_block = self.parse_block()?;
+        self.consume(TokenKind::RBrace, "Expected '}' to close try block")?;
 
         self.consume(TokenKind::Catch, "Expected 'catch' after try block")?;
         self.consume(TokenKind::LParen, "Expected '(' after 'catch'")?;
@@ -698,6 +982,7 @@ impl Parser {
         self.consume(TokenKind::Arrow, "Expected '->' after catch(...)")?;
         self.consume(TokenKind::LBrace, "Expected '{' to open catch block")?;
         let catch_block = self.parse_block()?;
+        self.consume(TokenKind::RBrace, "Expected '}' to close catch block")?;
 
         Ok(Stmt::TryCatchStmt {
             try_block,
@@ -715,15 +1000,6 @@ impl Parser {
 
     pub(crate) fn get_identifier(&mut self, err_msg: &str) -> Result<String, String> {
         if let TokenKind::Identifier(n) = &self.peek().kind.clone() {
-            let s = n.to_string();
-            self.advance();
-            return Ok(s);
-        } else {
-            return Err(err_msg.to_string());
-        }
-    }
-    pub(crate) fn get_sc_type(&mut self, err_msg: &str) -> Result<String, String> {
-        if let TokenKind::MadeUpType(n) = &self.peek().kind.clone() {
             let s = n.to_string();
             self.advance();
             return Ok(s);

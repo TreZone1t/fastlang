@@ -63,6 +63,10 @@ impl CodeGenerator {
                 let l = self.visit_expression(left);
                 format!("{}{}", l, operator)
             }
+            Expr::PrefixUpdate { right, operator } => {
+                let r = self.visit_expression(right);
+                format!("{}{}", operator, r)
+            }
             Expr::UnaryOp { operator, operand } => {
                 let op_code = self.visit_expression(operand);
                 if operator == "&" {
@@ -97,6 +101,8 @@ impl CodeGenerator {
 
                 if callee_code == "Some" {
                     format!("std::optional{{{}}}", args_code.join(", "))
+                } else if self.custom_scopes.contains(&callee_code) {
+                    format!("{}({}).call()", callee_code, args_code.join(", "))
                 } else {
                     format!("{}({})", callee_code, args_code.join(", "))
                 }
@@ -168,11 +174,13 @@ impl CodeGenerator {
                     format!("this->{}", property) // Quick map to this-> since C++ derived classes inherit fields directly
                 } else if obj_code == "this" {
                     format!("this->{}", property)
-                } else if property == "size" {
-                    format!("{}.size()", obj_code)
                 } else {
                     format!("{}.{}", obj_code, property) // we default to . since primitive objects might not be pointers, though shared_ptr requires ->
                 }
+            }
+            Expr::NamespaceAccess { namespace, property } => {
+                let prop_code = self.visit_expression(property);
+                format!("{}::{}", namespace, prop_code)
             }
             Expr::IndexAccess { object, index } => {
                 let obj_code = self.visit_expression(object);

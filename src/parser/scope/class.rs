@@ -1,37 +1,50 @@
-use crate::lexer::token::{Token, TokenKind};
+use std::collections::HashMap;
+
+use crate::lexer::token::TokenKind;
 use crate::parser::ast::*;
 use crate::parser::parser::Parser;
 
 impl Parser {
     pub(crate) fn parse_class_decl(&mut self, name: String) -> Result<Stmt, String> {
-        let mut settings: Vec<crate::parser::ast::Setting> = Vec::new();
-        let mut constructor: Option<crate::parser::ast::ConstructorDecl> = None;
-        let mut handles: Vec<crate::parser::ast::HandleMethods> = Vec::new();
+        let mut settings: Vec<Setting> = Vec::new();
+        let mut constructor: Option<Vec<ConstructorDecl>> = None;
+        let mut handles: Vec<HandleMethods> = Vec::new();
+        let mut used_handles: Vec<HandleMethods> = Vec::new();
         let mut handle_block: Vec<Stmt> = Vec::new();
         let mut public_block: Vec<Stmt> = Vec::new();
         let mut private_block: Vec<Stmt> = Vec::new();
         let mut static_block: Vec<Stmt> = Vec::new();
-        let mut generic_block: Vec<String> = Vec::new();
+        let mut generics: Option<Vec<TypeNode>> = None;
         let mut length: i64 = 0;
 
         //we need to ensure no duplicated extends
         let mut extends = None;
         let mut has_extends = false;
         let mut name = name.clone();
-        let mut keyword = name.clone();
+
+        let mut meta = TypeMetadata {
+            name: name.clone(),
+            fields: HashMap::new(),
+            constructor: None,
+            params: Vec::new(),
+            generics: Vec::new(),
+            methods: HashMap::new(),
+            handles: Vec::new(),
+            vars: HashMap::new(),
+         is_enum: false, variants: None, };
         //adding the default settings to the class scope
-        settings.push(crate::parser::ast::Setting::CustomIndexAccess);
-        settings.push(crate::parser::ast::Setting::Private);
-        settings.push(crate::parser::ast::Setting::Public);
-        settings.push(crate::parser::ast::Setting::Static);
-        settings.push(crate::parser::ast::Setting::Extends);
+        settings.push(Setting::CustomIndexAccess);
+        settings.push(Setting::Private);
+        settings.push(Setting::Public);
+        settings.push(Setting::Static);
+        settings.push(Setting::Extends);
         // adding allowed handles
         //we have display , iterator , next , length , size
-        handles.push(crate::parser::ast::HandleMethods::IndexAccess);
-        handles.push(crate::parser::ast::HandleMethods::Display);
-        handles.push(crate::parser::ast::HandleMethods::Iterator);
-        handles.push(crate::parser::ast::HandleMethods::Next);
-        handles.push(crate::parser::ast::HandleMethods::Length);
+        handles.push(HandleMethods::IndexAccess);
+        handles.push(HandleMethods::Display);
+        handles.push(HandleMethods::Iterator);
+        handles.push(HandleMethods::Next);
+        handles.push(HandleMethods::Length);
         if name != "" {
             //we not been redirect by the scope parsing fn
             name = self.get_identifier("Expected class name")?;
@@ -47,13 +60,13 @@ impl Parser {
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
             // we need to check if the token is valid for the setting
             let t = self.peek().kind.clone();
-            if (self.is_valid_setting(t.clone())) {
+            if self.is_valid_setting(t.clone()) {
                 // now need to know what is this section
                 //====================================================================
                 // constructor    _ () -> { ... }
                 //====================================================================
-                if t == TokenKind::Init {
-                    match self.parse_constructor_decl() {
+                if t == TokenKind::Constructor {
+                    match self.parse_constructor_decl(&mut meta) {
                         Ok(c) => constructor = c,
                         Err(e) => {
                             eprintln!("Syntax Error in scope constructor: {}", e);
@@ -66,36 +79,38 @@ impl Parser {
                 // generic -> { ... }
                 //====================================================================
                 if t == TokenKind::Generic {
-                    generic_block = self.parse_generic_block()?;
+                    self.parse_generics(&mut generics)?;
                     continue;
                 }
                 //====================================================================
                 // handle -> { fn1 , fn2 , ... }
                 //====================================================================
                 if t == TokenKind::Handle {
-                    handle_block = self.parse_handle_block(handles.clone())?;
+                    handle_block = self.parse_handle_block(&mut handles, &mut used_handles)?;
                     continue;
                 }
                 //====================================================================
                 // public -> { ... }
                 //====================================================================
                 if self.peek().kind == TokenKind::Public {
-                    public_block = self.parse_field_block()?;
+                    public_block =
+                        self.parse_field_block(&mut meta, Visibility::Public, generics.clone())?;
                     continue;
                 }
                 //====================================================================
                 // private -> { ... }
                 //====================================================================
                 if t == TokenKind::Private {
-                    private_block = self.parse_field_block()?;
+                    private_block =
+                        self.parse_field_block(&mut meta, Visibility::Private, generics.clone())?;
                     continue;
                 }
                 //====================================================================
                 // static -> { ... }
                 //====================================================================
                 if t == TokenKind::Static {
-                    static_block = self.parse_field_block()?;
-                    continue;
+                    static_block =
+                        self.parse_field_block(&mut meta, Visibility::Static, generics.clone())?;
                 }
                 //====================================================================
                 // length -> <value>;
@@ -139,6 +154,8 @@ impl Parser {
             }
         }
 
+        self.metadata.insert(name.clone(), meta);
+
         return Ok(Stmt::ClassDecl {
             is_exported: false,
             name,
@@ -149,7 +166,7 @@ impl Parser {
             public_block,
             private_block,
             static_block,
-            generic_block,
+            generics,
             handle_block,
             constructor,
         });
