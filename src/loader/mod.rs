@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use crate::parser::ast::Stmt;
-use crate::parser::ast::TypeMetadata;
+use crate::frontend::parser::ast::{Decl, Stmt};
+use crate::frontend::parser::ast::TypeMetadata;
 
 pub struct LoadedModule {
     pub name: String,
@@ -56,19 +56,19 @@ impl ProjectLoader {
         let contents = std::fs::read_to_string(path)
             .unwrap_or_else(|_| panic!("Could not read '{}'. Make sure the file exists.", path));
     
-        let mut scanner = crate::lexer::scanner::Scanner::new(contents.clone());
+        let mut scanner = crate::frontend::lexer::scanner::Scanner::new(contents.clone());
         let mut tokens = Vec::new();
     
         loop {
             let tok = scanner.next_token();
-            let is_eof = tok.kind == crate::lexer::token::TokenKind::EOF;
+            let is_eof = tok.kind == crate::frontend::lexer::token::TokenKind::EOF;
     
-            if let crate::lexer::token::TokenKind::Error(ref msg) = tok.kind {
+            if let crate::frontend::lexer::token::TokenKind::Error(ref msg) = tok.kind {
                 eprintln!("[Lexer Error in {}] {}", path, msg);
             }
     
             match tok.kind {
-                crate::lexer::token::TokenKind::InlineComment | crate::lexer::token::TokenKind::MultiLineComment => {}
+                crate::frontend::lexer::token::TokenKind::InlineComment | crate::frontend::lexer::token::TokenKind::MultiLineComment => {}
                 _ => tokens.push(tok),
             }
     
@@ -77,7 +77,7 @@ impl ProjectLoader {
             }
         }
     
-        let mut parser = crate::parser::parser::Parser::new(tokens);
+        let mut parser = crate::frontend::parser::parser::Parser::new(tokens);
     
         match parser.parse_program() {
             Ok(program) => Ok((program.statements, parser.metadata.clone())),
@@ -133,10 +133,10 @@ impl ProjectLoader {
 
         let mut deps = Vec::new();
         for stmt in &main_ast {
-            if let Stmt::Import {
+            if let Stmt::Declaration(Decl::Import {
                 module_path,
                 imports,
-            } = stmt
+            }) = stmt
             {
                 let mut path_clone = module_path.clone();
                 let mut mod_name = path_clone.join("/");
@@ -173,7 +173,7 @@ impl ProjectLoader {
                 };
 
                 loaded_modules.push(LoadedModule {
-                    name: mod_name.clone(),
+                    name: mod_name.to_string(),
                     path: actual_path,
                     ast: mod_ast.0,
                 });

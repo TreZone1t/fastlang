@@ -3,16 +3,14 @@ use std::collections::HashMap;
 use std::fs;
 use std::rc::Rc;
 
-use crate::parser::ast::*;
-use crate::semantic::analyzer::SemanticAnalyzer;
-use crate::semantic::environment::Environment;
+use crate::frontend::parser::ast::*;
+use crate::middle_end::semantic::analyzer::SemanticAnalyzer;
+use crate::middle_end::semantic::environment::Environment;
 
-pub mod codegen;
-pub mod lexer;
-pub mod parser;
-pub mod semantic;
+pub mod backend;
+pub mod frontend;
 pub mod loader;
-pub mod ir;
+pub mod middle_end;
 
 pub fn report_visual_error(source: &str, line: usize, column: usize, err_msg: &str) {
     let lines: Vec<&str> = source.lines().collect();
@@ -52,6 +50,7 @@ fn main() {
     let mut custom_includes = Vec::new();
     let mut backend = "cpp".to_string();
     let mut emit_ir = false;
+    let mut use_aot = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -73,6 +72,9 @@ fn main() {
         } else if args[i] == "--print-ir" || args[i] == "--emit-ir" {
             emit_ir = true;
             i += 1;
+        } else if args[i] == "--aot" {
+            use_aot = true;
+            i += 1;
         } else {
             path = args[i].clone();
             i += 1;
@@ -83,7 +85,7 @@ fn main() {
     for inc in custom_includes {
         loader.include_paths.push(inc);
     }
-    
+
     let program = match loader.load(&path, target.as_deref()) {
         Ok(p) => p,
         Err(e) => {
@@ -149,11 +151,17 @@ fn main() {
     // Code Generation
     if backend == "cranelift" {
         println!("\n=== Code Generation (Cranelift IR) ===");
-        
-        let builder = crate::ir::builder::IRBuilder::new("main".to_string(), &program.global_metadata);
+
+        let builder = crate::middle_end::ir::builder::IRBuilder::new(
+            "main".to_string(),
+            &program.global_metadata,
+        );
         let ir_module = builder.build(&program.main_ast);
-        println!("Generated Custom IR Module with {} functions.", ir_module.functions.len());
-        
+        println!(
+            "Generated Custom IR Module with {} functions.",
+            ir_module.functions.len()
+        );
+
         if emit_ir {
             println!("\n=== Custom IR Output ===");
             println!("{}", ir_module);
@@ -161,50 +169,68 @@ fn main() {
             return;
         }
 
-        let mut cl_backend = crate::codegen::cranelift::CraneliftBackend::new();
-        cl_backend.compile_module(&ir_module);
-        cl_backend.finalize();
-        println!("Cranelift JIT execution completed!");
+        if use_aot {
+            println!("=== Compiling Ahead-of-Time (AOT) ===");
+            let source_path = std::path::Path::new(&path);
+            let parent_dir = source_path.parent().unwrap_or(std::path::Path::new(""));
+            let build_dir = parent_dir.join("build");
+            if !build_dir.exists() {
+                std::fs::create_dir_all(&build_dir).unwrap();
+            }
+        /*
+            let out_path = build_dir.join("output.o").to_string_lossy().into_owned();
+
+        let mut aot_backend = crate::backend::codegen::cranelift::aot::CraneliftAotBackend::new();
+        aot_backend.compile_module(&ir_module);
+        aot_backend.finalize(&out_path);
+        */
+        } else {
+            let mut cl_backend = crate::backend::codegen::cranelift::CraneliftBackend::new();
+            cl_backend.compile_module(&ir_module);
+            cl_backend.finalize();
+            println!("Cranelift JIT execution completed!");
+        }
         return;
     }
 
     println!("\n=== Code Generation (C++) ===");
     let mut final_cpp = String::new();
 
-    let mut header_gen = crate::codegen::generator::CodeGenerator::new();
+    let mut header_gen = crate::backend::codegen::generator::CodeGenerator::new();
     final_cpp.push_str(&header_gen.generate(&vec![], true, false));
 
     for module in &program.modules {
         let cpp_namespace = module.name.replace("/", "_");
         final_cpp.push_str(&format!("namespace {} {{\n", cpp_namespace));
-        let mut codegen = crate::codegen::generator::CodeGenerator::new();
+        let mut codegen = crate::backend::codegen::generator::CodeGenerator::new();
         let module_cpp = codegen.generate(&module.ast, false, false);
         final_cpp.push_str(&module_cpp);
         final_cpp.push_str(&format!("\n}} // namespace {}\n\n", cpp_namespace));
     }
 
-    let mut main_codegen = crate::codegen::generator::CodeGenerator::new();
+    let mut main_codegen = crate::backend::codegen::generator::CodeGenerator::new();
     let main_cpp = main_codegen.generate(&program.main_ast, false, true);
     final_cpp.push_str(&main_cpp);
 
-    // Create build directory if it doesn't exist
-    if let Err(e) = fs::create_dir_all("build") {
-        eprintln!("Failed to create build directory: {}", e);
-        std::process::exit(1);
+    let source_path = std::path::Path::new(&path);
+    let parent_dir = source_path.parent().unwrap_or(std::path::Path::new(""));
+    let build_dir = parent_dir.join("build");
+    if !build_dir.exists() {
+        std::fs::create_dir_all(&build_dir).unwrap();
     }
 
-    let out_path = "build/output.cpp";
-    let exe_path = "build/app.exe";
-    fs::write(out_path, &final_cpp).expect("Failed to write output.cpp");
+    let out_path = build_dir.join("output.cpp").to_string_lossy().into_owned();
+    let exe_path = build_dir.join("app.exe").to_string_lossy().into_owned();
+    fs::write(&out_path, &final_cpp).expect("Failed to write output.cpp");
 
     println!("Successfully generated C++ code to {}", out_path);
     println!("Compiling to {}...", exe_path);
 
     let status = std::process::Command::new("g++")
-        .arg(out_path)
+        .arg(&out_path)
         .arg("-o")
-        .arg(exe_path)
-        .arg("-std=c++20")
+        .arg(&exe_path)
+        .arg("-std=c++17")
         .status();
 
     match status {
