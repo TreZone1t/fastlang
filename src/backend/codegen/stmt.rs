@@ -45,31 +45,28 @@ impl CodeGenerator {
                 body,
             } => {
                 let iterable_code = self.visit_expression(iterable);
-                let item_code =
-                    if let Stmt::Declaration(crate::frontend::parser::ast::Decl::VarDecl {
-                        type_node,
-                        name,
-                        ..
-                    }) = &**item
-                    {
-                        let cpp_type = match type_node.clone() {
-                            BaseType::Int8 => "int8_t".to_string(),
-                            BaseType::Int16 => "int16_t".to_string(),
-                            BaseType::Int32 => "int32_t".to_string(),
-                            BaseType::Int64 => "int64_t".to_string(),
-                            BaseType::Float32 => "float".to_string(),
-                            BaseType::Float64 => "double".to_string(),
-                            BaseType::Char => "char".to_string(),
-                            BaseType::Bool => "bool".to_string(),
-                            BaseType::Array(b) => b.as_str(),
-                            _ => "auto".to_string(),
-                        };
-                        format!("{} {}", cpp_type, name)
-                    } else if let Stmt::ExpressionStmt(Expr::Identifier(name)) = &**item {
-                        format!("auto& {}", name)
-                    } else {
-                        "auto item".to_string()
+                let item_code = if let Stmt::Declaration(Decl::VarDecl {
+                    type_node, name, ..
+                }) = &**item
+                {
+                    let cpp_type = match type_node.clone() {
+                        BaseType::Int8 => "int8_t".to_string(),
+                        BaseType::Int16 => "int16_t".to_string(),
+                        BaseType::Int32 => "int32_t".to_string(),
+                        BaseType::Int64 => "int64_t".to_string(),
+                        BaseType::Float32 => "float".to_string(),
+                        BaseType::Float64 => "double".to_string(),
+                        BaseType::Char => "char".to_string(),
+                        BaseType::Bool => "bool".to_string(),
+                        BaseType::Array(b) => b.as_str(),
+                        _ => "auto".to_string(),
                     };
+                    format!("{} {}", cpp_type, name)
+                } else if let Stmt::ExpressionStmt(Expr::Identifier(name)) = &**item {
+                    format!("auto {}", name)
+                } else {
+                    "auto item".to_string()
+                };
 
                 self.emit(&format!("for ({} : {}) {{", item_code, iterable_code));
                 self.indent_level += 1;
@@ -138,9 +135,18 @@ impl CodeGenerator {
                 self.indent_level -= 1;
                 self.emit("}");
             }
-            Stmt::DelStmt(expr) => {
-                let expr_code = self.visit_expression(expr);
-                self.emit(&format!("delete {};", expr_code));
+            Stmt::DelStmt { target, is_array } => {
+                let expr_code = self.visit_expression(target);
+                //we need to check if the expr is a array or not
+                //expr will be a name or a array only so how we can check that
+                //we can check the output and search with the name of the array (expr_code)
+                //so we will see if after ( = new int32_t ) we have a [ ]
+                //self.output
+                if *is_array {
+                    self.emit(&format!("delete [] {};", expr_code));
+                } else {
+                    self.emit(&format!("delete {};", expr_code));
+                }
             }
             Stmt::ForStmt {
                 init,
@@ -859,12 +865,17 @@ impl CodeGenerator {
             } => {
                 let target_code = self.visit_expression(target);
                 let cpp_decl = if *is_heap {
-                    // heap-allocated → raw pointer, but tracked as name
+                    // heap-allocated (e.g. new int(32)[...]) → raw pointer
+
                     format!("auto* {} = {};", name, target_code)
                 } else {
                     match access_mode {
-                        AccessMode::ReadOnly  => format!("const auto& {} = {};", name, target_code),
-                        AccessMode::ReadWrite => format!("auto& {} = {};", name, target_code),
+                        AccessMode::ReadOnly => {
+                            format!("const auto* {} = __fastlang_ptr({});", name, target_code)
+                        }
+                        AccessMode::ReadWrite => {
+                            format!("auto* {} = __fastlang_ptr({});", name, target_code)
+                        }
                     }
                 };
                 self.emit(&cpp_decl);
@@ -879,24 +890,28 @@ impl CodeGenerator {
                 value,
             } => {
                 let cpp_inner = match inner_type {
-                    BaseType::Int8   => "int8_t".to_string(),
-                    BaseType::Int16  => "int16_t".to_string(),
-                    BaseType::Int32  => "int32_t".to_string(),
-                    BaseType::Int64  => "int64_t".to_string(),
+                    BaseType::Int8 => "int8_t".to_string(),
+                    BaseType::Int16 => "int16_t".to_string(),
+                    BaseType::Int32 => "int32_t".to_string(),
+                    BaseType::Int64 => "int64_t".to_string(),
                     BaseType::Int128 => "__int128".to_string(),
                     BaseType::Float32 => "float".to_string(),
                     BaseType::Float64 => "double".to_string(),
-                    BaseType::Char   => "char".to_string(),
-                    BaseType::Bool   => "bool".to_string(),
-                    BaseType::Void   => "void".to_string(),
-                    BaseType::Custom { name: n, .. } | BaseType::Class { name: n, .. }
+                    BaseType::Char => "char".to_string(),
+                    BaseType::Bool => "bool".to_string(),
+                    BaseType::Void => "void".to_string(),
+                    BaseType::Custom { name: n, .. }
+                    | BaseType::Class { name: n, .. }
                     | BaseType::Struct { name: n, .. } => n.clone(),
                     _ => "auto".to_string(),
                 };
                 let val_code = self.visit_expression(value);
                 if let Some(len_expr) = length {
                     let len_code = self.visit_expression(len_expr);
-                    self.emit(&format!("{}* {} = {}; // length: {}", cpp_inner, name, val_code, len_code));
+                    self.emit(&format!(
+                        "{}* {} = {}; // length: {}",
+                        cpp_inner, name, val_code, len_code
+                    ));
                 } else {
                     self.emit(&format!("{}* {} = {};", cpp_inner, name, val_code));
                 }

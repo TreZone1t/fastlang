@@ -141,6 +141,8 @@ impl Parser {
                             type_node: BaseType::Int32,
                             visibility: Visibility::Public,
                             editability: Editability::Editable,
+                            scope: ScopeType::Custom,
+                            is_heaped: false,
                             is_array: false,
                         },
                     );

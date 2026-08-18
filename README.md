@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>🚀 FastLang</h1>
+  <h1> FastLang</h1>
   <p>A modern, fast, and highly customizable programming language built for performance and ultimate control over data and scopes.</p>
 
   <a href="https://ko-fi.com/W5V0236W86" target="_blank">
@@ -9,7 +9,7 @@
 
 <br />
 
-## 🌟 What is FastLang?
+## What is FastLang?
 
 FastLang is a compiled, statically typed programming language designed with an emphasis on **explicit control**, **modular scope management**, and **raw execution speed**. It blends the familiarity of C-like syntax with advanced meta-programming capabilities like Custom Scopes and explicit type definitions.
 
@@ -20,7 +20,7 @@ FastLang is a compiled, statically typed programming language designed with an e
 - **Access Control**: Fine-grained access modifiers (`private`, `public`, `restricted`) natively integrated into scopes.
 - **Built-in Handles**: Handle specific lifecycle events like `Error`, `Copy`, `Destruct` directly in your scope declarations.
 
-## ✍️ Syntax & Examples
+##  Syntax & Examples
 
 ### 1. Functions & Basic Types
 FastLang embraces explicit typing for safety and clarity:
@@ -42,10 +42,8 @@ fn main() -> void {
 FastLang allows you to build custom types with extreme precision using the `scope` syntax. You can enable specific capabilities and handle initialization:
 
 ```rust
-scope DataBuffer -> {
-    type -> custom;
+custom DataBuffer -> {
     enable [index_access, length, private, public, constructor];
-    
     private -> {
         int(32) size;
         int(32) capacity;

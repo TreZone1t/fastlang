@@ -120,9 +120,10 @@ impl SemanticAnalyzer {
                         if let Expr::Identifier(name) = target {
                             let maybe_info = self.current_env.borrow().lookup(name);
                             if let Some(mut info) = maybe_info {
-                                info.type_node = Some(BaseType::Generic(Box::new(HashMap::from(
-                                    [("T".to_string(), BaseType::from_str(&expr_type))],
-                                ))));
+                                info.type_node =
+                                    Some(BaseType::Generic(Box::new(vec![BaseType::from_str(
+                                        expr_type.as_str(),
+                                    )])));
                                 self.current_env.borrow_mut().update(name, info);
                             }
                         }
@@ -274,8 +275,8 @@ impl SemanticAnalyzer {
                 self.active_flags.retain(|f| f != "+has_break");
                 self.leave_scope();
             }
-            Stmt::DelStmt(expr) => {
-                self.visit_expression(expr)?;
+            Stmt::DelStmt { target, is_array } => {
+                self.visit_expression(target)?;
             }
             Stmt::ForStmt {
                 init,

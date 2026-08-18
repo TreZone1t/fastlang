@@ -1,3 +1,4 @@
+use crate::backend::codegen::stmt;
 use crate::frontend::lexer::token::TokenKind;
 use crate::frontend::parser::ast::*;
 use crate::frontend::parser::parser::Parser;
@@ -16,7 +17,7 @@ impl Parser {
             }
             TokenKind::Import => self.parse_import_stmt().map(Stmt::Declaration),
             TokenKind::Export => self.parse_exported_stmt().map(Stmt::Declaration),
-            TokenKind::Const
+            TokenKind::Const => self.parse_const().map(Stmt::Declaration),
             | TokenKind::TypeInt
             | TokenKind::TypeFloat
             | TokenKind::TypeChar
@@ -90,7 +91,8 @@ impl Parser {
         match result {
             Ok(stmt) => Ok(Some(stmt)),
             Err(err) => {
-                    let err_str = format!("{}", err); let err_msg: String = if err_str.starts_with("Syntax Error:") {
+                let err_str = format!("{}", err);
+                let err_msg: String = if err_str.starts_with("Syntax Error:") {
                     err_str.clone()
                 } else {
                     format!("Syntax Error: {}", err_str)
@@ -144,7 +146,41 @@ impl Parser {
             imports,
         })
     }
+    pub(crate) fn parse_const(&mut self) -> Result<Decl, String> {
+        self.advance(); // consume 'const'
 
+        // هنا بنشيل الـ .map(Stmt::Declaration) ونستخدم الـ ? عشان يفضل نوع المتغير Decl
+        let mut decl = match &self.peek().kind {
+            TokenKind::TypeInt
+            | TokenKind::TypeFloat
+            | TokenKind::TypeChar
+            | TokenKind::TypeBool
+            | TokenKind::TypeType => self.parse_var_decl(true, false)?,
+            TokenKind::TypeName => self.parse_name()?,
+            _ => return Err("Syntax Error: Expected variable declaration".to_string()),
+        };
+
+        // تصليح كلمة match وتصليح الحقول لتطابق الـ Decl والـ editability بحرف سمول
+        match &mut decl {
+            Decl::VarDecl {
+                ref mut editability,
+                ..
+            } => {
+                *editability = Editability::NotEditable;
+            }
+            Decl::ArrayDecl {
+                ref mut editability,
+                ..
+            } => {
+                *editability = Editability::NotEditable;
+            }
+            _ => {
+                return Err("Syntax Error: Only variables can be declared as const".to_string());
+            }
+        }
+
+        Ok(decl)
+    }
     pub(crate) fn parse_exported_stmt(&mut self) -> Result<Decl, String> {
         self.advance(); // consume 'export'
 
@@ -200,18 +236,8 @@ impl Parser {
         is_global: bool,
         no_semi: bool,
     ) -> Result<Decl, String> {
-        let is_const = if self.peek().kind == TokenKind::Const {
-            self.advance();
-            true
-        } else {
-            false
-        };
         let var_meta: VarMetadata;
-        let (type_node, is_pointer) = self.parse_type_with_pointer()?;
-        // If a `*` was found, this is a raw pointer declaration
-        if is_pointer {
-            return self.parse_pointer_decl(type_node);
-        }
+        let type_name = self.parse_type()?;
         let name = self.get_identifier("Expected variable name after type")?;
         let mut size = None;
         if self.peek().kind == TokenKind::LBracket {
@@ -232,72 +258,88 @@ impl Parser {
         }
 
         if !no_semi {
-            self.consume(
-                TokenKind::SemiColon,
-                "Expected ';' after variable declaration",
-            )?;
+            // ! fix it
+            if self.peek().kind == TokenKind::SemiColon {
+                println!("DEBUG: parse_var_decl: {:?}", self.peek().kind);
+                self.advance();
+            }
         }
+        let is_heaped = if let BaseType::Pointer(_) = type_name {
+            true
+        } else {
+            false
+        };
         if size.is_none() {
             var_meta = VarMetadata {
                 name: name.clone(),
-                type_node: type_node.clone(),
+                type_node: type_name.clone(),
                 visibility: if is_global {
                     Visibility::Public
                 } else {
                     Visibility::Private
                 },
-                editability: if is_const {
-                    Editability::NotEditable
+                editability: Editability::Editable,
+                scope: if is_global {
+                    ScopeType::Global
                 } else {
-                    Editability::Editable
+                    ScopeType::Local
                 },
+                is_heaped: is_heaped,
                 is_array: false,
             };
-            if is_global {
-                self.var_metadata.insert(name.clone(), var_meta);
+            self.var_metadata.insert(name.clone(), var_meta);
+            if is_heaped {
+                Ok(Decl::PointerDecl {
+                    name,
+                    inner_type: type_name,
+                    length: None,
+                    value,
+                })
+            } else {
+                Ok(Decl::VarDecl {
+                    visibility: Visibility::Private,
+                    editability: Editability::Editable,
+                    type_node: type_name,
+                    name,
+                    value,
+                })
             }
-            Ok(Decl::VarDecl {
-                visibility: Visibility::Private,
-                editability: if is_const {
-                    Editability::NotEditable
-                } else {
-                    Editability::Editable
-                },
-                type_node: type_node,
-                name,
-                value,
-            })
         } else {
             var_meta = VarMetadata {
                 name: name.clone(),
-                type_node: type_node.clone(),
+                type_node: type_name.clone(),
                 visibility: if is_global {
                     Visibility::Public
                 } else {
                     Visibility::Private
                 },
-                editability: if is_const {
-                    Editability::NotEditable
+                editability: Editability::Editable,
+                scope: if is_global {
+                    ScopeType::Global
                 } else {
-                    Editability::Editable
+                    ScopeType::Local
                 },
+                is_heaped: is_heaped,
                 is_array: true,
             };
-            if is_global {
-                self.var_metadata.insert(name.clone(), var_meta);
+            self.var_metadata.insert(name.clone(), var_meta);
+            if is_heaped {
+                Ok(Decl::PointerDecl {
+                    name,
+                    inner_type: type_name,
+                    length: size.clone(),
+                    value,
+                })
+            } else {
+                Ok(Decl::ArrayDecl {
+                    visibility: Visibility::Private,
+                    editability: Editability::Editable,
+                    type_node: type_name,
+                    name,
+                    length: size.unwrap(),
+                    value,
+                })
             }
-            Ok(Decl::ArrayDecl {
-                visibility: Visibility::Private,
-                editability: if is_const {
-                    Editability::NotEditable
-                } else {
-                    Editability::Editable
-                },
-                type_node: type_node,
-                name,
-                length: size.unwrap(),
-                value,
-            })
         }
     }
 
@@ -306,22 +348,18 @@ impl Parser {
     // ====================================================
 
     // --- set <target> -> <value>; -------------------------
-    // target: identifier  أو  property chain (obj.field.sub)
     pub(crate) fn parse_reassign_stmt(&mut self) -> Result<Stmt, String> {
         self.advance(); // 'set'
 
-        // نقرأ الـ target كعبارة (Expression)
-        // ده بيسمح بـ this.x أو arr[0] أو x
         let target = self.parse_expression()?;
 
-        // نقرأ علامة التعيين (-> أو =)
         if self.peek().kind != TokenKind::Arrow && self.peek().kind != TokenKind::Assign {
             return Err(format!(
                 "Syntax Error: Expected '->' or '=' after target in set statement at line {}, column {}",
                 self.peek().line, self.peek().column
             ));
         }
-        self.advance(); // نتخطى '->' أو '='
+        self.advance();
 
         let value = self.parse_expression()?;
         self.consume(TokenKind::SemiColon, "Expected ';' after set statement")?;
@@ -333,12 +371,10 @@ impl Parser {
     pub(crate) fn parse_if_stmt(&mut self) -> Result<Stmt, String> {
         self.advance(); // 'if'
 
-        // الشرط جوا ()
         self.consume(TokenKind::LParen, "Expected '(' after 'if'")?;
         let condition = self.parse_expression()?;
         self.consume(TokenKind::RParen, "Expected ')' after if condition")?;
 
-        // '->' اختياري قبل الـ body
         if self.peek().kind == TokenKind::Arrow {
             self.advance();
         }
@@ -348,13 +384,11 @@ impl Parser {
         let then_block = self.parse_block("if".to_string())?;
         self.consume(TokenKind::RBrace, "Expected '}' to close if body")?;
 
-        // else block — اختياري
+        // else block
         let else_block = if self.peek().kind == TokenKind::Else {
             self.advance(); // 'else'
 
-            // else if  أو  else { ... }
             if self.peek().kind == TokenKind::If {
-                // else if: نقرأها كـ IfStmt جوا else block
                 let nested = self.parse_if_stmt()?;
                 Some(vec![nested])
             } else {
@@ -377,12 +411,10 @@ impl Parser {
         })
     }
 
-    // --- loop N -> { ... }  أو  loop -> { ... } (infinite) --
+    // --- loop N -> { ... }  or  loop -> { ... } (infinite) --
     // أو  loop N -> scope_name()  /  loop -> scope_name()
     pub(crate) fn parse_loop_stmt(&mut self) -> Result<Stmt, String> {
         self.advance(); // 'loop'
-
-        // لو اللي بعده مباشرة '->' ده infinite loop
         let count = if self.peek().kind == TokenKind::Arrow {
             None
         } else {
@@ -394,14 +426,12 @@ impl Parser {
             "Expected '->' after loop count (use: loop N -> { } or loop N -> scope())",
         )?;
 
-        // '->' متبوعة بـ '{' = inline block,  غير كدة = scope call
         let body = if self.peek().kind == TokenKind::LBrace {
             self.advance(); // '{'
             let stmts = self.parse_block("loop".to_string())?;
             self.consume(TokenKind::RBrace, "Expected '}' to close loop body")?;
             EitherBlock::Inline(stmts)
         } else {
-            // scope_name(args) أو scope_name بدون أرغومنتس
             let expr = self.parse_expression()?;
             if self.peek().kind == TokenKind::SemiColon {
                 self.advance();
@@ -412,7 +442,7 @@ impl Parser {
         Ok(Stmt::LoopStmt { count, body })
     }
 
-    // --- while (cond) -> { ... }  أو  while (cond) -> scope_name() ---
+    // --- while (cond) -> { ... }  or  while (cond) -> scope_name() ---
     pub(crate) fn parse_while_stmt(&mut self) -> Result<Stmt, String> {
         self.advance(); // 'while'
         self.consume(TokenKind::LParen, "Expected '(' after 'while'")?;
@@ -421,7 +451,6 @@ impl Parser {
 
         self.consume(TokenKind::Arrow, "Expected '->' after while condition (use: while (cond) -> { } or while (cond) -> scope())")?;
 
-        // '->' متبوعة بـ '{' = inline block, غير كدة = scope call
         let body = if self.peek().kind == TokenKind::LBrace {
             self.advance(); // '{'
             let stmts = self.parse_block("while".to_string())?;
@@ -513,8 +542,16 @@ impl Parser {
     pub(crate) fn parse_del_stmt(&mut self) -> Result<Stmt, String> {
         self.advance(); // consume 'del'
         let expr = self.parse_expression()?;
+        let mut is_array = false;
+        if let Expr::Identifier(name) = &expr {
+            let var = self.var_metadata.get(name);
+            is_array = var.is_some() && var.unwrap().is_array;
+        }
         self.consume(TokenKind::SemiColon, "Expected ';' after del statement")?;
-        Ok(Stmt::DelStmt(expr))
+        Ok(Stmt::DelStmt {
+            target: expr,
+            is_array,
+        })
     }
 
     pub(crate) fn parse_for_stmt(&mut self) -> Result<Stmt, String> {

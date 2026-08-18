@@ -1,3 +1,5 @@
+use std::fs::metadata;
+
 use crate::frontend::lexer::token::TokenKind;
 use crate::frontend::parser::ast::*;
 use crate::frontend::parser::parser::Parser;
@@ -38,7 +40,7 @@ impl Parser {
 
     pub(crate) fn parse_type(&mut self) -> Result<BaseType, String> {
         let kind = self.peek().kind.clone();
-        
+
         match kind {
             // Primitives
             TokenKind::TypeInt => {
@@ -52,19 +54,41 @@ impl Parser {
                         return Err("Syntax Error: Expected integer size for type int".to_string());
                     };
                     self.consume(TokenKind::RParen, "Expected ')' after type size")?;
-                    
-                    match size {
-                        8 => Ok(BaseType::Int8),
-                        16 => Ok(BaseType::Int16),
-                        32 => Ok(BaseType::Int32),
-                        64 => Ok(BaseType::Int64),
-                        128 => Ok(BaseType::Int128),
-                        _ => Err(format!("Syntax Error: Invalid size {} for int. Allowed: 8, 16, 32, 64, 128", size)),
+                    if self.peek().kind == TokenKind::Multiply {
+                        self.advance();
+                        match size {
+                            8 => Ok(BaseType::Pointer(Box::new(BaseType::Int8))),
+                            16 => Ok(BaseType::Pointer(Box::new(BaseType::Int16))),
+                            32 => Ok(BaseType::Pointer(Box::new(BaseType::Int32))),
+                            64 => Ok(BaseType::Pointer(Box::new(BaseType::Int64))),
+                            128 => Ok(BaseType::Pointer(Box::new(BaseType::Int128))),
+                            _ => Err(format!(
+                                "Syntax Error: Invalid size {} for int. Allowed: 8, 16, 32, 64, 128",
+                                size
+                            )),
+                        }
+                    } else {
+                        match size {
+                            8 => Ok(BaseType::Int8),
+                            16 => Ok(BaseType::Int16),
+                            32 => Ok(BaseType::Int32),
+                            64 => Ok(BaseType::Int64),
+                            128 => Ok(BaseType::Int128),
+                            _ => Err(format!(
+                            "Syntax Error: Invalid size {} for int. Allowed: 8, 16, 32, 64, 128",
+                            size
+                        )),
+                        }
                     }
                 } else {
-                    Ok(BaseType::Int32) // Default to Int32
+                    if self.peek().kind == TokenKind::Multiply {
+                        self.advance();
+                        Ok(BaseType::Pointer(Box::new(BaseType::Int32)))
+                    } else {
+                        Ok(BaseType::Int32) // Default to Int32
+                    }
                 }
-            },
+            }
             TokenKind::TypeFloat => {
                 self.advance(); // consume 'float'
                 if self.peek().kind == TokenKind::LParen {
@@ -73,110 +97,202 @@ impl Parser {
                         self.advance();
                         s
                     } else {
-                        return Err("Syntax Error: Expected integer size for type float".to_string());
+                        return Err(
+                            "Syntax Error: Expected integer size for type float".to_string()
+                        );
                     };
                     self.consume(TokenKind::RParen, "Expected ')' after type size")?;
-                    
-                    match size {
-                        32 => Ok(BaseType::Float32),
-                        64 => Ok(BaseType::Float64),
-                        _ => Err(format!("Syntax Error: Invalid size {} for float. Allowed: 32, 64", size)),
+                    if self.peek().kind == TokenKind::Multiply {
+                        self.advance();
+                        match size {
+                            32 => Ok(BaseType::Pointer(Box::new(BaseType::Float32))),
+                            64 => Ok(BaseType::Pointer(Box::new(BaseType::Float64))),
+                            _ => Err(format!(
+                                "Syntax Error: Invalid size {} for float. Allowed: 32, 64",
+                                size
+                            )),
+                        }
+                    } else {
+                        match size {
+                            32 => Ok(BaseType::Float32),
+                            64 => Ok(BaseType::Float64),
+                            _ => Err(format!(
+                                "Syntax Error: Invalid size {} for float. Allowed: 32, 64",
+                                size
+                            )),
+                        }
                     }
                 } else {
-                    Ok(BaseType::Float32) // Default to Float32
+                    if self.peek().kind == TokenKind::Multiply {
+                        self.advance();
+                        Ok(BaseType::Pointer(Box::new(BaseType::Float32)))
+                    } else {
+                        Ok(BaseType::Float32) // Default to Float32
+                    }
                 }
-            },
-            TokenKind::TypeBool => { self.advance(); Ok(BaseType::Bool) },
-            TokenKind::TypeChar => { self.advance(); Ok(BaseType::Char) },
-            TokenKind::TypeVoid => { self.advance(); Ok(BaseType::Void) },
-            TokenKind::TypeError => { self.advance(); Ok(BaseType::Error) },
-            TokenKind::TypeLength => { self.advance(); Ok(BaseType::Unknown) },
-            TokenKind::TypeData => { self.advance(); Ok(BaseType::Unknown) },
-            
+            }
+            TokenKind::TypeBool => {
+                self.advance();
+                if self.peek().kind == TokenKind::Multiply {
+                    self.advance();
+                    Ok(BaseType::Pointer(Box::new(BaseType::Bool)))
+                } else {
+                    Ok(BaseType::Bool)
+                }
+            }
+            TokenKind::TypeChar => {
+                self.advance();
+                if self.peek().kind == TokenKind::Multiply {
+                    self.advance();
+                    Ok(BaseType::Pointer(Box::new(BaseType::Char)))
+                } else {
+                    Ok(BaseType::Char)
+                }
+            }
+            TokenKind::TypeVoid => {
+                self.advance();
+                if self.peek().kind == TokenKind::Multiply {
+                    self.advance();
+                    Ok(BaseType::Pointer(Box::new(BaseType::Void)))
+                } else {
+                    Ok(BaseType::Void)
+                }
+            }
+            TokenKind::TypeError => {
+                self.advance();
+                if self.peek().kind == TokenKind::Multiply {
+                    self.advance();
+                    return Err(format!("Syntax Error: Cannot use pointers with error type"));
+                }
+                Ok(BaseType::Error)
+            }
+
             TokenKind::TypeName => {
                 self.advance();
-                Ok(BaseType::Name(Box::new(BaseType::Unknown)))
-            },
+                let mut name_type = BaseType::Unknown;
+                if self.peek().kind == TokenKind::Less {
+                    self.advance();
+                    let mut generics = Vec::new();
+                    self.parse_generic_list(&mut generics)?;
+                    self.consume(TokenKind::Greater, "Expected '>' after name type parameter")?;
+                    name_type = BaseType::Generic(Box::new(generics));
+                }
+                Ok(BaseType::Name(Box::new(name_type)))
+            }
             TokenKind::TypeType => {
                 self.advance();
+                if self.peek().kind == TokenKind::Multiply {
+                    self.advance();
+                    return Err(format!("Syntax Error: Cannot use pointers with  type"));
+                }
                 Ok(BaseType::Type(Box::new(BaseType::Unknown)))
-            },
-            
+            }
+
             TokenKind::Identifier(n) => {
                 self.advance();
-                
+
                 // Parse generics if any
+                let mut is_pointer = false;
                 let mut generics = Vec::new();
                 if self.peek().kind == TokenKind::Less {
                     self.advance(); // '<'
                     self.parse_generic_list(&mut generics)?;
                 }
-                
+                if self.peek().kind == TokenKind::Multiply {
+                    self.advance();
+                    is_pointer = true;
+                }
                 // Lookup in metadata
                 if let Some(meta) = self.metadata.get(&n).cloned() {
                     let fields = Box::new(meta.fields.clone());
                     let methods = Box::new(meta.methods.clone());
-                    
+
                     if meta.is_enum {
-                        Ok(BaseType::Enum {
-                            name: n.clone(),
-                            variants: meta.variants.unwrap_or(Vec::new()),
-                            methods,
-                            generics,
-                        })
+                        if is_pointer {
+                            Ok(BaseType::Pointer(Box::new(BaseType::Enum {
+                                name: n.clone(),
+                                variants: meta.variants.unwrap_or(Vec::new()),
+                                methods,
+                                generics,
+                            })))
+                        } else {
+                            Ok(BaseType::Enum {
+                                name: n.clone(),
+                                variants: meta.variants.unwrap_or(Vec::new()),
+                                methods,
+                                generics,
+                            })
+                        }
                     } else {
                         if meta.constructor.is_some() {
-                            Ok(BaseType::Class {
-                                name: n.clone(),
-                                fields,
-                                methods,
-                                constructor: meta.constructor,
-                                generics,
-                            })
+                            if is_pointer {
+                                Ok(BaseType::Pointer(Box::new(BaseType::Class {
+                                    name: n.clone(),
+                                    fields,
+                                    methods,
+                                    constructor: meta.constructor,
+                                    generics,
+                                })))
+                            } else {
+                                Ok(BaseType::Class {
+                                    name: n.clone(),
+                                    fields,
+                                    methods,
+                                    constructor: meta.constructor,
+                                    generics,
+                                })
+                            }
                         } else {
-                            Ok(BaseType::Custom {
-                                name: n.clone(),
-                                fields,
-                                methods,
-                                generics,
-                                params: meta.params,
-                            })
+                            if is_pointer {
+                                Ok(BaseType::Pointer(Box::new(BaseType::Custom {
+                                    name: n.clone(),
+                                    fields,
+                                    methods,
+                                    generics,
+                                    params: meta.params,
+                                })))
+                            } else {
+                                Ok(BaseType::Custom {
+                                    name: n.clone(),
+                                    fields,
+                                    methods,
+                                    generics,
+                                    params: meta.params,
+                                })
+                            }
                         }
                     }
                 } else {
                     // Unknown custom type at parse time
-                    Ok(BaseType::Custom {
-                        name: n.clone(),
-                        fields: Box::new(std::collections::HashMap::new()),
-                        methods: Box::new(std::collections::HashMap::new()),
-                        generics,
-                        params: Vec::new(),
-                    })
+                    if is_pointer {
+                        Ok(BaseType::Pointer(Box::new(BaseType::Custom {
+                            name: n.clone(),
+                            fields: Box::new(std::collections::HashMap::new()),
+                            methods: Box::new(std::collections::HashMap::new()),
+                            generics,
+                            params: Vec::new(),
+                        })))
+                    } else {
+                        Ok(BaseType::Custom {
+                            name: n.clone(),
+                            fields: Box::new(std::collections::HashMap::new()),
+                            methods: Box::new(std::collections::HashMap::new()),
+                            generics,
+                            params: Vec::new(),
+                        })
+                    }
                 }
-            },
-            
-            _ => {
-                Err(format!(
-                    "Syntax Error: Expected a type, found '{}'. at line {}, column {}",
-                    kind.as_str(),
-                    self.peek().line,
-                    self.peek().column
-                ))
             }
+
+            _ => Err(format!(
+                "Syntax Error: Expected a type, found '{}'. at line {}, column {}",
+                kind.as_str(),
+                self.peek().line,
+                self.peek().column
+            )),
         }
     }
 
-    /// Like `parse_type` but also handles a trailing `*` to produce `BaseType::Pointer(T)`.
-    /// Used when parsing declarations like `int(32)* x` or `float(64)* arr[N]`.
-    pub(crate) fn parse_type_with_pointer(&mut self) -> Result<(BaseType, bool), String> {
-        let base = self.parse_type()?;
-        if self.peek().kind == TokenKind::Multiply {
-            self.advance(); // consume '*'
-            Ok((BaseType::Pointer(Box::new(base)), true))
-        } else {
-            Ok((base, false))
-        }
-    }
     pub(crate) fn parse_expression(&mut self) -> Result<Expr, String> {
         self.parse_expr(0)
     }
@@ -184,9 +300,9 @@ impl Parser {
     pub(crate) fn parse_expr(&mut self, min_bp: u8) -> Result<Expr, String> {
         let mut lhs = self.parse_prefix()?;
 
-        // --- Infix / Postfix: استمر طالما في operators بقوة كافية ---
+        // --- Infix / Postfix
         loop {
-            // نقطة الوصول (postfix): . و ()
+            //
             if let Some(postfix_bp) = self.postfix_binding_power() {
                 if postfix_bp < min_bp {
                     break;
@@ -196,13 +312,12 @@ impl Parser {
                 continue;
             }
 
-            // operator وسطي (infix): +, -, *, etc.
             if let Some((left_bp, right_bp)) = self.infix_binding_power() {
                 if left_bp < min_bp {
                     break;
                 }
                 let op_str = self.current_op_str();
-                self.advance(); // نتخطى الـ operator
+                self.advance();
                 let rhs = self.parse_expr(right_bp)?;
 
                 lhs = Expr::BinaryOp {
@@ -372,73 +487,70 @@ impl Parser {
             //   new int(32)[1,2,3,4,5]  → ArrayAllocate
             TokenKind::New => {
                 self.advance(); // consume 'new'
-
-                // Check if the next token is a primitive type keyword → ArrayAllocate
-                let is_prim_type = matches!(
-                    self.peek().kind,
-                    TokenKind::TypeInt
-                        | TokenKind::TypeFloat
-                        | TokenKind::TypeChar
-                        | TokenKind::TypeBool
-                        | TokenKind::TypeVoid
-                );
-
-                if is_prim_type {
-                    // Parse the element type (e.g. int(32))
-                    let type_node = self.parse_type()?;
-
-                    // Expect '[' for array allocation
-                    if self.peek().kind == TokenKind::LBracket {
-                        self.advance(); // '['
-                        // elements / initializer list
-                        let mut elements = Vec::new();
-                        if self.peek().kind != TokenKind::RBracket {
-                            elements.push(self.parse_expr(0)?);
-                            while self.peek().kind == TokenKind::Comma {
-                                self.advance();
+                if self.is_type_token(&self.peek().kind) {
+                    let type_name = self.parse_type()?;
+                    let mut target = Expr::Identifier("__default__".to_string()); //= self.parse_expr(0)?;
+                    if self.peek().kind == TokenKind::LBracket
+                        || self.peek().kind == TokenKind::LParen
+                    {
+                        if TokenKind::LBracket == self.peek().kind {
+                            self.advance();
+                            let mut elements = Vec::new();
+                            if self.peek().kind != TokenKind::RBracket {
                                 elements.push(self.parse_expr(0)?);
+
+                                while self.peek().kind == TokenKind::Comma {
+                                    self.advance();
+                                    elements.push(self.parse_expr(0)?);
+                                }
+                                self.consume(
+                                    TokenKind::RBracket,
+                                    "Expected ']' to close array literal",
+                                )?;
+                                target = Expr::ArrayLiteral(elements);
                             }
                         }
-                        self.consume(TokenKind::RBracket, "Expected ']' to close array allocation")?;
-
-                        let length = Expr::LiteralInt(elements.len() as i64);
-                        let init   = Expr::ArrayLiteral(elements);
-                        return Ok(Expr::ArrayAllocate {
-                            type_node,
-                            size: Box::new(length.clone()),
-                            length: Some(Box::new(init)),
-                        });
+                        if TokenKind::LParen == self.peek().kind {
+                            self.advance(); // نتخطى '{'
+                            let stmts = self.parse_block("object".to_string())?;
+                            self.consume(TokenKind::RBrace, "Expected '}' after object literal")?;
+                            target = Expr::ObjectLiteral(stmts);
+                        }
+                        if target == Expr::Identifier("__default__".to_string()) {
+                            target = self.parse_expr(0)?;
+                        }
+                        if self.peek().kind == TokenKind::SemiColon {
+                            self.advance();
+                        }
+                        Ok(Expr::New {
+                            type_node: type_name,
+                            target: Box::new(target),
+                        })
                     } else {
-                        // new int(32)(args)?  — unusual but handle gracefully
-                        return Ok(Expr::ArrayAllocate {
-                            type_node,
-                            size: Box::new(Expr::LiteralInt(0)),
-                            length: None,
-                        });
-                    }
-                }
-
-                // Otherwise: new SomeIdentifier(args)
-                let target = self.parse_prefix()?;
-                let mut args = Vec::new();
-                if self.peek().kind == TokenKind::LParen {
-                    self.advance();
-                    if self.peek().kind != TokenKind::RParen {
-                        loop {
-                            args.push(self.parse_expression()?);
-                            if self.peek().kind == TokenKind::Comma {
-                                self.advance();
-                            } else {
-                                break;
-                            }
+                        if let TokenKind::Identifier(ref ident_name) = self.peek().kind {
+                            let type_name_str = ident_name.clone();
+                            self.metadata.get(&type_name_str).ok_or_else(|| {
+                                format!(
+                                    "Syntax Error: Unknown type '{}' at line {}, column {}",
+                                    type_name_str,
+                                    self.peek().line,
+                                    self.peek().column
+                                )
+                            })?;
+                            todo!("new T(args) or new T[args]");
+                        } else {
+                            return Err(format!(
+                                "Syntax Error: Expected type name or '(' after 'new', found '{}'",
+                                self.peek().kind.as_str()
+                            ));
                         }
                     }
-                    self.consume(TokenKind::RParen, "Expected ')' after new arguments")?;
+                } else {
+                    return Err(format!(
+                        "Syntax Error: Expected type name or '(' after 'new', found '{}'",
+                        self.peek().kind.as_str()
+                    ));
                 }
-                Ok(Expr::Instantiate {
-                    target: Box::new(target),
-                    args,
-                })
             }
 
             // --- Copy: copy Target ---
@@ -461,7 +573,7 @@ impl Parser {
 
             // --- Grouped: (expr) ---
             TokenKind::LParen => {
-                self.advance(); // نتخطى '('
+                self.advance(); // (
                 let inner = self.parse_expr(0)?;
                 self.consume(
                     TokenKind::RParen,
@@ -472,19 +584,18 @@ impl Parser {
 
             // --- Object Literals: { stmt; stmt; } ---
             TokenKind::LBrace => {
-                self.advance(); // نتخطى '{'
+                self.advance(); //{
                 let stmts = self.parse_block("object".to_string())?;
                 self.consume(TokenKind::RBrace, "Expected '}' after object literal")?;
                 Ok(Expr::ObjectLiteral(stmts))
             }
-
             // --- Keywords used as identifier expressions (e.g. `flag && check`) ---
             other => {
                 //debug
-                print!("DEBUG: Unexpected token '{}' in expression", other.as_str());
+                print!("DEBUG: Unexpected token '{:?}' in expression", other);
                 return Err(format!(
-                    "Syntax Error: Unexpected token '{}' in expression",
-                    other.as_str()
+                    "Syntax Error: Unexpected token '{:?}' in expression",
+                    other
                 ));
             }
         }
@@ -614,10 +725,6 @@ impl Parser {
         }
     }
 
-    /// يرجع (left_bp, right_bp) للـ infix operators.
-    /// left_bp   = الـ binding power للجانب الأيسر (تحديد ما إذا كان الـ operator يسرق الـ lhs).
-    /// right_bp  = الـ binding power اللي بنمرره للـ parse_expr الـ recursive للجانب الأيمن.
-    /// None لو اللي قدامنا مش infix operator.
     pub(crate) fn infix_binding_power(&self) -> Option<(u8, u8)> {
         match &self.peek().kind {
             TokenKind::Or => Some((1, 2)),  // left-associative

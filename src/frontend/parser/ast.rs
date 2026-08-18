@@ -69,7 +69,7 @@ pub enum BaseType {
         params: Vec<BaseType>,
         return_type: Box<BaseType>,
     },
-    Generic(Box<HashMap<String, BaseType>>),
+    Generic(Box<Vec<BaseType>>),
 
     Unknown,
     Error,
@@ -144,6 +144,8 @@ pub struct VarMetadata {
     pub type_node: BaseType,
     pub visibility: Visibility,
     pub editability: Editability,
+    pub scope: ScopeType,
+    pub is_heaped: bool, // true if the variable is a heaped pointer
     pub is_array: bool,
 }
 #[derive(Debug, Clone, PartialEq)]
@@ -181,6 +183,8 @@ pub enum ScopeType {
     // Case, //todo : the same
     Switch,
     Enum,
+    Local,
+    Global,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
@@ -476,6 +480,10 @@ pub enum Expr {
     Copy {
         target: Box<Expr>,
     },
+    New {
+        type_node: BaseType,
+        target: Box<Expr>,
+    },
     TypeOf {
         target: Box<Expr>,
     },
@@ -649,10 +657,10 @@ pub enum Decl {
     /// access_mode: ReadOnly (=) or ReadWrite (modify)
     NameDecl {
         name: String,
-        inner_type: BaseType,     // the type the name points to (Unknown = inferred)
-        target: Expr,             // the value or variable being referenced
-        access_mode: AccessMode,  // ReadOnly | ReadWrite
-        is_heap: bool,            // true if target came from `new` (heap-allocated)
+        inner_type: BaseType, // the type the name points to (Unknown = inferred)
+        target: Expr,         // the value or variable being referenced
+        access_mode: AccessMode, // ReadOnly | ReadWrite
+        is_heap: bool,        // true if target came from `new` (heap-allocated)
     },
 
     /// `T* x[N] = new T[...]`  or  `T* x = val`
@@ -660,7 +668,7 @@ pub enum Decl {
     PointerDecl {
         name: String,
         inner_type: BaseType,
-        length: Option<Expr>,  // if it's a pointer array
+        length: Option<Expr>, // if it's a pointer array
         value: Expr,
     },
 }
@@ -754,7 +762,10 @@ pub enum Stmt {
         iterable: Expr,
         body: EitherBlock,
     },
-    DelStmt(Expr),
+    DelStmt {
+        target: Expr,
+        is_array: bool,
+    },
 }
 
 /// جسم الـ loop/while — ممكن يكون:

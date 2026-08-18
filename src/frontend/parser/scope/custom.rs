@@ -415,7 +415,9 @@ impl Parser {
                     type_node: inferred_base_type,
                     visibility: Visibility::Public,
                     editability: Editability::Editable,
+                    scope: ScopeType::Custom,
                     is_array: false,
+                    is_heaped: false,
                 },
             );
         }

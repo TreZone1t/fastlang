@@ -292,10 +292,16 @@ impl Parser {
                     self.advance();
                     val = Some(self.parse_expression()?);
                 }
-                self.consume(
-                    TokenKind::SemiColon,
-                    "Expected ';' after variable declaration",
-                )?;
+                // ! fix it
+                if self.peek().kind == TokenKind::SemiColon {
+                    println!("DEBUG: parse_field_block: {:?}", self.peek().kind);
+                    self.advance();
+                }
+                let is_heaped = if let BaseType::Pointer(_) = type_name {
+                    true
+                } else {
+                    false
+                };
                 block.push(Decl::VarDecl {
                     visibility: field_type.clone(),
                     editability: Editability::Editable,
@@ -318,16 +324,22 @@ impl Parser {
                         .as_str(),
                     )?;
                     let type_ = BaseType::from_str(&type_name);
-                    metadata.fields.insert(var_name.clone(), type_);
+                    metadata.fields.insert(var_name.clone(), type_.clone());
                     let mut val: Option<Expr> = None;
                     if self.peek().kind == TokenKind::Arrow {
                         self.advance();
                         val = Some(self.parse_expression()?);
-                        self.consume(
-                            TokenKind::SemiColon,
-                            "Expected ';' after variable declaration",
-                        )?;
+                        // ! fix it
+                        if self.peek().kind == TokenKind::SemiColon {
+                            println!("DEBUG: parse_field_block: {:?}", self.peek().kind);
+                            self.advance();
+                        }
                     }
+                    let is_heaped = if let BaseType::Pointer(_) = type_.clone() {
+                        true
+                    } else {
+                        false
+                    };
                     block.push(Decl::VarDecl {
                         visibility: field_type,
                         editability: Editability::Editable,
@@ -355,10 +367,7 @@ impl Parser {
         Ok(block)
     }
     // <T, U, V, W, X, Y, Z>
-    pub(crate) fn parse_generics(
-        &mut self,
-        generics: &mut Vec<BaseType>,
-    ) -> Result<(), String> {
+    pub(crate) fn parse_generics(&mut self, generics: &mut Vec<BaseType>) -> Result<(), String> {
         if generics.is_empty() {
             generics.clear();
         }

@@ -190,6 +190,23 @@ impl CodeGenerator {
                     format!("new {}[{}]", cpp_type, size_code)
                 }
             }
+            Expr::New { type_node, target } => {
+                let cpp_type = match type_node {
+                    BaseType::Int8 => "int8_t",
+                    BaseType::Int16 => "int16_t",
+                    BaseType::Int32 => "int32_t",
+                    BaseType::Int64 => "int64_t",
+                    BaseType::Int128 => "__int128",
+                    BaseType::Float32 => "float",
+                    BaseType::Float64 => "double",
+                    BaseType::Char => "char",
+                    BaseType::Bool => "bool",
+                    _ => "auto",
+                };
+                let target_code = self.visit_expression(target);
+                let len = target_code.split(',').count();
+                format!("new {}[{}]{}", cpp_type, len, target_code)
+            }
             _ => "/* unimplemented expr */".to_string(),
         }
     }

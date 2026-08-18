@@ -123,6 +123,16 @@ impl CodeGenerator {
             self.emit("    return os << e.what();");
             self.emit("}");
             self.emit("");
+            self.emit("template <typename T>");
+            self.emit("inline auto __fastlang_ptr(T&& val) {");
+            self.emit("using Decayed = std::decay_t<T>;");
+            self.emit("if constexpr (std::is_pointer_v<Decayed> || std::is_array_v<std::remove_reference_t<T>>) {");
+            self.emit("    return val;");
+            self.emit("} else {");
+            self.emit("    return &val;");
+            self.emit("}");
+            self.emit("}");
+            self.emit("");
         }
 
         // Pre-pass for Blueprints and Impls
@@ -161,6 +171,7 @@ impl CodeGenerator {
                                 BaseType::Char => "char".to_string(),
                                 BaseType::Bool => "bool".to_string(),
                                 BaseType::Array(b) => b.as_str(),
+                                BaseType::Pointer(p) => format!("{}*", p.as_str()),
                                 _ => "auto".to_string(),
                             },
                             _ => "auto".to_string(),

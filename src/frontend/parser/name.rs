@@ -140,8 +140,13 @@ impl Parser {
         self.advance(); // consume `=` or `->`
 
         // Check for `modify` keyword → ReadWrite
-        let access_mode = if self.peek().kind == TokenKind::Modify {
-            self.advance(); // consume `modify`
+        let access_mode = if self.peek().kind == TokenKind::Modify
+            || self.peek().kind == TokenKind::New
+            || self.peek().kind == TokenKind::Copy
+        {
+            if self.peek().kind == TokenKind::Modify {
+                self.advance(); // consume `modify`
+            }
             AccessMode::ReadWrite
         } else {
             AccessMode::ReadOnly
@@ -151,10 +156,13 @@ impl Parser {
         let target = self.parse_expression()?;
 
         // Determine if heap-allocated (target came from `new`)
-        let is_heap = matches!(&target, Expr::ArrayAllocate { .. } | Expr::Instantiate { .. });
-
-        self.consume(TokenKind::SemiColon, "Expected ';' after name declaration")?;
-
+        let is_heap = matches!(
+            &target,
+            Expr::ArrayAllocate { .. } | Expr::Instantiate { .. }
+        );
+        if (self.peek().kind == TokenKind::SemiColon) {
+            self.advance();
+        }
         Ok(Decl::NameDecl {
             name: var_name,
             inner_type,
@@ -168,50 +176,5 @@ impl Parser {
     /// Returns the BaseType to be used for that parameter.
     pub(crate) fn parse_name_in_param(&mut self) -> Result<(), String> {
         Ok(())
-    }
-
-    // ====================================================================
-    // Raw pointer declarations  `T* x[N] = new T[...]`
-    // ====================================================================
-    //
-    // Grammar:
-    //   pointer_decl ::= type `*` IDENT [`[` expr `]`] (`=` | `->`) expr `;`
-    //
-    // Called from parse_var_decl when a `*` is detected after the type.
-    // ====================================================================
-    pub(crate) fn parse_pointer_decl(&mut self, inner_type: BaseType) -> Result<Decl, String> {
-        // variable name
-        let var_name = self.get_identifier("Expected variable name after pointer type")?;
-
-        // Optional array length: `x[N]`
-        let length = if self.peek().kind == TokenKind::LBracket {
-            self.advance(); // '['
-            let len_expr = self.parse_expression()?;
-            self.consume(TokenKind::RBracket, "Expected ']' after pointer array size")?;
-            Some(len_expr)
-        } else {
-            None
-        };
-
-        // `=` or `->`
-        let op = self.peek().kind.clone();
-        if op != TokenKind::Assign && op != TokenKind::Arrow {
-            return Err(format!(
-                "Syntax Error: Expected '=' or '->' after pointer declaration '{}', found '{}'",
-                var_name,
-                op.as_str()
-            ));
-        }
-        self.advance();
-
-        let value = self.parse_expression()?;
-        self.consume(TokenKind::SemiColon, "Expected ';' after pointer declaration")?;
-
-        Ok(Decl::PointerDecl {
-            name: var_name,
-            inner_type,
-            length,
-            value,
-        })
     }
 }
