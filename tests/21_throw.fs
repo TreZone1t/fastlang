@@ -1,16 +1,6 @@
-/*
 
-Error: Syntax Error: Unexpected token 'error' in expression
-  --> line 1, column 1
-   |
- 1 | //1. using handle to throw an error
-   | ^
-   |
-Syntax Error: Unexpected token 'error' in expression
-*/
 //1. using handle to throw an error
-scope IHaveThrow -> {
-    type -> custom;
+custom IHaveThrow -> {
     enable [handle , statement , call, error];
     statement -> {
         throw new error("this is an error");

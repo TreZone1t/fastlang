@@ -1,8 +1,7 @@
 // 02_scopes.fs
 // Test custom scopes, flags, settings, and constructors
 
-scope DataBuffer -> {
-    type -> custom;
+custom DataBuffer -> {
     enable [index_access, length , private , public , constructor , operators , data];
     private -> {
     int(32) size;
@@ -10,7 +9,7 @@ scope DataBuffer -> {
     }
     // Constructor
     constructor -> {
-    init(int(32) size) -> {
+    init(size : int(32)) -> {
     this.size -> size;
     this.capacity -> size;
        }
@@ -22,7 +21,7 @@ scope DataBuffer -> {
         }
     }
     handle -> {
-        fn index_access(int(32) index) -> int(32) {
+        fn index_access(index : int(32)) -> int(32) {
             if (index < this.size) {
                 return this.data[index];
             } else {
@@ -32,7 +31,7 @@ scope DataBuffer -> {
         fn length() -> int(32) {
             return this.size;
         }
-        fn add(int(32) value) -> int(32) {
+        fn add(value : int(32)) -> int(32) {
             if (this.size < this.capacity) {
                 this.data[this.size] -> value;
                 this.size -> this.size + 1;

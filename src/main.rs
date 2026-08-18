@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::rc::Rc;
 
+use crate::backend::*;
 use crate::frontend::parser::ast::*;
 use crate::middle_end::semantic::analyzer::SemanticAnalyzer;
 use crate::middle_end::semantic::environment::Environment;
-
 pub mod backend;
 pub mod frontend;
 pub mod loader;
@@ -185,7 +185,7 @@ fn main() {
         aot_backend.finalize(&out_path);
         */
         } else {
-            let mut cl_backend = crate::backend::codegen::cranelift::CraneliftBackend::new();
+            let mut cl_backend = cranelift::CraneliftBackend::new();
             cl_backend.compile_module(&ir_module);
             cl_backend.finalize();
             println!("Cranelift JIT execution completed!");
@@ -196,19 +196,19 @@ fn main() {
     println!("\n=== Code Generation (C++) ===");
     let mut final_cpp = String::new();
 
-    let mut header_gen = crate::backend::codegen::generator::CodeGenerator::new();
+    let mut header_gen = cpp::generator::CodeGenerator::new();
     final_cpp.push_str(&header_gen.generate(&vec![], true, false));
 
     for module in &program.modules {
         let cpp_namespace = module.name.replace("/", "_");
         final_cpp.push_str(&format!("namespace {} {{\n", cpp_namespace));
-        let mut codegen = crate::backend::codegen::generator::CodeGenerator::new();
+        let mut codegen = cpp::generator::CodeGenerator::new();
         let module_cpp = codegen.generate(&module.ast, false, false);
         final_cpp.push_str(&module_cpp);
         final_cpp.push_str(&format!("\n}} // namespace {}\n\n", cpp_namespace));
     }
 
-    let mut main_codegen = crate::backend::codegen::generator::CodeGenerator::new();
+    let mut main_codegen = cpp::generator::CodeGenerator::new();
     let main_cpp = main_codegen.generate(&program.main_ast, false, true);
     final_cpp.push_str(&main_cpp);
 

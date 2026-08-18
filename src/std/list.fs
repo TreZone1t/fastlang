@@ -2,10 +2,8 @@
 // using the scope system to define behavior
 use std;
 
-export scope LinkedList -> {
+export custom List<T> -> {
     enable [oop, custom_index_access, handle, custom_generic, length , custom_constructor];
-    type -> custom;
-    generic -> { T;}
     private -> {
         name head = null;
         int(32) length = 0;
@@ -45,7 +43,7 @@ export scope LinkedList -> {
           return result;
         }
       }
-      fn extend_from_array(arr: array<T>) -> void {
+      fn extend_from_array(arr: T[]) -> void {
         for (let int(32) i = 0; i < arr.size; i++) -> {
           this.push(arr[i]);
         }
@@ -56,8 +54,8 @@ export scope LinkedList -> {
       // LinkedList<int(32)> li -> [1,2,3];
       //before we had to do this
       // LinkedList<int(32)> li -> new LinkedList([1,2,3]);
-      fn custom_constructor(Array<T> arr) -> void {
-        constructor.init(arr);
+      fn custom_constructor(   arr: T[]) -> void { //todo: change the name to arrow_op
+        constructor.init(arr); //todo: change the way to call the constructor to only the constructor keyword not with init
       }
       fn index_access(index: int(32)) -> Option<T> {
         if (index < 0) {
@@ -84,7 +82,7 @@ export scope LinkedList -> {
       }
     }
     constructor -> {
-    init(Array<T> arr) -> {
+    init(arr: T[]) -> {
         this.extend_from_array(arr);
     }
     }

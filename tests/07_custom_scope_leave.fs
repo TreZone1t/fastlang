@@ -1,6 +1,5 @@
 // Valid: complete custom scope with label , goto , leave , call , data
-scope recursion_chaos -> {
-    type -> custom;
+custom recursion_chaos -> {
     enable [label,goto , leave , call , data];
     add label -> @start;
     add label -> @process;

@@ -168,9 +168,12 @@ impl Parser {
                 }
             } else {
                 print!("DEBUG: Invalid field found : {} , that is not allow in the array typed scope to use it \n\t - use custom typed scope with enable some setting it will work if it valid" , t.as_str());
-                return Err(
-                    ("Syntax Error: Invalid field  declaration at line {}, column {}").to_string(),
-                );
+                return Err(format!(
+                    "Syntax Error: Invalid field ''{:?}'' declaration at line {}, column {}",
+                    t,
+                    self.peek().line,
+                    self.peek().column
+                ));
             }
         }
         //first we need to warn the user if he is forget to use a setting he added or a handle method he added

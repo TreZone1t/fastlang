@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::frontend::lexer::token::TokenKind;
+use crate::frontend::lexer::token::TokenKind::{self, For};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Visibility {
@@ -30,7 +30,10 @@ pub enum BaseType {
     Name(Box<BaseType>),
     Pointer(Box<BaseType>),
     Type(Box<BaseType>),
-    Array(Box<BaseType>),
+    Array {
+        base_type: Box<BaseType>,
+        size: Box<Option<Expr>>,
+    },
 
     Custom {
         name: String,
@@ -91,7 +94,13 @@ impl BaseType {
             BaseType::Name(t) => format!("name<{}>", t.as_str()),
             BaseType::Pointer(t) => format!("pointer<{}>", t.as_str()),
             BaseType::Type(t) => format!("type<{}>", t.as_str()),
-            BaseType::Array(t) => format!("array<{}>", t.as_str()),
+            BaseType::Array { base_type, size } => {
+                format!(
+                    "array<{}[{}]>",
+                    base_type.as_str(),
+                    size.clone().unwrap().as_str()
+                )
+            }
             BaseType::Custom { name, .. } => format!("custom<{}>", name),
             BaseType::Struct { name, .. } => format!("struct<{}>", name),
             BaseType::Class { name, .. } => format!("class<{}>", name),
@@ -119,7 +128,6 @@ impl BaseType {
             "name" => BaseType::Name(Box::new(BaseType::Unknown)),
             "pointer" => BaseType::Pointer(Box::new(BaseType::Unknown)),
             "type" => BaseType::Type(Box::new(BaseType::Unknown)),
-            "array" => BaseType::Array(Box::new(BaseType::Unknown)),
             "unknown" => BaseType::Unknown,
             "error" => BaseType::Error,
             _ => BaseType::Unknown,
@@ -465,7 +473,7 @@ pub enum Expr {
 
     ObjectLiteral(Vec<Stmt>),
 
-    Instantiate {
+    Instantiate { 
         target: Box<Expr>,
         args: Vec<Expr>,
     },
@@ -492,11 +500,6 @@ pub enum Expr {
     },
     ToString {
         target: Box<Expr>,
-    },
-    MagicReference {
-        target: Box<Expr>,
-        kind: ReferenceKind,     // (Name, Length, Size, Data)
-        access_mode: AccessMode, // (ReadOnly, ReadWrite)
     },
     UnaryOp {
         operator: String,
@@ -537,6 +540,78 @@ pub enum Expr {
         left: Box<Expr>,
         operator: String,
     },
+}
+impl Expr {
+    pub fn as_str(&self) -> String {
+        match self {
+            Expr::LiteralInt(i) => i.to_string(),
+            Expr::LiteralFloat(f) => f.to_string(),
+            Expr::LiteralString(s) => format!("\"{}\"", s),
+            Expr::LiteralChar(c) => format!("'{}'", c),
+            Expr::LiteralBool(val) => {
+                if *val {
+                    "true".to_string()
+                } else {
+                    "false".to_string()
+                }
+            }
+            Expr::ArrayLiteral(elements) => {
+                let mut elems_code = Vec::new();
+                for el in elements {
+                    elems_code.push(el.as_str());
+                }
+                format!("[{}]", elems_code.join(", "))
+            }
+            Expr::ObjectLiteral(stmts) => "unimplemented".to_string(),
+            Expr::Identifier(name) => format!("{}", name),
+            Expr::This => "this".to_string(),
+            Expr::Super => "super".to_string(), // will be handled in PropertyAccess
+            Expr::Global => "global".to_string(),
+            Expr::BinaryOp {
+                left,
+                operator,
+                right,
+            } => "unimplemented".to_string(),
+            Expr::PostfixUpdate { left, operator } => format!("{}{}", left.as_str(), operator),
+            Expr::PrefixUpdate { right, operator } => format!("{}{}", operator, right.as_str()),
+            Expr::UnaryOp { operator, operand } => format!("{}{}", operator, operand.as_str()),
+            Expr::Call { callee, args } => format!(
+                "{}({})",
+                callee.as_str(),
+                args.iter()
+                    .map(|a| a.as_str())
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            ),
+            Expr::Instantiate { target, args } => format!(
+                "{}({})",
+                target.as_str(),
+                args.iter()
+                    .map(|a| a.as_str())
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            ),
+            Expr::Modify { target } => format!("&{}", target.as_str()),
+            Expr::Copy { target } => format!("copy({})", target.as_str()),
+
+            Expr::PropertyAccess { object, property } => {
+                format!("{}.{}", object.as_str(), property.as_str())
+            }
+            Expr::NamespaceAccess {
+                namespace,
+                property,
+            } => format!("{}::{}", namespace, property.as_str()),
+            Expr::ArrayAllocate {
+                type_node,
+                size,
+                length,
+            } => format!("new {}[{}]", type_node.as_str(), size.as_str()),
+            Expr::New { type_node, target } => {
+                format!("new {}[{}]", type_node.as_str(), target.as_str())
+            }
+            _ => unreachable!(),
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum Decl {

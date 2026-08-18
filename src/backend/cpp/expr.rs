@@ -1,4 +1,4 @@
-use crate::backend::codegen::generator::CodeGenerator;
+use crate::backend::cpp::generator::CodeGenerator;
 use crate::frontend::parser::ast::*;
 
 impl CodeGenerator {
@@ -69,12 +69,7 @@ impl CodeGenerator {
             }
             Expr::UnaryOp { operator, operand } => {
                 let op_code = self.visit_expression(operand);
-                if operator == "&" {
-                    // In FastLang, '&' means dereference! (pull data)
-                    format!("(*{})", op_code)
-                } else {
-                    format!("{}{}", operator, op_code)
-                }
+                format!("{}{}", operator, op_code)
             }
             Expr::Call { callee, args } => {
                 let callee_code = self.visit_expression(callee);
@@ -122,23 +117,6 @@ impl CodeGenerator {
                 format!("(&{})", t_code)
             }
             Expr::Copy { target } => self.visit_expression(target),
-            Expr::MagicReference {
-                target,
-                kind,
-                access_mode,
-            } => {
-                let target_code = self.visit_expression(target);
-                let const_prefix = match access_mode {
-                    AccessMode::ReadOnly => "const ",
-                    AccessMode::ReadWrite => "",
-                };
-
-                match kind {
-                    ReferenceKind::Name => {
-                        format!("({}void*)&({})", const_prefix, target_code)
-                    }
-                }
-            }
             Expr::PropertyAccess { object, property } => {
                 let obj_code = self.visit_expression(object);
                 if property == "set_next"

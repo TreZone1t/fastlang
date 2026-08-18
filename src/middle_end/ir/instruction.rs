@@ -26,8 +26,8 @@ impl IRType {
             BaseType::Bool => IRType::Bool,
             BaseType::Char => IRType::Int32,
             BaseType::Void => IRType::Void,
-            BaseType::Array(_) => IRType::Array(Box::new(IRType::Pointer(Box::new(IRType::Void)))),
-            
+            BaseType::Array { base_type, .. } => IRType::from_ast(base_type.as_ref()),
+
             BaseType::Custom { name, .. } => IRType::CustomScope(name.clone()),
             BaseType::Struct { name, .. } => IRType::CustomScope(name.clone()),
             BaseType::Class { name, .. } => IRType::CustomScope(name.clone()),
@@ -45,17 +45,25 @@ pub type BlockID = usize;
 #[derive(Debug, Clone)]
 pub enum IROp {
     // Memory
-    Alloc { ty: IRType }, // Returns Pointer
-    Load { ptr: IRValue, ty: IRType },
-    Store { ptr: IRValue, value: IRValue },
-    
+    Alloc {
+        ty: IRType,
+    }, // Returns Pointer
+    Load {
+        ptr: IRValue,
+        ty: IRType,
+    },
+    Store {
+        ptr: IRValue,
+        value: IRValue,
+    },
+
     // Arithmetic
     Add(IRValue, IRValue),
     Sub(IRValue, IRValue),
     Mul(IRValue, IRValue),
     Div(IRValue, IRValue),
     Mod(IRValue, IRValue),
-    
+
     // Constants
     ConstInt32(i32),
     ConstInt64(i64),
@@ -63,7 +71,7 @@ pub enum IROp {
     ConstFloat64(f64),
     ConstBool(bool),
     ConstString(String),
-    
+
     // Logic / Comparisons
     Eq(IRValue, IRValue),
     Neq(IRValue, IRValue),
@@ -73,12 +81,19 @@ pub enum IROp {
     Ge(IRValue, IRValue),
     And(IRValue, IRValue),
     Or(IRValue, IRValue),
-    
+
     // Control Flow
-    Call { func: String, args: Vec<IRValue> },
+    Call {
+        func: String,
+        args: Vec<IRValue>,
+    },
     Return(Option<IRValue>),
     Jump(BlockID),
-    BranchIf { cond: IRValue, true_block: BlockID, false_block: BlockID },
+    BranchIf {
+        cond: IRValue,
+        true_block: BlockID,
+        false_block: BlockID,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -115,7 +130,13 @@ impl IRFunction {
             next_vreg: 1,
             next_block_id: 1,
         };
-        func.blocks.insert(0, BasicBlock { id: 0, instructions: Vec::new() });
+        func.blocks.insert(
+            0,
+            BasicBlock {
+                id: 0,
+                instructions: Vec::new(),
+            },
+        );
         func
     }
 
@@ -128,7 +149,13 @@ impl IRFunction {
     pub fn new_block(&mut self) -> BlockID {
         let b = self.next_block_id;
         self.next_block_id += 1;
-        self.blocks.insert(b, BasicBlock { id: b, instructions: Vec::new() });
+        self.blocks.insert(
+            b,
+            BasicBlock {
+                id: b,
+                instructions: Vec::new(),
+            },
+        );
         b
     }
 
@@ -192,7 +219,9 @@ impl fmt::Display for IROp {
             IROp::Call { func, args } => {
                 write!(f, "call {}(", func)?;
                 for (i, arg) in args.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "v{}", arg)?;
                 }
                 write!(f, ")")
@@ -200,7 +229,15 @@ impl fmt::Display for IROp {
             IROp::Return(Some(v)) => write!(f, "ret v{}", v),
             IROp::Return(None) => write!(f, "ret"),
             IROp::Jump(b) => write!(f, "jmp block_{}", b),
-            IROp::BranchIf { cond, true_block, false_block } => write!(f, "br_if v{}, block_{}, block_{}", cond, true_block, false_block),
+            IROp::BranchIf {
+                cond,
+                true_block,
+                false_block,
+            } => write!(
+                f,
+                "br_if v{}, block_{}, block_{}",
+                cond, true_block, false_block
+            ),
         }
     }
 }
@@ -229,11 +266,13 @@ impl fmt::Display for IRFunction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "fn {}(", self.name)?;
         for (i, (name, ty)) in self.params.iter().enumerate() {
-            if i > 0 { write!(f, ", ")?; }
+            if i > 0 {
+                write!(f, ", ")?;
+            }
             write!(f, "{}: {}", name, ty)?;
         }
         writeln!(f, ") -> {} {{", self.return_type)?;
-        
+
         let mut block_ids: Vec<&usize> = self.blocks.keys().collect();
         block_ids.sort();
         for bid in block_ids {

@@ -1,4 +1,4 @@
-use crate::backend::codegen::generator::CodeGenerator;
+use crate::backend::cpp::generator::CodeGenerator;
 use crate::frontend::parser::ast::*;
 // ... (imports and other CodeGenerator methods remain the same) ...
 
@@ -58,7 +58,7 @@ impl CodeGenerator {
                         BaseType::Float64 => "double".to_string(),
                         BaseType::Char => "char".to_string(),
                         BaseType::Bool => "bool".to_string(),
-                        BaseType::Array(b) => b.as_str(),
+                        BaseType::Array { base_type, .. } => base_type.as_str(),
                         _ => "auto".to_string(),
                     };
                     format!("{} {}", cpp_type, name)
@@ -340,7 +340,7 @@ impl CodeGenerator {
                     BaseType::Int16 => "int16_t".to_string(),
                     BaseType::Int32 => "int32_t".to_string(),
                     BaseType::Int64 => "int64_t".to_string(),
-                    BaseType::Array(b) => b.as_str(),
+                    BaseType::Array { base_type, .. } => base_type.as_str(),
                     _ => "auto".to_string(),
                 };
                 let is_const = editability == &Editability::NotEditable;
@@ -375,7 +375,7 @@ impl CodeGenerator {
                     BaseType::Float64 => "double".to_string(),
                     BaseType::Char => "char".to_string(),
                     BaseType::Bool => "bool".to_string(),
-                    BaseType::Array(b) => b.as_str(),
+                    BaseType::Array { base_type, .. } => base_type.as_str(),
                     _ => "auto".to_string(),
                 };
 
@@ -435,7 +435,7 @@ impl CodeGenerator {
                                     BaseType::Float64 => "double".to_string(),
                                     BaseType::Char => "char".to_string(),
                                     BaseType::Bool => "bool".to_string(),
-                                    BaseType::Array(b) => b.as_str(),
+                                    BaseType::Array { base_type, .. } => base_type.as_str(),
                                     _ => "auto".to_string(),
                                 };
                                 format!("{} {}", cpp_t, p.name)
@@ -494,7 +494,7 @@ impl CodeGenerator {
                                     BaseType::Float64 => "double".to_string(),
                                     BaseType::Char => "char".to_string(),
                                     BaseType::Bool => "bool".to_string(),
-                                    BaseType::Array(b) => b.as_str(),
+                                    BaseType::Array { base_type, .. } => base_type.as_str(),
                                     _ => "auto".to_string(),
                                 };
                                 format!("{} {}", cpp_t, p.name)
@@ -536,7 +536,7 @@ impl CodeGenerator {
                     BaseType::Float64 => "double".to_string(),
                     BaseType::Char => "char".to_string(),
                     BaseType::Bool => "bool".to_string(),
-                    BaseType::Array(b) => b.as_str(),
+                    BaseType::Array { base_type, .. } => base_type.as_str(),
                     _ => "auto".to_string(),
                 };
                 if name == "main" {
@@ -554,7 +554,7 @@ impl CodeGenerator {
                         BaseType::Float64 => "double".to_string(),
                         BaseType::Char => "char".to_string(),
                         BaseType::Bool => "bool".to_string(),
-                        BaseType::Array(b) => b.as_str(),
+                        BaseType::Array { base_type, .. } => base_type.as_str(),
                         _ => "auto".to_string(),
                     };
                     param_strs.push(format!("{} {}", param_type, param.name));
@@ -700,7 +700,7 @@ impl CodeGenerator {
                                     BaseType::Float64 => "double".to_string(),
                                     BaseType::Char => "char".to_string(),
                                     BaseType::Bool => "bool".to_string(),
-                                    BaseType::Array(b) => b.as_str(),
+                                    BaseType::Array { base_type, .. } => base_type.as_str(),
                                     _ => "auto".to_string(),
                                 };
                                 break;
@@ -729,7 +729,7 @@ impl CodeGenerator {
                                     BaseType::Float64 => "double".to_string(),
                                     BaseType::Char => "char".to_string(),
                                     BaseType::Bool => "bool".to_string(),
-                                    BaseType::Array(b) => b.as_str(),
+                                    BaseType::Array { base_type, .. } => base_type.as_str(),
                                     _ => "auto".to_string(),
                                 };
                                 self.emit(&format!("{} call() {{", ret_type_str));

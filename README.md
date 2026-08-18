@@ -112,6 +112,8 @@ cargo run -- -b cranelift --emit-ir tests/ir_test.fs
 - [ ] Advanced Optimizations Pass
 
 ---
+## To-Do
+- [ ] move the checking for the meta into the analyzer 
 
 <div align="center">
   <sub>Built with ❤️ by TreZone1t.</sub>

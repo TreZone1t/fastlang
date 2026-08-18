@@ -377,8 +377,10 @@ impl Parser {
             let token = self.peek().kind.clone();
             if matches!(token, TokenKind::Identifier(_)) {
                 let type_name = self.get_identifier("Unexpected error happen")?;
-                self.consume(TokenKind::Comma, "Expected ',' after type name")?;
                 generics.push(BaseType::from_str(&type_name));
+                continue;
+            } else if token == TokenKind::Comma {
+                self.advance();
                 continue;
             } else {
                 return Err(format!(

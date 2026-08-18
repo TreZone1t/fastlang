@@ -1,4 +1,4 @@
-use crate::{backend::codegen::stmt, frontend::parser::ast::*};
+use crate::{backend::cpp::stmt, frontend::parser::ast::*};
 
 pub struct CodeGenerator {
     pub(crate) output: String,
@@ -45,7 +45,7 @@ impl CodeGenerator {
                         BaseType::Float64 => "double".to_string(),
                         BaseType::Char => "char".to_string(),
                         BaseType::Bool => "bool".to_string(),
-                        BaseType::Array(b) => b.as_str(),
+                        BaseType::Array { base_type, .. } => base_type.as_str(),
                         _ => "auto".to_string(),
                     };
 
@@ -60,7 +60,7 @@ impl CodeGenerator {
                                 BaseType::Float64 => "double".to_string(),
                                 BaseType::Char => "char".to_string(),
                                 BaseType::Bool => "bool".to_string(),
-                                BaseType::Array(b) => b.as_str(),
+                                BaseType::Array { base_type, .. } => base_type.as_str(),
                                 _ => "auto".to_string(),
                             };
                             let param_name = &params[0].name;
@@ -84,7 +84,7 @@ impl CodeGenerator {
                                 BaseType::Float64 => "double".to_string(),
                                 BaseType::Char => "char".to_string(),
                                 BaseType::Bool => "bool".to_string(),
-                                BaseType::Array(b) => b.as_str(),
+                                BaseType::Array { base_type, .. } => base_type.as_str(),
                                 _ => "auto".to_string(),
                             };
                             let param_name = &params[0].name;
@@ -170,7 +170,7 @@ impl CodeGenerator {
                                 BaseType::Float64 => "double".to_string(),
                                 BaseType::Char => "char".to_string(),
                                 BaseType::Bool => "bool".to_string(),
-                                BaseType::Array(b) => b.as_str(),
+                                BaseType::Array { base_type, .. } => base_type.as_str(),
                                 BaseType::Pointer(p) => format!("{}*", p.as_str()),
                                 _ => "auto".to_string(),
                             },

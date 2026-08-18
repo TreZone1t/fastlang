@@ -13,6 +13,6 @@ fn main() -> void {
     not_safe_ptr -> my_array;   //it doesn't work *error: assignment of read-only reference 'not_safe_ptr'*
     
     name<int(32)> bad_ptr -> safe_ptr;   //Warning : nested and linked ptr you must to be manged correctly
-    log(&bad_ptr);
-    log(&mut_ptr);
+    log(*bad_ptr);
+    log(*mut_ptr);
 }

@@ -476,9 +476,14 @@ impl SemanticAnalyzer {
                     if let BaseType::Name(ref mut inner) = tn {
                         if **inner == BaseType::Unknown && expr_type != "unknown" {
                             let inner_type = if expr_type.starts_with("array<") {
-                                BaseType::Array(Box::new(BaseType::from_str(
-                                    expr_type.trim_start_matches("array<").trim_end_matches(">"),
-                                )))
+                                BaseType::Array {
+                                    base_type: Box::new(BaseType::from_str(
+                                        expr_type
+                                            .trim_start_matches("array<")
+                                            .trim_end_matches(">"),
+                                    )),
+                                    size: Box::new(None),
+                                }
                             } else {
                                 BaseType::from_str(&expr_type)
                             };

@@ -1,8 +1,6 @@
-scope MathScope -> {
-    type -> custom;
+custom MathScope -> {
     enable [operators, index_access, data, handle, display];
     data -> 10;  
-    
     handle -> {
         fn add(other: MathScope) -> MathScope {
             MathScope result -> new MathScope();
@@ -38,8 +36,7 @@ scope MathScope -> {
     }
 }
 
-scope Direction -> {
-    type -> enum;
+enum Direction -> {
     variants -> {
         Up,
         Down,

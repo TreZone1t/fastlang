@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::format;
 
 use crate::frontend::lexer::token::TokenKind;
 use crate::frontend::parser::ast::*;
@@ -36,16 +37,9 @@ impl Parser {
         // adding allowed handles
         //we have display only
         enabled_handles.push(HandleMethods::Display);
-        if name.is_empty() {
-            // جاي مباشر من parse_statement → لازم نستهلك 'struct' + الاسم + '{'
-            self.advance(); // consume 'struct'
-            name = self.get_identifier("Expected struct name")?;
-            // الـ struct syntax المباشر: `struct Node { ... }` بدون `->`
-            if self.peek().kind == TokenKind::Arrow {
-                self.advance(); // consume optional '->'
-            }
-            self.consume(TokenKind::LBrace, "Expected '{' to open struct body")?;
-        }
+
+        self.consume(TokenKind::Arrow, "Expected '->' to open struct body")?;
+        self.consume(TokenKind::LBrace, "Expected '{' to open struct body")?;
         // now we are the same as the one being redirected by the scope parsing fn
 
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
@@ -125,10 +119,14 @@ impl Parser {
                     }
                 }
             } else {
-                print!("DEBUG:[ Invalid field found : {} ] or already used in this scope , that is not allow in the array typed scope to use it \n\t - use custom typed scope with enable some setting it will work if it valid" , t.as_str());
-                return Err(
-                    ("Syntax Error: Invalid field  declaration at line {}, column {}").to_string(),
-                );
+                print!("DEBUG:[ Invalid field found : '{}' ] or already used in this scope at , that is not allow in the array typed scope to use it \n\t - use custom typed scope with enable some setting it will work if it valid" , t.as_str());
+                return Err((format!(
+                    "Syntax Error: Invalid field [{}] declaration at line {}, column {}",
+                    t.as_str(),
+                    self.peek().line,
+                    self.peek().column
+                ))
+                .to_string());
             }
         }
         self.consume(TokenKind::RBrace, "Expected '}' to close struct body")?;

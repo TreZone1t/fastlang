@@ -1,4 +1,4 @@
-use crate::backend::codegen::stmt;
+use crate::backend::cpp::stmt;
 use crate::frontend::lexer::token::TokenKind;
 use crate::frontend::parser::ast::*;
 use crate::frontend::parser::parser::Parser;
@@ -35,11 +35,7 @@ impl Parser {
             TokenKind::Switch => self.parse_switch_stmt(),
             TokenKind::Fn => self.parse_fn_decl().map(Stmt::Declaration),
             TokenKind::TypeClass => self.parse_class_decl().map(Stmt::Declaration),
-                        TokenKind::TypeCustom => {
-                self.advance();
-                let name = self.get_identifier("Expected custom scope name")?;
-                self.parse_custom_decl(name)
-            },
+                        TokenKind::TypeCustom => self.parse_custom_decl().map(Stmt::Declaration),
             TokenKind::TypeStruct => self.parse_struct_decl().map(Stmt::Declaration),
             TokenKind::TypeEnum => self.parse_enum_decl().map(Stmt::Declaration),
             TokenKind::Del => self.parse_del_stmt(),
@@ -189,6 +185,7 @@ impl Parser {
             TokenKind::Fn => self.parse_fn_decl()?,
             TokenKind::TypeClass => self.parse_class_decl()?,
             TokenKind::TypeStruct => self.parse_struct_decl()?,
+            TokenKind::TypeCustom => self.parse_custom_decl()?,
             TokenKind::TypeEnum => self.parse_enum_decl()?,
             kind => return Err(format!("Syntax Error: Cannot export '{:?}', only let, fn, scope, class, struct, and enum can be exported", kind)),
         };
@@ -753,7 +750,7 @@ impl Parser {
                 "Syntax Error: You can't use goto outside of a label or the call method"
                     .to_string(),
             );
-        } else if !scope.contains("@") || !scope.contains("call") {
+        } else if !scope.contains("@") && !scope.contains("call") {
             return Err(
                 "Syntax Error: You can't use goto outside of a label or the call method"
                     .to_string(),
@@ -890,58 +887,6 @@ impl Parser {
         Ok(Stmt::ExpressionStmt(expr))
     }
 
-    /// يُعالج تعريف متغير باستخدام Custom Keyword:
-    /// `my_list<int(32)> items -> [1, 2];`
-    /// حيث `keyword_name` = "my_list" و `original_scope_name` = "array"
-    // todo: remove this
-    /*   pub(crate) fn parse_custom_keyword_var_decl(
-            &mut self,
-            keyword_name: String,
-            original_scope_name: String,
-        ) -> Result<Stmt, String> {
-            // parse optional generic params: <int(32)>
-            let mut generics = Vec::new();
-            let mut _size: Option<i64> = None;
-            if self.peek().kind == crate::frontend::lexer::token::TokenKind::Less {
-                self.advance();
-                self.parse_generic_list(&mut generics, &mut _size, original_scope_name == "array")?;
-            }
-
-            // اسم المتغير
-            let name = self.get_identifier("Expected variable name after custom type keyword")?;
-
-            // '->' للتعيين
-            self.consume(
-                crate::frontend::lexer::token::TokenKind::Arrow,
-                "Expected '->' after variable name in custom keyword declaration",
-            )?;
-            let value = self.parse_expression()?;
-            self.consume(
-                crate::frontend::lexer::token::TokenKind::SemiColon,
-                "Expected ';' after custom keyword variable declaration",
-            )?;
-
-            let type_node = if generics.is_empty() {
-                 TypeNode::Simple( TypeRef {
-                    base_type: keyword_name,
-                    size: None,
-                })
-            } else {
-                 TypeNode::Generic( Generic {
-                    base_type: keyword_name,
-                    generics,
-                })
-            };
-
-            Ok(Decl::VarDecl {
-                visibility:  Visibility::Private,
-                editability:  Editability::Editable,
-                type_node: type_node,
-                name,
-                value,
-            })
-        }
-    */
     pub(crate) fn parse_expression_stmt(&mut self) -> Result<Stmt, String> {
         let expr = self.parse_expression()?;
         print!(
