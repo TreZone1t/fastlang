@@ -42,26 +42,89 @@ fn main() -> void {
 FastLang allows you to build custom types with extreme precision using the `scope` syntax. You can enable specific capabilities and handle initialization:
 
 ```rust
-custom DataBuffer -> {
-    enable [index_access, length, private, public, constructor];
-    private -> {
-        int(32) size;
-        int(32) capacity;
-    }
-
-    public -> {
-        fn get_size() -> int(32) {
-            return this.size;
-        }
-    }
-
+custom MathScope -> {
+    enable [operators, index_access, data, handle, display];
+    data -> 10;  
     handle -> {
-        constructor() {
-            this.size = 0;
-            this.capacity = 16;
+        fn add(other: MathScope) -> MathScope {
+            MathScope result = new MathScope();
+            result.data = this.data + other.data;
+            return result;
+        }
+        fn sub(other: MathScope) -> MathScope {
+            MathScope result = new MathScope();
+            result.data = this.data - other.data;
+            return result;
+        }
+        fn mul(other: MathScope) -> MathScope {
+            MathScope result = new MathScope();
+            result.data = this.data * other.data;
+            return result;
+        }
+        fn div(other: MathScope) -> MathScope {
+            MathScope result = new MathScope();
+            result.data = this.data / other.data;
+            return result;
+        }
+        fn mod(other: MathScope) -> MathScope {
+            MathScope result = new MathScope();
+            result.data = this.data % other.data;
+            return result;
+        }
+        fn index_access(index: int(32)) -> int(32) {
+            return this.data + index;
+        }
+        fn display() -> string {
+            return to_string(this.data);
         }
     }
 }
+
+enum Direction -> {
+    variants -> {
+        Up,
+        Down,
+        Left,
+        Right
+    };
+    handle -> {
+     fn display() -> string {
+          switch (this) -> {
+              case Up => { return "Up"; }
+              case Down => { return "Down"; }
+              case Left => { return "Left"; }
+              case Right => { return "Right"; }
+          }
+     }
+    }
+}
+
+fn main() -> int(32) {
+  MathScope a = new MathScope();
+  MathScope b = new MathScope();
+  MathScope c = a + b;
+  MathScope d = a - b;
+  MathScope e = a * b;
+  MathScope f = a / b;
+  MathScope g = a % b;
+  log("c.data (10 + 10):");
+  log(c.data);
+  log("d.data (10 - 10):");
+  log(d.data);
+  log("e.data (10 * 10):");
+  log(e.data);
+  log("f.data (10 / 10):");
+  log(f.data);
+  log("g.data (10 % 10):");
+  log(g.data);
+  log("Index access a[5]:");
+  log(a[5]);
+
+  Direction dir1 = Direction::Up;
+  log(dir1);
+  return 0;
+}
+
 ```
 
 ---
