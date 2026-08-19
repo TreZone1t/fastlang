@@ -17,7 +17,7 @@ struct Node -> {
     // Test 3: Magic cast 
 
     int(32) temp = 10;
-    Node n -> new Node(temp);
+    Node n = new Node(temp);
 }
 fn main() -> int(32) {
     int(32) y = 10;

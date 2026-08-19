@@ -131,18 +131,21 @@ impl Parser {
         // `=` or `->`
         let op = self.peek().kind.clone();
         if op != TokenKind::Assign && op != TokenKind::Arrow {
-            return Err(format!(
-                "Syntax Error: Expected '=' or '->' after name declaration '{}', found '{}'",
-                var_name,
-                op.as_str()
-            ));
+            return Err(
+                format!(
+                    "Syntax Error: Expected '=' or '->' after name declaration '{}', found '{}'",
+                    var_name,
+                    op.as_str()
+                )
+            );
         }
         self.advance(); // consume `=` or `->`
 
         // Check for `modify` keyword → ReadWrite
-        let access_mode = if self.peek().kind == TokenKind::Modify
-            || self.peek().kind == TokenKind::New
-            || self.peek().kind == TokenKind::Copy
+        let access_mode = if
+            self.peek().kind == TokenKind::Modify ||
+            self.peek().kind == TokenKind::New ||
+            self.peek().kind == TokenKind::Copy
         {
             if self.peek().kind == TokenKind::Modify {
                 self.advance(); // consume `modify`
@@ -156,11 +159,8 @@ impl Parser {
         let target = self.parse_expression()?;
 
         // Determine if heap-allocated (target came from `new`)
-        let is_heap = matches!(
-            &target,
-            Expr::ArrayAllocate { .. } | Expr::Instantiate { .. }
-        );
-        if (self.peek().kind == TokenKind::SemiColon) {
+        let is_heap = matches!(&target, Expr::ArrayAllocate { .. } | Expr::Instantiate { .. });
+        if self.peek().kind == TokenKind::SemiColon {
             self.advance();
         }
         Ok(Decl::NameDecl {
@@ -170,11 +170,5 @@ impl Parser {
             access_mode,
             is_heap,
         })
-    }
-
-    /// Stub used when `name` appears in a param list context.
-    /// Returns the BaseType to be used for that parameter.
-    pub(crate) fn parse_name_in_param(&mut self) -> Result<(), String> {
-        Ok(())
     }
 }

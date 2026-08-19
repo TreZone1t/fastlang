@@ -56,13 +56,13 @@ enum Direction -> {
 }
 
 fn main() -> int(32) {
-  MathScope a -> new MathScope();
-  MathScope b -> new MathScope();
-  MathScope c -> a + b;
-  MathScope d -> a - b;
-  MathScope e -> a * b;
-  MathScope f -> a / b;
-  MathScope g -> a % b;
+  MathScope a = new MathScope();
+  MathScope b = new MathScope();
+  MathScope c = a + b;
+  MathScope d = a - b;
+  MathScope e = a * b;
+  MathScope f = a / b;
+  MathScope g = a % b;
   log("c.data (10 + 10):");
   log(c.data);
   log("d.data (10 - 10):");
