@@ -439,27 +439,66 @@ impl SemanticAnalyzer {
                 .trim_start_matches("name<")
                 .trim_end_matches('>');
 
+            let expr_inner = if expr_type.starts_with("array<") {
+                expr_type.trim_start_matches("array<").trim_end_matches('>')
+            } else if expr_type.starts_with("name<") {
+                expr_type.trim_start_matches("name<").trim_end_matches('>')
+            } else if expr_type.starts_with("pointer<") {
+                expr_type.trim_start_matches("pointer<").trim_end_matches('>')
+            } else {
+                expr_type
+            };
+
             if inner == "unknown" && expr_type != "unknown" {
                 if let Expr::Identifier(name) = target {
                     let maybe_info = self.current_env.borrow().lookup(name);
                     if let Some(mut info) = maybe_info {
+                        let is_arr = expr_type.starts_with("array<");
                         info.kind = SymbolKind::Variable {
                             type_node: BaseType::Name(Box::new(BaseType::from_str(
-                                expr_type,
+                                expr_inner,
                             ))),
                             editability: Editability::Editable,
-                            is_array: false,
+                            is_array: is_arr,
                         };
                         self.current_env.borrow_mut().update(name, info);
                     }
                 }
-            } else if inner != expr_type
+            } else if !self.types_are_compatible(inner, expr_inner)
                 && inner != "unknown"
                 && expr_type != "unknown"
                 && expr_type != "object"
             {
                 return Err(format!(
                     "Semantic Error: Cannot reassign smart pointer 'name<{}>' to type '{}'",
+                    inner, expr_type
+                ));
+            }
+            return Ok(());
+        }
+
+        if target_type.starts_with("pointer<") {
+            let inner = target_type
+                .trim_start_matches("pointer<")
+                .trim_end_matches('>');
+
+            let expr_inner = if expr_type.starts_with("array<") {
+                expr_type.trim_start_matches("array<").trim_end_matches('>')
+            } else if expr_type.starts_with("pointer<") {
+                expr_type.trim_start_matches("pointer<").trim_end_matches('>')
+            } else if expr_type.starts_with("name<") {
+                expr_type.trim_start_matches("name<").trim_end_matches('>')
+            } else {
+                expr_type
+            };
+
+            if !self.types_are_compatible(inner, expr_inner)
+                && inner != "unknown"
+                && expr_type != "unknown"
+                && expr_type != "object"
+            {
+                return Err(format!(
+                    "Semantic Error: Cannot reassign pointer 'pointer<{}>' to type '{}'",
                     inner, expr_type
                 ));
             }
@@ -768,9 +807,18 @@ impl SemanticAnalyzer {
                 self.current_context = Some(name.clone());
                 let target_type = self.visit_expression(target)?;
 
+                let is_arr = target_type.starts_with("array<");
+                let base_inner_str = if is_arr {
+                    target_type
+                        .trim_start_matches("array<")
+                        .trim_end_matches('>')
+                } else {
+                    &target_type
+                };
+
                 let final_inner =
                     if *inner_type == BaseType::Unknown && target_type != "unknown" {
-                        BaseType::from_str(&target_type)
+                        BaseType::from_str(base_inner_str)
                     } else {
                         inner_type.clone()
                     };
@@ -780,7 +828,7 @@ impl SemanticAnalyzer {
                     kind: SymbolKind::Variable {
                         type_node: BaseType::Name(Box::new(final_inner)),
                         editability: Editability::Editable,
-                        is_array: false,
+                        is_array: is_arr,
                     },
                     visibility: Visibility::Private,
                     dependencies: vec![],
@@ -797,16 +845,18 @@ impl SemanticAnalyzer {
             } => {
                 let prev = self.current_context.clone();
                 self.current_context = Some(name.clone());
-                self.visit_expression(value)?;
+                let val_type = self.visit_expression(value)?;
                 if let Some(l) = length {
                     self.visit_expression(l)?;
                 }
+                let is_arr = length.is_some() || val_type.starts_with("array<");
+
                 let info = SymbolInfo {
                     name: name.clone(),
                     kind: SymbolKind::Variable {
                         type_node: BaseType::Pointer(Box::new(inner_type.clone())),
                         editability: Editability::Editable,
-                        is_array: length.is_some(),
+                        is_array: is_arr,
                     },
                     visibility: Visibility::Private,
                     dependencies: vec![],
@@ -849,8 +899,116 @@ impl SemanticAnalyzer {
             let base_decl = declared_type.split('<').next().unwrap_or(&declared_type);
 
             match base_decl {
-                // smart pointer - accept anything
-                "name" => {}
+                // smart pointer - accept anything, infer inner if needed
+                "name" => {
+                    let is_arr = expr_type.starts_with("array<");
+                    let inner_type_str = if declared_type.starts_with("name<") {
+                        let inner = declared_type
+                            .trim_start_matches("name<")
+                            .trim_end_matches('>');
+                        if inner == "unknown" && expr_type != "unknown" {
+                            if is_arr {
+                                expr_type
+                                    .trim_start_matches("array<")
+                                    .trim_end_matches('>')
+                            } else {
+                                &expr_type
+                            }
+                        } else {
+                            inner
+                        }
+                    } else if is_arr {
+                        expr_type
+                            .trim_start_matches("array<")
+                            .trim_end_matches('>')
+                    } else {
+                        &expr_type
+                    };
+
+                    let deps = self
+                        .dependency_graph
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .collect();
+
+                    let info = SymbolInfo {
+                        name: name.to_string(),
+                        kind: SymbolKind::Variable {
+                            type_node: BaseType::Name(Box::new(BaseType::from_str(
+                                inner_type_str,
+                            ))),
+                            editability: editability.clone(),
+                            is_array: is_arr,
+                        },
+                        visibility: visibility.clone(),
+                        dependencies: deps,
+                    };
+                    self.current_env
+                        .borrow_mut()
+                        .define(name.to_string(), info)?;
+                    self.current_context = prev_context;
+                    return Ok(());
+                }
+
+                // pointer type
+                "pointer" => {
+                    let is_arr = expr_type.starts_with("array<");
+                    let inner_type_str = if declared_type.starts_with("pointer<") {
+                        declared_type
+                            .trim_start_matches("pointer<")
+                            .trim_end_matches('>')
+                    } else {
+                        "unknown"
+                    };
+                    let expr_inner = if is_arr {
+                        expr_type
+                            .trim_start_matches("array<")
+                            .trim_end_matches('>')
+                    } else if expr_type.starts_with("pointer<") {
+                        expr_type
+                            .trim_start_matches("pointer<")
+                            .trim_end_matches('>')
+                    } else {
+                        &expr_type
+                    };
+
+                    if inner_type_str != "unknown"
+                        && !self.types_are_compatible(inner_type_str, expr_inner)
+                    {
+                        return Err(format!(
+                            "Semantic Error: Type mismatch for pointer '{}'. Declared '{}', got '{}'",
+                            name, declared_type, expr_type
+                        ));
+                    }
+
+                    let deps = self
+                        .dependency_graph
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .collect();
+
+                    let info = SymbolInfo {
+                        name: name.to_string(),
+                        kind: SymbolKind::Variable {
+                            type_node: BaseType::Pointer(Box::new(BaseType::from_str(
+                                inner_type_str,
+                            ))),
+                            editability: editability.clone(),
+                            is_array: is_arr,
+                        },
+                        visibility: visibility.clone(),
+                        dependencies: deps,
+                    };
+                    self.current_env
+                        .borrow_mut()
+                        .define(name.to_string(), info)?;
+                    self.current_context = prev_context;
+                    return Ok(());
+                }
 
                 // complex types with possible handle overloading
                 "custom" | "class" | "struct" | "enum" => {
@@ -1451,7 +1609,26 @@ impl SemanticAnalyzer {
                 }
             }
 
-            Expr::UnaryOp { operand, .. } => self.visit_expression(operand),
+            Expr::UnaryOp { operand, operator } => {
+                let op_type = self.visit_expression(operand)?;
+                if operator == "*" {
+                    if op_type.starts_with("name<") {
+                        let inner = op_type
+                            .trim_start_matches("name<")
+                            .trim_end_matches('>');
+                        return Ok(inner.to_string());
+                    }
+                    if op_type.starts_with("pointer<") {
+                        let inner = op_type
+                            .trim_start_matches("pointer<")
+                            .trim_end_matches('>');
+                        return Ok(inner.to_string());
+                    }
+                } else if operator == "&" {
+                    return Ok(format!("pointer<{}>", op_type));
+                }
+                Ok(op_type)
+            }
 
             Expr::PrefixUpdate { right, .. } => self.visit_expression(right),
             Expr::PostfixUpdate { left, .. } => self.visit_expression(left),
@@ -1462,6 +1639,16 @@ impl SemanticAnalyzer {
                 if obj_type.starts_with("array<") {
                     let inner = obj_type
                         .trim_start_matches("array<")
+                        .trim_end_matches('>');
+                    Ok(inner.to_string())
+                } else if obj_type.starts_with("name<") {
+                    let inner = obj_type
+                        .trim_start_matches("name<")
+                        .trim_end_matches('>');
+                    Ok(inner.to_string())
+                } else if obj_type.starts_with("pointer<") {
+                    let inner = obj_type
+                        .trim_start_matches("pointer<")
                         .trim_end_matches('>');
                     Ok(inner.to_string())
                 } else {
@@ -1579,16 +1766,64 @@ impl SemanticAnalyzer {
                 return true;
             }
         }
-        // name pointer
-        if expected == "name" || expected == "name<unknown>" {
+        // name pointer compatibility (holds T, array<T>, name<T>, pointer<T>)
+        if expected == "name" || expected == "name<unknown>" || actual == "name" || actual == "name<unknown>" {
             return true;
         }
         if expected.starts_with("name<") {
             let inner = expected
                 .trim_start_matches("name<")
                 .trim_end_matches('>');
-            return inner == actual || inner == "unknown";
+            if inner == "unknown" {
+                return true;
+            }
+            let actual_inner = if actual.starts_with("array<") {
+                actual.trim_start_matches("array<").trim_end_matches('>')
+            } else if actual.starts_with("name<") {
+                actual.trim_start_matches("name<").trim_end_matches('>')
+            } else if actual.starts_with("pointer<") {
+                actual.trim_start_matches("pointer<").trim_end_matches('>')
+            } else {
+                actual
+            };
+            return self.types_are_compatible(inner, actual_inner);
         }
+        if actual.starts_with("name<") {
+            let actual_inner = actual
+                .trim_start_matches("name<")
+                .trim_end_matches('>');
+            return self.types_are_compatible(expected, actual_inner);
+        }
+
+        // raw pointer compatibility (points to T, array<T>, pointer<T>, name<T>)
+        if expected == "pointer" || expected == "pointer<unknown>" || actual == "pointer" || actual == "pointer<unknown>" {
+            return true;
+        }
+        if expected.starts_with("pointer<") {
+            let inner = expected
+                .trim_start_matches("pointer<")
+                .trim_end_matches('>');
+            if inner == "unknown" {
+                return true;
+            }
+            let actual_inner = if actual.starts_with("array<") {
+                actual.trim_start_matches("array<").trim_end_matches('>')
+            } else if actual.starts_with("pointer<") {
+                actual.trim_start_matches("pointer<").trim_end_matches('>')
+            } else if actual.starts_with("name<") {
+                actual.trim_start_matches("name<").trim_end_matches('>')
+            } else {
+                actual
+            };
+            return self.types_are_compatible(inner, actual_inner);
+        }
+        if actual.starts_with("pointer<") {
+            let actual_inner = actual
+                .trim_start_matches("pointer<")
+                .trim_end_matches('>');
+            return self.types_are_compatible(expected, actual_inner);
+        }
+
         false
     }
 
