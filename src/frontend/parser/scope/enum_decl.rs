@@ -5,27 +5,19 @@ use crate::frontend::parser::parser::Parser;
 impl Parser {
     pub(crate) fn parse_enum_decl(&mut self) -> Result<Decl, String> {
         let mut enabled_settings: Vec<Setting> = Vec::new();
-        let mut enabled_handles: Vec<HandleMethods> = Vec::new();
         let mut used_handles: Vec<HandleMethods> = Vec::new();
-        let mut used_settings: std::collections::HashSet<Setting> =
-            std::collections::HashSet::new();
+        let mut used_settings = Vec::new();
         let mut handle_block: Vec<Decl> = Vec::new(); //*
         let mut variants: Vec<EnumVariant> = Vec::new();
-        let mut length: i64 = 0; //*
         self.advance(); // consume 'enum'
         let name = self.get_identifier("Expected enum name")?;
-
-        //adding the default settings to the array c
-        enabled_settings.push(Setting::Length);
-        // adding allowed handles
-        //we have display , iterator , next , length , size
-        enabled_handles.push(HandleMethods::Display);
-        enabled_handles.push(HandleMethods::Length);
         let mut generics = Vec::new();
         if self.peek().kind == TokenKind::Less {
             self.parse_generics(&mut generics)?;
         }
-
+        enabled_settings.push(Setting::Handle);
+        enabled_settings.push(Setting::Variants);
+        enabled_settings.push(Setting::Data);
         self.consume(TokenKind::Arrow, "Expected '->' to open enum body")?;
         self.consume(TokenKind::LBrace, "Expected '{' to open enum body")?;
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
@@ -40,26 +32,30 @@ impl Parser {
 
             if t == TokenKind::Handle {
                 if used_settings.contains(&Setting::Handle) {
-                    return Err(format!(
-                        "Syntax Error: Duplicate 'handle' block in enum '{}'  at line {}, column {}",
-                        name,
-                        self.peek().line,
-                        self.peek().column
-                    ));
+                    return Err(
+                        format!(
+                            "Syntax Error: Duplicate 'handle' block in enum '{}'  at line {}, column {}",
+                            name,
+                            self.peek().line,
+                            self.peek().column
+                        )
+                    );
                 }
-                used_settings.insert(Setting::Handle);
-                handle_block = self.parse_handle_block(&mut enabled_handles, &mut used_handles)?;
+                used_settings.push(Setting::Handle);
+                handle_block = self.parse_handle_block(&mut used_handles)?;
             } else if t == TokenKind::Variants {
-                if used_settings.contains(&Setting::Custom) {
+                if used_settings.contains(&Setting::Variants) {
                     // Using Custom for Variants flag
-                    return Err(format!(
-                        "Syntax Error: Duplicate 'variants' block in enum '{}'  at line {}, column {}",
-                        name,
-                        self.peek().line,
-                        self.peek().column
-                    ));
+                    return Err(
+                        format!(
+                            "Syntax Error: Duplicate 'variants' block in enum '{}'  at line {}, column {}",
+                            name,
+                            self.peek().line,
+                            self.peek().column
+                        )
+                    );
                 }
-                used_settings.insert(Setting::Custom);
+                used_settings.push(Setting::Variants);
                 self.advance(); // 'variants'
                 self.consume(TokenKind::Arrow, "Expected '->' after 'variants'")?;
                 self.consume(TokenKind::LBrace, "Expected '{' to open variants block")?;
@@ -88,32 +84,15 @@ impl Parser {
                 }
                 self.consume(TokenKind::RBrace, "Expected '}' to close variants block")?;
                 self.consume(TokenKind::SemiColon, "Expected ';' after variants block")?;
-            } else if t == TokenKind::TypeLength {
-                if used_settings.contains(&Setting::Length) {
-                    return Err(format!(
-                        "Syntax Error: Duplicate 'length' block in enum '{}'  at line {}, column {}",
-                        name,
+            } else {
+                return Err(
+                    format!(
+                        "Syntax Error: Unsupported setting block '{}' in enum at line {}, column {}",
+                        t.as_str(),
                         self.peek().line,
                         self.peek().column
-                    ));
-                }
-                used_settings.insert(Setting::Length);
-                self.advance(); // consume 'length'
-                self.consume(TokenKind::Arrow, "Expected '->' after 'length'")?;
-                let value = self.parse_expression()?;
-                self.consume(TokenKind::SemiColon, "Expected ';' after length value")?;
-                let temp = match value {
-                    Expr::LiteralInt(i) => i,
-                    _ => return Err("Syntax Error: Expected integer value for length".to_string()),
-                };
-                length = temp;
-            } else {
-                return Err(format!(
-                    "Syntax Error: Unsupported setting block '{}' in enum at line {}, column {}",
-                    t.as_str(),
-                    self.peek().line,
-                    self.peek().column
-                ));
+                    )
+                );
             }
         }
         let mut meta = TypeMetadata {
@@ -123,14 +102,13 @@ impl Parser {
             params: Vec::new(),
             generics: Vec::new(),
             methods: std::collections::HashMap::new(),
-            handles: used_handles,
+            handles: used_handles.clone(),
             vars: std::collections::HashMap::new(),
             is_enum: true,
             variants: Some(variants.clone()),
         };
         for variant in &variants {
-            meta.fields
-                .insert(variant.name.clone(), BaseType::from_str(&name));
+            meta.fields.insert(variant.name.clone(), BaseType::from_str(&name));
         }
         self.metadata.insert(name.clone(), meta);
 
@@ -143,9 +121,8 @@ impl Parser {
             is_exported: false,
             name,
             generics,
-            handles: enabled_handles,
-            settings: enabled_settings,
-            length,
+            handles: used_handles,
+            settings: used_settings,
             handle_block,
             variants,
         })

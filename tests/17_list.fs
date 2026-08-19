@@ -1,5 +1,5 @@
 // Test linked list standard library
-import std::{ list,Option};
+import std::{ list};
 
 fn main() -> void {
     list<int(32)> li -> [1,2,3,4,5,6];
@@ -9,7 +9,7 @@ fn main() -> void {
     li.push(8);
     log("length : ", len);  // length : 7
     for (int(32) i = 0; i < len; i = i + 1) -> {
-        Option<int(32)> val -> li.pop();
+        int(32) val = li.pop();
         log("popped value : ", val);
     }
 }

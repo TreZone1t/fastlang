@@ -8,8 +8,6 @@ impl Parser {
     pub(crate) fn parse_custom_decl(&mut self) -> Result<Decl, String> {
         let mut enabled_settings: Vec<Setting> = Vec::new();
         let mut used_settings: Vec<Setting> = Vec::new();
-
-        let mut enabled_handles: Vec<HandleMethods> = Vec::new();
         let mut used_handles: Vec<HandleMethods> = Vec::new();
 
         let mut public_block: Vec<Decl> = Vec::new();
@@ -28,7 +26,6 @@ impl Parser {
         let mut flags: Vec<Flag> = Vec::new();
         let mut labels: Vec<String> = Vec::new();
         let mut label_blocks: Vec<Decl> = Vec::new();
-        let mut length: i64 = 0;
         let mut data: Option<Expr> = None;
         self.advance(); // consume 'custom'
         let name = self.get_identifier("Expected custom name")?;
@@ -54,7 +51,7 @@ impl Parser {
         // enable [];
         //========================================================================
         if self.peek().kind == TokenKind::Enable {
-            self.parse_enable(&mut enabled_settings, &mut enabled_handles, &mut flags)?;
+            self.parse_enable(&mut enabled_settings)?;
         }
         //========================================================================
         // add  flag/label -> name;
@@ -105,10 +102,9 @@ impl Parser {
                     }
                     self.advance();
                 } else {
-                    return Err(format!(
-                        "Syntax Error: Expected identifier or label name, found {:?}",
-                        kind
-                    ));
+                    return Err(
+                        format!("Syntax Error: Expected identifier or label name, found {:?}", kind)
+                    );
                 }
 
                 if self.peek().kind == TokenKind::Comma {
@@ -131,10 +127,19 @@ impl Parser {
                 //====================================================================
                 if t == TokenKind::Constructor {
                     if used_settings.contains(&Setting::Constructor) {
-                        return Err(format!("Syntax Error: Duplicate 'constructor' block in custom '{}'  at line {}, column {}", name, self.peek().line, self.peek().column));
+                        return Err(
+                            format!(
+                                "Syntax Error: Duplicate 'constructor' block in custom '{}'  at line {}, column {}",
+                                name,
+                                self.peek().line,
+                                self.peek().column
+                            )
+                        );
                     }
                     match self.parse_constructor_decl(&mut meta) {
-                        Ok(c) => constructor = c,
+                        Ok(c) => {
+                            constructor = c;
+                        }
                         Err(e) => {
                             eprintln!("Syntax Error in scope constructor: {}", e);
                             self.synchronize();
@@ -148,10 +153,16 @@ impl Parser {
                 //====================================================================
                 if self.peek().kind == TokenKind::Public {
                     if used_settings.contains(&Setting::Public) {
-                        return Err(format!("Syntax Error: Duplicate 'public' block in custom '{}'  at line {}, column {}", name, self.peek().line, self.peek().column));
+                        return Err(
+                            format!(
+                                "Syntax Error: Duplicate 'public' block in custom '{}'  at line {}, column {}",
+                                name,
+                                self.peek().line,
+                                self.peek().column
+                            )
+                        );
                     }
-                    public_block =
-                        self.parse_field_block(&mut meta, Visibility::Public, generics.clone())?;
+                    public_block = self.parse_field_block(&mut meta, Visibility::Public)?;
                     used_settings.push(Setting::Public);
                     continue;
                 }
@@ -160,10 +171,16 @@ impl Parser {
                 //====================================================================
                 if t == TokenKind::Private {
                     if used_settings.contains(&Setting::Private) {
-                        return Err(format!("Syntax Error: Duplicate 'private' block in custom '{}'  at line {}, column {}", name, self.peek().line, self.peek().column));
+                        return Err(
+                            format!(
+                                "Syntax Error: Duplicate 'private' block in custom '{}'  at line {}, column {}",
+                                name,
+                                self.peek().line,
+                                self.peek().column
+                            )
+                        );
                     }
-                    private_block =
-                        self.parse_field_block(&mut meta, Visibility::Private, generics.clone())?;
+                    private_block = self.parse_field_block(&mut meta, Visibility::Private)?;
                     used_settings.push(Setting::Private);
                     continue;
                 }
@@ -172,10 +189,16 @@ impl Parser {
                 //====================================================================
                 if t == TokenKind::Static {
                     if used_settings.contains(&Setting::Static) {
-                        return Err(format!("Syntax Error: Duplicate 'static' block in custom '{}'  at line {}, column {}", name, self.peek().line, self.peek().column));
+                        return Err(
+                            format!(
+                                "Syntax Error: Duplicate 'static' block in custom '{}'  at line {}, column {}",
+                                name,
+                                self.peek().line,
+                                self.peek().column
+                            )
+                        );
                     }
-                    static_block =
-                        self.parse_field_block(&mut meta, Visibility::Static, generics.clone())?;
+                    static_block = self.parse_field_block(&mut meta, Visibility::Static)?;
                     used_settings.push(Setting::Static);
                     continue;
                 }
@@ -184,10 +207,16 @@ impl Parser {
                 //====================================================================
                 if t == TokenKind::Handle {
                     if used_settings.contains(&Setting::Handle) {
-                        return Err(format!("Syntax Error: Duplicate 'handle' block in custom '{}'  at line {}, column {}", name, self.peek().line, self.peek().column));
+                        return Err(
+                            format!(
+                                "Syntax Error: Duplicate 'handle' block in custom '{}'  at line {}, column {}",
+                                name,
+                                self.peek().line,
+                                self.peek().column
+                            )
+                        );
                     }
-                    handle_block =
-                        self.parse_handle_block(&mut enabled_handles, &mut used_handles)?;
+                    handle_block = self.parse_handle_block(&mut used_handles)?;
                     used_settings.push(Setting::Handle);
                     continue;
                 }
@@ -197,7 +226,14 @@ impl Parser {
                 if t == TokenKind::Variants {
                     if used_settings.contains(&Setting::Variants) {
                         // Using Custom for Variants flag
-                        return Err(format!("Syntax Error: Duplicate 'variants' block in custom '{}'  at line {}, column {}", name, self.peek().line, self.peek().column));
+                        return Err(
+                            format!(
+                                "Syntax Error: Duplicate 'variants' block in custom '{}'  at line {}, column {}",
+                                name,
+                                self.peek().line,
+                                self.peek().column
+                            )
+                        );
                     }
                     self.advance(); // 'variants'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'variants'")?;
@@ -210,7 +246,7 @@ impl Parser {
                             let data_type = self.parse_type()?;
                             self.consume(
                                 TokenKind::RParen,
-                                "Expected ')' after enum variant size",
+                                "Expected ')' after enum variant size"
                             )?;
                             self.consume(TokenKind::Comma, "Expected ',' after enum variant size")?;
                             variants.push(EnumVariant {
@@ -240,17 +276,22 @@ impl Parser {
                 //====================================================================
                 if t == TokenKind::Param {
                     if used_settings.contains(&Setting::Param) {
-                        return Err(format!("Syntax Error: Duplicate 'param' block in custom '{}'  at line {}, column {}", name, self.peek().line, self.peek().column));
+                        return Err(
+                            format!(
+                                "Syntax Error: Duplicate 'param' block in custom '{}'  at line {}, column {}",
+                                name,
+                                self.peek().line,
+                                self.peek().column
+                            )
+                        );
                     }
                     self.advance(); // 'param'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'param'")?;
                     self.consume(TokenKind::LBrace, "Expected '{' to open param block")?;
 
                     while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        match self.parse_var_decl(false, false) {
-                            Ok(Decl::VarDecl {
-                                name, type_node, ..
-                            }) => {
+                        match self.parse_var_decl(ScopeType::Custom, false) {
+                            Ok(Decl::VarDecl { name, type_node, .. }) => {
                                 params.push(Param {
                                     name: name.clone(),
                                     type_node: type_node.clone(),
@@ -280,7 +321,14 @@ impl Parser {
                 //====================================================================
                 if t == TokenKind::Return {
                     if used_settings.contains(&Setting::Return) {
-                        return Err(format!("Syntax Error: Duplicate 'return' block in custom '{}'  at line {}, column {}", name, self.peek().line, self.peek().column));
+                        return Err(
+                            format!(
+                                "Syntax Error: Duplicate 'return' block in custom '{}'  at line {}, column {}",
+                                name,
+                                self.peek().line,
+                                self.peek().column
+                            )
+                        );
                     }
                     self.advance(); // 'return'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'return'")?;
@@ -294,21 +342,30 @@ impl Parser {
                 //====================================================================
                 if t == TokenKind::Statement {
                     if used_settings.contains(&Setting::Statement) {
-                        return Err(format!("Syntax Error: Duplicate 'statement' block in custom '{}'  at line {}, column {}", name, self.peek().line, self.peek().column));
+                        return Err(
+                            format!(
+                                "Syntax Error: Duplicate 'statement' block in custom '{}'  at line {}, column {}",
+                                name,
+                                self.peek().line,
+                                self.peek().column
+                            )
+                        );
                     }
                     self.advance(); // 'statement'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'statement'")?;
                     self.consume(TokenKind::LBrace, "Expected '{' to open statement block")?;
 
                     while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        match self.parse_statement("statement".to_string()) {
+                        match self.parse_statement(ScopeType::Custom) {
                             Ok(Some(stmt)) => statement_block.push(stmt),
                             Ok(None) => {
                                 if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
                                     self.advance();
                                 }
                             }
-                            Err(err) => return Err(err),
+                            Err(err) => {
+                                return Err(err);
+                            }
                         }
                     }
 
@@ -319,31 +376,17 @@ impl Parser {
                     used_settings.push(Setting::Statement);
                     continue;
                 }
-                //====================================================================
-                // length -> <value>;  data -> <name>;
-                //====================================================================
-                if t == TokenKind::TypeLength {
-                    if used_settings.contains(&Setting::Length) {
-                        return Err(format!("Syntax Error: Duplicate 'length' block in custom '{}'  at line {}, column {}", name, self.peek().line, self.peek().column));
-                    }
-                    self.advance(); // consume 'length'
-                    self.consume(TokenKind::Arrow, "Expected '->' after 'length'")?;
-                    let value = self.parse_expression()?;
-                    self.consume(TokenKind::SemiColon, "Expected ';' after length value")?;
-                    length = match value {
-                        Expr::LiteralInt(i) => i,
-                        _ => {
-                            return Err(
-                                "Syntax Error: Expected integer value for length".to_string()
-                            )
-                        }
-                    };
-                    used_settings.push(Setting::Length);
-                    continue;
-                }
+
                 if t == TokenKind::TypeData {
                     if used_settings.contains(&Setting::Data) {
-                        return Err(format!("Syntax Error: Duplicate 'data' block in custom '{}'  at line {}, column {}", name, self.peek().line, self.peek().column));
+                        return Err(
+                            format!(
+                                "Syntax Error: Duplicate 'data' block in custom '{}'  at line {}, column {}",
+                                name,
+                                self.peek().line,
+                                self.peek().column
+                            )
+                        );
                     }
                     self.advance(); // consume 'data'
                     self.consume(TokenKind::Arrow, "Expected '->' after 'data'")?;
@@ -370,33 +413,23 @@ impl Parser {
                 //====================================================================
                 // todo : improve the settings management to insure that the label is only used once
                 if let TokenKind::LabelName(name) = t.clone() {
-                    self.advance(); // consume label name  @label
-                    self.consume(TokenKind::Arrow, "Expected '->' after label block")?;
-                    self.consume(TokenKind::LBrace, "Expected '{' to open label block")?;
-                    let mut body = Vec::new();
-                    while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        match self.parse_statement(name.clone()) {
-                            Ok(Some(stmt)) => body.push(stmt),
-                            Ok(None) => {
-                                if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                                    self.advance();
-                                }
-                            }
-                            Err(err) => return Err(err),
-                        }
-                    }
-                    self.consume(TokenKind::RBrace, "Expected '}' to close label block")?;
-                    label_blocks.push(Decl::LabelDecl { name: name, body });
+                    let label_block = self.parse_label_decl(ScopeType::Custom)?;
+                    label_blocks.push(label_block);
                     continue;
                 }
             } else {
-                print!("DEBUG: Invalid field found : {} , that is not allow  to use it \n\t -  enable some setting it will work if it valid" , t.as_str());
-                return Err(format!(
-                    "Syntax Error: Invalid field ''{:?}'' declaration at line {}, column {}",
-                    t,
-                    self.peek().line,
-                    self.peek().column
-                ));
+                print!(
+                    "DEBUG: Invalid field found : {} , that is not allow  to use it \n\t -  enable some setting it will work if it valid",
+                    t.as_str()
+                );
+                return Err(
+                    format!(
+                        "Syntax Error: Invalid field ''{:?}'' declaration at line {}, column {}",
+                        t,
+                        self.peek().line,
+                        self.peek().column
+                    )
+                );
             }
         }
         if self.peek().kind == TokenKind::RBrace {
@@ -430,10 +463,7 @@ impl Parser {
                         BaseType::Unknown
                     }
                 }
-                Expr::PropertyAccess {
-                    ref object,
-                    ref property,
-                } => {
+                Expr::PropertyAccess { ref object, ref property } => {
                     if let Expr::This = **object {
                         if let Some(var_meta) = meta.vars.get(property) {
                             var_meta.type_node.clone()
@@ -447,18 +477,15 @@ impl Parser {
                 _ => BaseType::Unknown,
             };
 
-            meta.vars.insert(
-                "data".to_string(),
-                VarMetadata {
-                    name: "data".to_string(),
-                    type_node: inferred_base_type,
-                    visibility: Visibility::Public,
-                    editability: Editability::Editable,
-                    scope: ScopeType::Custom,
-                    is_array: false,
-                    is_heaped: false,
-                },
-            );
+            meta.vars.insert("data".to_string(), VarMetadata {
+                name: "data".to_string(),
+                type_node: inferred_base_type,
+                visibility: Visibility::Public,
+                editability: Editability::Editable,
+                scope: ScopeType::Custom,
+                is_array: false,
+                is_heaped: false,
+            });
         }
 
         self.metadata.insert(name.clone(), meta);
@@ -472,14 +499,16 @@ impl Parser {
             } else {
                 Some(params)
             },
-            flags: if flags.is_empty() { None } else { Some(flags) },
+            flags: if flags.is_empty() {
+                None
+            } else {
+                Some(flags)
+            },
             labels: if labels.is_empty() {
                 None
             } else {
                 Some(labels)
             },
-
-            length,
             data,
             extends,
             return_type: Some(return_type),

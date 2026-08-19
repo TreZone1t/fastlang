@@ -3,28 +3,28 @@ custom MathScope -> {
     data -> 10;  
     handle -> {
         fn add(other: MathScope) -> MathScope {
-            MathScope result -> new MathScope();
-            result.data -> this.data + other.data;
+            MathScope result = new MathScope();
+            result.data = this.data + other.data;
             return result;
         }
         fn sub(other: MathScope) -> MathScope {
-            MathScope result -> new MathScope();
-            result.data -> this.data - other.data;
+            MathScope result = new MathScope();
+            result.data = this.data - other.data;
             return result;
         }
         fn mul(other: MathScope) -> MathScope {
-            MathScope result -> new MathScope();
-            result.data -> this.data * other.data;
+            MathScope result = new MathScope();
+            result.data = this.data * other.data;
             return result;
         }
         fn div(other: MathScope) -> MathScope {
-            MathScope result -> new MathScope();
-            result.data -> this.data / other.data;
+            MathScope result = new MathScope();
+            result.data = this.data / other.data;
             return result;
         }
         fn mod(other: MathScope) -> MathScope {
-            MathScope result -> new MathScope();
-            result.data -> this.data % other.data;
+            MathScope result = new MathScope();
+            result.data = this.data % other.data;
             return result;
         }
         fn index_access(index: int(32)) -> int(32) {
@@ -76,7 +76,7 @@ fn main() -> int(32) {
   log("Index access a[5]:");
   log(a[5]);
 
-  Direction dir1 -> Direction::Up;
+  Direction dir1 = Direction::Up;
   log(dir1);
   return 0;
 }

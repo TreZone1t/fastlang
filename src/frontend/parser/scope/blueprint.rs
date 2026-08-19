@@ -92,7 +92,7 @@ impl Parser {
         let mut methods: Vec<Decl> = Vec::new();
         while self.peek().kind != TokenKind::RBrace && !self.is_at_end() {
             // Parse functions inside impl
-            let stmt = self.parse_statement("impl".to_string())?;
+            let stmt = self.parse_statement(ScopeType::Impl)?;
             if let Some(Stmt::Declaration(s)) = stmt {
                 methods.push(s);
             } else if let Some(_) = stmt {

@@ -22,11 +22,7 @@ impl Parser {
         return name;
     }
     pub fn is_valid_handle(&mut self, handles: Vec<HandleMethods>, t: TokenKind) -> bool {
-        eprintln!(
-            "HANDLE CHECK: as_str={:?} kind={:?}",
-            t.as_str(),
-            self.peek().kind
-        );
+        eprintln!("HANDLE CHECK: as_str={:?} kind={:?}", t.as_str(), self.peek().kind);
         let t_h = self.get_handle_type(t);
         for h in handles {
             if h == t_h {
@@ -42,17 +38,10 @@ impl Parser {
             return true;
         }
         let mut all_settings: Vec<Setting> = Vec::new();
-        all_settings.push(Setting::CustomIndexAccess);
-        all_settings.push(Setting::CustomConstructor);
-        all_settings.push(Setting::CustomIterator);
-        all_settings.push(Setting::CustomDisplay);
-        all_settings.push(Setting::CustomGeneric);
-        all_settings.push(Setting::CustomOperators);
         all_settings.push(Setting::Param);
         all_settings.push(Setting::Private);
         all_settings.push(Setting::Public);
         all_settings.push(Setting::Static);
-        all_settings.push(Setting::Length);
         all_settings.push(Setting::Extends);
         all_settings.push(Setting::Variants);
         all_settings.push(Setting::Leave);

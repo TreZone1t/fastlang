@@ -2,7 +2,7 @@
 // Test custom scopes, flags, settings, and constructors
 
 custom DataBuffer -> {
-    enable [index_access, length , private , public , constructor , operators , data];
+    enable [private , public , constructor  , data];
     private -> {
     int(32) size;
     int(32) capacity;
@@ -10,8 +10,8 @@ custom DataBuffer -> {
     // Constructor
     constructor -> {
     init(size : int(32)) -> {
-    this.size -> size;
-    this.capacity -> size;
+    this.size = size;
+    this.capacity = size;
        }
     }
     
@@ -33,8 +33,8 @@ custom DataBuffer -> {
         }
         fn add(value : int(32)) -> int(32) {
             if (this.size < this.capacity) {
-                this.data[this.size] -> value;
-                this.size -> this.size + 1;
+                this.data[this.size] = value;
+                this.size = this.size + 1;
                 return value;
             } else {
                 return 0;

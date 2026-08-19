@@ -3,12 +3,7 @@ use crate::frontend::parser::ast::*;
 use crate::frontend::parser::parser::Parser;
 
 impl Parser {
-    pub(crate) fn parse_enable(
-        &mut self,
-        setting: &mut Vec<Setting>,
-        handles: &mut Vec<HandleMethods>,
-        flags: &mut Vec<Flag>,
-    ) -> Result<(), String> {
+    pub(crate) fn parse_enable(&mut self, setting: &mut Vec<Setting>) -> Result<(), String> {
         self.advance(); // enable
         self.consume(TokenKind::LBracket, "Expected '[' or all after enable")?;
         while !self.is_at_end() {
@@ -25,81 +20,16 @@ impl Parser {
             if next_kind == TokenKind::Comma {
                 self.advance();
             } else if next_kind != TokenKind::RBracket {
-                return Err(format!(
-                    "Syntax Error: Expected ',' or ']' after setting, found '{}'",
-                    next_kind.as_str()
-                ));
+                return Err(
+                    format!(
+                        "Syntax Error: Expected ',' or ']' after setting, found '{}'",
+                        next_kind.as_str()
+                    )
+                );
             }
         }
         // we need now to filter the settings and enable the handles
-        for e in setting.clone() {
-            match e {
-                Setting::CustomDisplay => handles.push(HandleMethods::Display),
-                Setting::Call => handles.push(HandleMethods::Call),
-                Setting::CustomIndexAccess => handles.push(HandleMethods::IndexAccess),
-                Setting::CustomIterator => {
-                    handles.push(HandleMethods::Iterator);
-                    handles.push(HandleMethods::Next);
-                }
-                Setting::CustomOperators => {
-                    handles.push(HandleMethods::Add);
-                    handles.push(HandleMethods::Sub);
-                    handles.push(HandleMethods::Mul);
-                    handles.push(HandleMethods::Div);
-                    handles.push(HandleMethods::Mod);
-                }
-                Setting::Break => {
-                    if !flags.contains(&Flag::HasBreak) {
-                        flags.push(Flag::HasBreak);
-                    }
-                    handles.push(HandleMethods::Break)
-                }
-                Setting::Error => {
-                    if !flags.contains(&Flag::HasError) {
-                        flags.push(Flag::HasError);
-                    }
-                    handles.push(HandleMethods::Error)
-                }
-                Setting::Throw => {
-                    if !flags.contains(&Flag::HasThrow) {
-                        flags.push(Flag::HasThrow);
-                    }
-                    handles.push(HandleMethods::Error)
-                }
-                Setting::Leave => handles.push(HandleMethods::Leave),
-                Setting::Yield => handles.push(HandleMethods::Yield),
-                Setting::Data => handles.push(HandleMethods::Data),
-                Setting::Length => handles.push(HandleMethods::Length),
-                Setting::Size => handles.push(HandleMethods::Size),
-                Setting::Exit => {
-                    if !flags.contains(&Flag::HasExit) {
-                        flags.push(Flag::HasExit);
-                    }
-                    handles.push(HandleMethods::Exit)
-                }
-                Setting::Return => {
-                    if !flags.contains(&Flag::HasReturn) {
-                        flags.push(Flag::HasReturn);
-                    }
-                }
-                Setting::Case => {
-                    if !flags.contains(&Flag::HasSwitch) {
-                        flags.push(Flag::HasSwitch);
-                    }
-                }
-                _ => {}
-            }
-        }
-        if setting.contains(&Setting::Custom) {
-            setting.push(Setting::CustomIndexAccess);
-            setting.push(Setting::CustomConstructor);
-            setting.push(Setting::CustomGeneric);
-            setting.push(Setting::CustomIterator);
-            setting.push(Setting::CustomDisplay);
-            setting.push(Setting::CustomOperators);
-            // we need to remove the custom from the list
-            setting.retain(|s| s != &Setting::Custom);
-        } else if setting.contains(&Setting::All) {
+        if setting.contains(&Setting::All) {
             self.enable_all(setting)?;
             setting.retain(|s| s != &Setting::All);
         } else if setting.contains(&Setting::OOP) {
@@ -124,18 +54,10 @@ impl Parser {
         setting.push(Setting::Return); //8
         setting.push(Setting::Break); //9
         setting.push(Setting::Case); //10
-        setting.push(Setting::CustomIndexAccess);
-        setting.push(Setting::CustomConstructor); //11
-        setting.push(Setting::CustomGeneric); //12
-        setting.push(Setting::CustomIterator); //13
-        setting.push(Setting::CustomDisplay); //14
-        setting.push(Setting::CustomOperators); //15
         setting.push(Setting::Error); //16
         setting.push(Setting::Handle); //17
         setting.push(Setting::Variants); //18
-        setting.push(Setting::Length); //19
         setting.push(Setting::Data); //20
-
         Ok(())
     }
 
@@ -154,7 +76,7 @@ impl Parser {
         Ok(())
     }
 
-    pub(crate) fn parse_label_decl(&mut self, scope: String) -> Result<Decl, String> {
+    pub(crate) fn parse_label_decl(&mut self, scope: ScopeType) -> Result<Decl, String> {
         let label_name = if let TokenKind::LabelName(name) = self.peek().kind.clone() {
             self.advance();
             name
@@ -171,7 +93,7 @@ impl Parser {
         if self.peek().kind == TokenKind::LBrace {
             self.advance(); // consume '{'
             while self.peek().kind != TokenKind::RBrace && self.peek().kind != TokenKind::EOF {
-                if let Some(stmt) = self.parse_statement(scope.clone())? {
+                if let Some(stmt) = self.parse_statement(ScopeType::Label)? {
                     body.push(stmt);
                 }
             }
@@ -191,174 +113,18 @@ impl Parser {
     pub(crate) fn parse_field_block(
         &mut self,
         metadata: &mut TypeMetadata,
-        field_type: Visibility,
-        generics: Vec<BaseType>,
+        field_type: Visibility //todo : fix it
     ) -> Result<Vec<Decl>, String> {
         self.advance(); // 'public' , 'private' or 'static'
         self.consume(TokenKind::Arrow, "Expected '->' after 'public'")?;
         self.consume(TokenKind::LBrace, "Expected '{' to open public block")?;
         let mut block = Vec::new();
-        let mut generics = generics;
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
             //we have only fn decl and var decl so we will not use the parse_statement ever here
-            let token = self.peek().kind.clone();
-            if token == TokenKind::Fn {
-                self.advance(); // consume 'fn'
-                let method_name = self.get_identifier(
-                    format!(
-                        "Expected a scope method name after 'fn' at line {}, column {}",
-                        self.peek().line,
-                        self.peek().column
-                    )
-                    .as_str(),
-                )?;
-                let mut params: Vec<Param> = Vec::new();
-                let return_type: BaseType;
-                self.consume(TokenKind::LParen, "Expected '(' after scope method name")?;
-                if self.peek().kind != TokenKind::RParen {
-                    // we expect a list of params
-                    // (a : int(32), b : int(32)) -> void
-                    loop {
-                        let param_name: String = self.get_identifier("Expected parameter name")?;
-                        self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
-                        let type_node = self.parse_type()?;
-                        params.push(Param {
-                            name: param_name,
-                            type_node: type_node,
-                        });
-                        if self.peek().kind == TokenKind::Comma {
-                            self.advance();
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                self.consume(
-                    TokenKind::RParen,
-                    "Expected ')' after scope method parameters",
-                )?;
-                self.consume(
-                    TokenKind::Arrow,
-                    "Expected '->' after scope method parameters",
-                )?;
-                if matches!(self.peek().kind, TokenKind::Identifier(_)) {
-                    let type_name = self.get_identifier("Unexpected error happen")?;
-                    if generics.contains(&BaseType::from_str(&type_name)) {
-                        return_type = BaseType::from_str(&type_name);
-                    } else {
-                        return Err(format!(
-                            "Syntax Error: Expected generic type after scope method name at line {}, column {}",
-                            self.peek().line,
-                            self.peek().column
-                        ));
-                    }
-                } else if self.is_type_token(&self.peek().kind.clone()) {
-                    return_type = self.parse_type()?;
-                } else {
-                    return_type = BaseType::Void;
-                }
-                let fn_type = FnType {
-                    name: method_name.clone(),
-                    params: params.clone(),
-                    return_type: return_type.clone(),
-                };
-                self.consume(TokenKind::LBrace, "Expected '{' to open scope method body")?;
-                let body = self.parse_block("oop".to_string())?;
-                self.consume(TokenKind::RBrace, "Expected '}' to close scope method body")?;
-                metadata.methods.insert(method_name.clone(), fn_type);
-                block.push(Decl::FnDecl {
-                    is_exported: false,
-                    name: method_name.clone(),
-                    params,
-                    return_type,
-                    body,
-                });
-                continue;
+            let stmt = self.parse_statement(ScopeType::Block)?;
+            if let Some(Stmt::Declaration(s)) = stmt {
+                block.push(s);
             }
-            if self.is_type_token(&token) {
-                let type_name = self.parse_type()?;
-                let var_name = self.get_identifier(
-                    format!(
-                        " expected a name after type {:?} at line {}, column {}",
-                        type_name.clone(),
-                        self.peek().line,
-                        self.peek().column
-                    )
-                    .as_str(),
-                )?;
-                metadata.fields.insert(var_name.clone(), type_name.clone());
-                let mut val: Option<Expr> = None;
-                if self.peek().kind == TokenKind::Arrow {
-                    self.advance();
-                    val = Some(self.parse_expression()?);
-                }
-                // ! fix it
-                if self.peek().kind == TokenKind::SemiColon {
-                    println!("DEBUG: parse_field_block: {:?}", self.peek().kind);
-                    self.advance();
-                }
-                let is_heaped = if let BaseType::Pointer(_) = type_name {
-                    true
-                } else {
-                    false
-                };
-                block.push(Decl::VarDecl {
-                    visibility: field_type.clone(),
-                    editability: Editability::Editable,
-                    type_node: type_name,
-                    name: var_name,
-                    value: val.unwrap_or(Expr::Identifier("__default__".to_string())),
-                });
-                continue;
-            }
-            if matches!(token, TokenKind::Identifier(_)) {
-                let type_name = self.get_identifier("Unexpected error happen")?;
-                if generics.contains(&BaseType::from_str(&type_name)) {
-                    let var_name = self.get_identifier(
-                        format!(
-                            " expected a name after generic type {} at line {}, column {}",
-                            type_name.clone(),
-                            self.peek().line,
-                            self.peek().column
-                        )
-                        .as_str(),
-                    )?;
-                    let type_ = BaseType::from_str(&type_name);
-                    metadata.fields.insert(var_name.clone(), type_.clone());
-                    let mut val: Option<Expr> = None;
-                    if self.peek().kind == TokenKind::Arrow {
-                        self.advance();
-                        val = Some(self.parse_expression()?);
-                        // ! fix it
-                        if self.peek().kind == TokenKind::SemiColon {
-                            println!("DEBUG: parse_field_block: {:?}", self.peek().kind);
-                            self.advance();
-                        }
-                    }
-                    let is_heaped = if let BaseType::Pointer(_) = type_.clone() {
-                        true
-                    } else {
-                        false
-                    };
-                    block.push(Decl::VarDecl {
-                        visibility: field_type,
-                        editability: Editability::Editable,
-                        type_node: BaseType::from_str(&type_name),
-                        name: var_name,
-                        value: val.unwrap_or(Expr::Identifier("__default__".to_string())),
-                    });
-                }
-            }
-            println!(
-                "DEBUG: token in parse_field_block: {:?} at line {}, column {}",
-                token,
-                self.peek().line,
-                self.peek().column
-            );
-            return Err(format!(
-                "Syntax Error: Expected fn or var declaration inside public block, found {:?}",
-                token
-            ));
         }
         self.consume(TokenKind::RBrace, "Expected '}' to close public block")?;
         if self.peek().kind == TokenKind::SemiColon {
@@ -383,12 +149,14 @@ impl Parser {
                 self.advance();
                 continue;
             } else {
-                return Err(format!(
-                    "Unexpected Token {} in generic block at line {}, column {} \n\t - use Capital Type name ",
-                    token.as_str(),
-                    self.peek().line,
-                    self.peek().column
-                ));
+                return Err(
+                    format!(
+                        "Unexpected Token {} in generic block at line {}, column {} \n\t - use Capital Type name ",
+                        token.as_str(),
+                        self.peek().line,
+                        self.peek().column
+                    )
+                );
             }
         }
         self.consume(TokenKind::Greater, "Expected '>' to close generic block")?;
@@ -397,8 +165,7 @@ impl Parser {
 
     pub(crate) fn parse_handle_block(
         &mut self,
-        allowed_methods: &mut Vec<HandleMethods>,
-        used_methods: &mut Vec<HandleMethods>,
+        used_methods: &mut Vec<HandleMethods>
     ) -> Result<Vec<Decl>, String> {
         let mut handle_fn: Vec<Decl> = vec![];
         self.advance(); // 'handle'
@@ -413,12 +180,11 @@ impl Parser {
                 let mut method_params: Vec<Param> = Vec::new();
                 let return_type: BaseType;
                 let method_name = self.peek().kind.clone().as_str().to_string();
-                if self.is_valid_handle(allowed_methods.clone(), self.peek().kind.clone())
-                    && !used_methods.contains(&self.get_handle_type(self.peek().kind.clone()))
+                if
+                    HandleMethods::from_str(&method_name) != HandleMethods::NotFound &&
+                    !used_methods.contains(&self.get_handle_type(self.peek().kind.clone()))
                 {
                     used_methods.push(self.get_handle_type(self.peek().kind.clone()));
-                    allowed_methods
-                        .pop_if(|m| m == &self.get_handle_type(self.peek().kind.clone()));
                     self.advance();
                     if self.peek().kind == TokenKind::LParen {
                         self.advance();
@@ -426,11 +192,10 @@ impl Parser {
                             // we expect a list of params
                             // (a : int(32), b : int(32)) -> void
                             loop {
-                                let name: String =
-                                    self.get_identifier("Expected parameter name")?;
+                                let name: String = self.get_identifier("Expected parameter name")?;
                                 self.consume(
                                     TokenKind::Colon,
-                                    "Expected ':' after parameter name",
+                                    "Expected ':' after parameter name"
                                 )?;
                                 let type_node = self.parse_type()?;
                                 method_params.push(Param {
@@ -446,11 +211,11 @@ impl Parser {
                         }
                         self.consume(
                             TokenKind::RParen,
-                            "Expected ')' after handle method parameters",
+                            "Expected ')' after handle method parameters"
                         )?;
                         self.consume(
                             TokenKind::Arrow,
-                            "Expected '->' after handle method parameters",
+                            "Expected '->' after handle method parameters"
                         )?;
                         return_type = self.parse_type()?;
                         self.consume(TokenKind::LBrace, "Expected '{' to open handle method body")?;
@@ -470,7 +235,14 @@ impl Parser {
                 println!("DEBUG: token: {:?}", self.peek().kind);
                 self.consume(TokenKind::RBrace, "Expected '}' to close handle block")?;
             } else {
-                return Err(format!("Syntax Error: this {} is not a valid allowed handle method in this scope at line {}, column {}",self.peek().kind.as_str(), self.peek().line, self.peek().column));
+                return Err(
+                    format!(
+                        "Syntax Error: this {} is not a valid allowed handle method in this scope at line {}, column {}",
+                        self.peek().kind.as_str(),
+                        self.peek().line,
+                        self.peek().column
+                    )
+                );
             }
         }
         self.consume(TokenKind::RBrace, "Expected '}' to close handle block")?;
@@ -479,7 +251,7 @@ impl Parser {
 
     pub(crate) fn parse_constructor_decl(
         &mut self,
-        meta: &mut TypeMetadata,
+        meta: &mut TypeMetadata
     ) -> Result<Option<Vec<ConstructorDecl>>, String> {
         self.advance(); // 'constructor'
         self.consume(TokenKind::Arrow, "Expected '->' after 'constructor'")?;
@@ -522,7 +294,7 @@ impl Parser {
                     println!(
                         "WARNING:constructors should have a return type after init, adding ->{{ at line {}, column {} ",
                         self.peek().line,
-                        self.peek().column ,
+                        self.peek().column
                     );
                 }
                 self.consume(TokenKind::LBrace, "Expected '{' for constructor body")?;
@@ -531,18 +303,16 @@ impl Parser {
                     //we have only fn decl and var decl so we will not use the parse_statement ever here
                     let token = self.peek().kind.clone();
                     if matches!(token, TokenKind::Identifier(_)) || token == TokenKind::This {
-                        let stmt = self.parse_statement("constructor".to_string())?;
+                        let stmt = self.parse_statement(ScopeType::Fn)?;
                         if stmt.is_none() {
                             return Err(
-                                "Syntax Error: Expected statement inside constructor block"
-                                    .to_string(),
+                                "Syntax Error: Expected statement inside constructor block".to_string()
                             );
                         }
                         body.push(stmt.unwrap());
                     } else {
                         return Err(
-                            "Syntax Error: Expected only reassignment inside constructor block"
-                                .to_string(),
+                            "Syntax Error: Expected only reassignment inside constructor block".to_string()
                         );
                     }
 
@@ -564,7 +334,14 @@ impl Parser {
                     params: param,
                 });
             } else {
-                return Err(format!("Syntax Error: this {} is not allowed in constructor block at line {}, column {} \n\t - use 'init(params) -> {{ ... }}' inside constructor block to declare constructors", self.peek().kind.as_str(), self.peek().line, self.peek().column));
+                return Err(
+                    format!(
+                        "Syntax Error: this {} is not allowed in constructor block at line {}, column {} \n\t - use 'init(params) -> {{ ... }}' inside constructor block to declare constructors",
+                        self.peek().kind.as_str(),
+                        self.peek().line,
+                        self.peek().column
+                    )
+                );
             }
         }
         self.consume(TokenKind::RBrace, "Expected '}' to close constructor block")?;
@@ -574,14 +351,16 @@ impl Parser {
     pub(crate) fn parse_block(&mut self, scope: String) -> Result<Vec<Stmt>, String> {
         let mut stmts: Vec<Stmt> = Vec::new();
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-            match self.parse_statement(scope.clone()) {
+            match self.parse_statement(ScopeType::Block) {
                 Ok(Some(stmt)) => stmts.push(stmt),
                 Ok(None) => {
                     if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
                         self.advance();
                     }
                 }
-                Err(err) => return Err(err),
+                Err(err) => {
+                    return Err(err);
+                }
             }
         }
         Ok(stmts)

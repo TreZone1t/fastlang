@@ -12,16 +12,12 @@ impl CodeGenerator {
                 let code = self.visit_expression(expr);
                 self.emit(&format!("{};", code));
             }
-            Stmt::ReassignStmt { target, value } => {
+            Stmt::ReassignStmt { target, value, op } => {
                 let target_code = self.visit_expression(target);
                 let val_code = self.visit_expression(value);
                 self.emit(&format!("{} = {};", target_code, val_code));
             }
-            Stmt::IfStmt {
-                condition,
-                then_block,
-                else_block,
-            } => {
+            Stmt::IfStmt { condition, then_block, else_block } => {
                 let cond_code = self.visit_expression(condition);
                 self.emit(&format!("if ({}) {{", cond_code));
                 self.indent_level += 1;
@@ -39,15 +35,10 @@ impl CodeGenerator {
                 }
                 self.emit("}");
             }
-            Stmt::ForInStmt {
-                item,
-                iterable,
-                body,
-            } => {
+            Stmt::ForInStmt { item, iterable, body } => {
                 let iterable_code = self.visit_expression(iterable);
-                let item_code = if let Stmt::Declaration(Decl::VarDecl {
-                    type_node, name, ..
-                }) = &**item
+                let item_code = if
+                    let Stmt::Declaration(Decl::VarDecl { type_node, name, .. }) = &**item
                 {
                     let cpp_type = match type_node.clone() {
                         BaseType::Int8 => "int8_t".to_string(),
@@ -102,9 +93,7 @@ impl CodeGenerator {
                 self.indent_level -= 1;
                 self.emit("}");
             }
-            Stmt::SwitchStmt {
-                condition, cases, ..
-            } => {
+            Stmt::SwitchStmt { condition, cases, .. } => {
                 let cond_code = self.visit_expression(condition);
                 self.emit(&format!("switch ({}) {{", cond_code));
                 self.indent_level += 1;
@@ -148,12 +137,7 @@ impl CodeGenerator {
                     self.emit(&format!("delete {};", expr_code));
                 }
             }
-            Stmt::ForStmt {
-                init,
-                condition,
-                increment,
-                body,
-            } => {
+            Stmt::ForStmt { init, condition, increment, body } => {
                 self.emit("{");
                 self.indent_level += 1;
                 if let Some(i) = init {
@@ -187,11 +171,7 @@ impl CodeGenerator {
                 self.indent_level -= 1;
                 self.emit("}");
             }
-            Stmt::ForIn {
-                item_decl,
-                iterable,
-                body,
-            } => {
+            Stmt::ForIn { item_decl, iterable, body } => {
                 let old_out = std::mem::take(&mut self.output);
                 self.visit_statement(item_decl);
                 let mut decl_code = std::mem::replace(&mut self.output, old_out);
@@ -259,21 +239,14 @@ impl CodeGenerator {
                 let expr_code = self.visit_expression(expr);
                 self.emit(&format!("throw std::runtime_error({});", expr_code));
             }
-            Stmt::TryCatchStmt {
-                try_block,
-                catch_param,
-                catch_block,
-            } => {
+            Stmt::TryCatchStmt { try_block, catch_param, catch_block } => {
                 self.emit("try {");
                 self.indent_level += 1;
                 for s in try_block {
                     self.visit_statement(s);
                 }
                 self.indent_level -= 1;
-                self.emit(&format!(
-                    "}} catch (const std::exception& {}) {{",
-                    catch_param
-                ));
+                self.emit(&format!("}} catch (const std::exception& {}) {{", catch_param));
                 self.indent_level += 1;
                 for s in catch_block {
                     self.visit_statement(s);
@@ -283,10 +256,9 @@ impl CodeGenerator {
             }
             Stmt::EnableStmt(_) | Stmt::DisableStmt(_) => {}
             _ => {
-                self.emit(&format!(
-                    "// TODO: unimplemented statement {:?} or something gone wrong",
-                    stmt,
-                ));
+                self.emit(
+                    &format!("// TODO: unimplemented statement {:?} or something gone wrong", stmt)
+                );
             }
         }
     }
@@ -303,18 +275,21 @@ impl CodeGenerator {
                 self.indent_level -= 1;
                 self.emit("};");
 
-                self.emit(&format!(
-                    "inline std::ostream& operator<<(std::ostream& os, const {}& obj) {{",
-                    name
-                ));
+                self.emit(
+                    &format!("inline std::ostream& operator<<(std::ostream& os, const {}& obj) {{", name)
+                );
                 self.indent_level += 1;
                 self.emit("switch (obj) {");
                 self.indent_level += 1;
                 for variant in variants.iter() {
-                    self.emit(&format!(
-                        "case {}::{}: os << \"{}\"; break;",
-                        name, variant.name, variant.name
-                    ));
+                    self.emit(
+                        &format!(
+                            "case {}::{}: os << \"{}\"; break;",
+                            name,
+                            variant.name,
+                            variant.name
+                        )
+                    );
                 }
                 self.indent_level -= 1;
                 self.emit("}");
@@ -322,13 +297,7 @@ impl CodeGenerator {
                 self.indent_level -= 1;
                 self.emit("}");
             }
-            Decl::VarDecl {
-                name,
-                type_node,
-                value,
-                editability,
-                ..
-            } => {
+            Decl::VarDecl { name, type_node, value, editability, .. } => {
                 let val_code = self.visit_expression(value);
                 let is_param = val_code == "__param__";
                 let cpp_type = match type_node {
@@ -349,10 +318,7 @@ impl CodeGenerator {
                 if is_param {
                     self.emit(&format!("{}{} {};", const_prefix, cpp_type, name));
                 } else {
-                    self.emit(&format!(
-                        "{}{} {} = {};",
-                        const_prefix, cpp_type, name, val_code
-                    ));
+                    self.emit(&format!("{}{} {} = {};", const_prefix, cpp_type, name, val_code));
                 }
             }
             Decl::ArrayDecl {
@@ -362,6 +328,7 @@ impl CodeGenerator {
                 name,
                 length,
                 value,
+                assign_op,
             } => {
                 let val_code = self.visit_expression(value);
                 let len_code = self.visit_expression(length);
@@ -383,15 +350,18 @@ impl CodeGenerator {
                 let const_prefix = if is_const { "const " } else { "" };
 
                 if val_code == "__param__" {
-                    self.emit(&format!(
-                        "{}{} {}[{}];",
-                        const_prefix, cpp_type, name, len_code
-                    ));
+                    self.emit(&format!("{}{} {}[{}];", const_prefix, cpp_type, name, len_code));
                 } else {
-                    self.emit(&format!(
-                        "{}{} {}[{}] = {};",
-                        const_prefix, cpp_type, name, len_code, val_code
-                    ));
+                    self.emit(
+                        &format!(
+                            "{}{} {}[{}] = {};",
+                            const_prefix,
+                            cpp_type,
+                            name,
+                            len_code,
+                            val_code
+                        )
+                    );
                 }
             }
             Decl::ClassDecl {
@@ -421,8 +391,7 @@ impl CodeGenerator {
                 }
                 if let Some(constructors) = constructor {
                     for c in constructors {
-                        let param_list: Vec<String> = c
-                            .params
+                        let param_list: Vec<String> = c.params
                             .iter()
                             .filter(|p| p.type_node.as_str() != "type")
                             .map(|p| {
@@ -480,8 +449,7 @@ impl CodeGenerator {
                 }
                 if let Some(constructors) = constructor {
                     for c in constructors {
-                        let param_list: Vec<String> = c
-                            .params
+                        let param_list: Vec<String> = c.params
                             .iter()
                             .filter(|p| p.type_node.as_str() != "type")
                             .map(|p| {
@@ -520,13 +488,7 @@ impl CodeGenerator {
                 }
                 self.emit("};");
             }
-            Decl::FnDecl {
-                name,
-                params,
-                return_type,
-                body,
-                is_exported: _,
-            } => {
+            Decl::FnDecl { name, params, return_type, body, is_exported: _ } => {
                 let mut ret_type_str = match return_type {
                     BaseType::Int8 => "int8_t".to_string(),
                     BaseType::Int16 => "int16_t".to_string(),
@@ -562,12 +524,7 @@ impl CodeGenerator {
 
                 let safe_name = if name == "throw" { "_throw" } else { name };
 
-                self.emit(&format!(
-                    "{} {}({}) {{",
-                    ret_type_str,
-                    safe_name,
-                    param_strs.join(", ")
-                ));
+                self.emit(&format!("{} {}({}) {{", ret_type_str, safe_name, param_strs.join(", ")));
 
                 self.indent_level += 1;
                 for s in body {
@@ -586,7 +543,6 @@ impl CodeGenerator {
                 flags,
                 labels,
                 data,
-                length,
                 handle_block,
                 ..
             } => {
@@ -609,27 +565,24 @@ impl CodeGenerator {
                 };
 
                 if has_display {
-                    self.emit(&format!(
-                        "friend std::ostream& operator<<(std::ostream& os, {}& obj) {{",
-                        name
-                    ));
+                    self.emit(
+                        &format!("friend std::ostream& operator<<(std::ostream& os, {}& obj) {{", name)
+                    );
                     self.emit("    os << obj.display();");
                     self.emit("    return os;");
                     self.emit("}");
                 } else {
-                    self.emit(&format!(
-                        "friend std::ostream& operator<<(std::ostream& os, const {}& obj) {{",
-                        name
-                    ));
+                    self.emit(
+                        &format!("friend std::ostream& operator<<(std::ostream& os, const {}& obj) {{", name)
+                    );
                     self.emit(&format!("    os << \"[object {}]\";", name));
                     self.emit("    return os;");
                     self.emit("}");
                 }
 
-                self.emit(&format!("int length = {};", length));
                 if let Some(d) = data {
                     let d_code = self.visit_expression(d);
-                    self.emit(&format!("int data = {};", d_code));
+                    self.emit(&format!("auto data = {};", d_code));
                 }
 
                 let mut default_flags = std::collections::HashSet::from([
@@ -684,12 +637,7 @@ impl CodeGenerator {
                 let mut unified_return_type = "void".to_string();
                 if let Some(handles) = handle_block {
                     for h in handles {
-                        if let Decl::FnDecl {
-                            name,
-                            return_type: rt,
-                            ..
-                        } = h
-                        {
+                        if let Decl::FnDecl { name, return_type: rt, .. } = h {
                             if name == "call" || name == "leave" || name == "yield" {
                                 unified_return_type = match rt {
                                     BaseType::Int8 => "int8_t".to_string(),
@@ -711,14 +659,7 @@ impl CodeGenerator {
 
                 if let Some(handles) = handle_block {
                     for h in handles {
-                        if let Decl::FnDecl {
-                            name,
-                            params,
-                            return_type,
-                            body,
-                            is_exported,
-                        } = h
-                        {
+                        if let Decl::FnDecl { name, params, return_type, body, is_exported } = h {
                             if name == "call" {
                                 let ret_type_str = match return_type {
                                     BaseType::Int8 => "int8_t".to_string(),
@@ -767,11 +708,7 @@ impl CodeGenerator {
 
                 let has_call_handle = handle_block.as_ref().map_or(false, |handles: &Vec<Decl>| {
                     handles.iter().any(|h| {
-                        if let Decl::FnDecl { name, .. } = h {
-                            name == "call"
-                        } else {
-                            false
-                        }
+                        if let Decl::FnDecl { name, .. } = h { name == "call" } else { false }
                     })
                 });
 
@@ -856,13 +793,7 @@ impl CodeGenerator {
             // `name x = val;`  →  auto& x = val;  (ReadOnly)
             // `name x -> modify val;`  →  auto& x = val;  (ReadWrite / mutable ref)
             // `name x -> new T[...]`  →  auto* x = new T[...];  (heap)
-            Decl::NameDecl {
-                name,
-                target,
-                access_mode,
-                is_heap,
-                ..
-            } => {
+            Decl::NameDecl { name, target, access_mode, is_heap, .. } => {
                 let target_code = self.visit_expression(target);
                 let cpp_decl = if *is_heap {
                     // heap-allocated (e.g. new int(32)[...]) → raw pointer
@@ -883,12 +814,7 @@ impl CodeGenerator {
 
             // ── PointerDecl ───────────────────────────────────────────────
             // `int(32)* x[5] = new int(32)[...]`  →  int32_t* x = new int32_t[5]{...};
-            Decl::PointerDecl {
-                name,
-                inner_type,
-                length,
-                value,
-            } => {
+            Decl::PointerDecl { name, inner_type, length, value } => {
                 let cpp_inner = match inner_type {
                     BaseType::Int8 => "int8_t".to_string(),
                     BaseType::Int16 => "int16_t".to_string(),
@@ -900,7 +826,7 @@ impl CodeGenerator {
                     BaseType::Char => "char".to_string(),
                     BaseType::Bool => "bool".to_string(),
                     BaseType::Void => "void".to_string(),
-                    BaseType::Custom { name: n, .. }
+                    | BaseType::Custom { name: n, .. }
                     | BaseType::Class { name: n, .. }
                     | BaseType::Struct { name: n, .. } => n.clone(),
                     _ => "auto".to_string(),
@@ -908,17 +834,16 @@ impl CodeGenerator {
                 let val_code = self.visit_expression(value);
                 if let Some(len_expr) = length {
                     let len_code = self.visit_expression(len_expr);
-                    self.emit(&format!(
-                        "{}* {} = {}; // length: {}",
-                        cpp_inner, name, val_code, len_code
-                    ));
+                    self.emit(
+                        &format!("{}* {} = {}; // length: {}", cpp_inner, name, val_code, len_code)
+                    );
                 } else {
                     self.emit(&format!("{}* {} = {};", cpp_inner, name, val_code));
                 }
             }
 
             _ => {
-                self.emit(&format!("// TODO: unimplemented declaration {:?}", decl,));
+                self.emit(&format!("// TODO: unimplemented declaration {:?}", decl));
             }
         }
     }

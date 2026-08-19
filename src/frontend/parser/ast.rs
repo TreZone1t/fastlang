@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::frontend::lexer::token::TokenKind::{self, For};
+use crate::frontend::lexer::token::TokenKind::{ self, For };
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Visibility {
@@ -95,11 +95,7 @@ impl BaseType {
             BaseType::Pointer(t) => format!("pointer<{}>", t.as_str()),
             BaseType::Type(t) => format!("type<{}>", t.as_str()),
             BaseType::Array { base_type, size } => {
-                format!(
-                    "array<{}[{}]>",
-                    base_type.as_str(),
-                    size.clone().unwrap().as_str()
-                )
+                format!("array<{}[{}]>", base_type.as_str(), size.clone().unwrap().as_str())
             }
             BaseType::Custom { name, .. } => format!("custom<{}>", name),
             BaseType::Struct { name, .. } => format!("struct<{}>", name),
@@ -158,11 +154,11 @@ pub struct VarMetadata {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeMetadata {
-    pub name: String,                      // "Node"
+    pub name: String, // "Node"
     pub fields: HashMap<String, BaseType>, // {"data": Int, "next": UserType("Node")}
     pub constructor: Option<Vec<ConstructorType>>,
-    pub params: Vec<Param>,               // {"value": Int}
-    pub generics: Vec<BaseType>,          // {"T": UserType("Type")}
+    pub params: Vec<Param>, // {"value": Int}
+    pub generics: Vec<BaseType>, // {"T": UserType("Type")}
     pub methods: HashMap<String, FnType>, // {"set_next": Node.set_next -> void}
     pub handles: Vec<HandleMethods>,
     pub vars: HashMap<String, VarMetadata>,
@@ -172,14 +168,10 @@ pub struct TypeMetadata {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AccessMode {
-    ReadOnly,  // default (e.g., let name x = y;)
+    ReadOnly, // default (e.g., let name x = y;)
     ReadWrite, // when using modify (e.g., let name x = modify y;)
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum ReferenceKind {
-    Name,
-}
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScopeType {
     Fn,
@@ -187,12 +179,14 @@ pub enum ScopeType {
     Class,
     Struct,
     Custom,
-    //todo : add looped  so we will add setting for that instead
-    // Case, //todo : the same
-    Switch,
+    Impl,
     Enum,
-    Local,
+    Case,
+    Switch,
+    Loop,
     Global,
+    Label,
+    Handle,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
@@ -240,20 +234,11 @@ impl Flag {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Setting {
     //global to add a list of settings
-    All,      // all of the settings
-    OOP,      // private , public , static , extends , constructor
+    All, // all of the settings
+    OOP, // private , public , static , extends , constructor
     Function, // param , statement , return
-    Debug,    // error , break , throw , exit , return
-    State,    // leave , yield , goto , label , call
-    Custom, // custom_index_access , custom_constructor , custom_generic , custom_iterator , custom_display , custom_operators
-    //custom
-    CustomIndexAccess,
-    CustomConstructor,
-
-    CustomGeneric,
-    CustomIterator,
-    CustomDisplay,
-    CustomOperators,
+    Debug, // error , break , throw , exit , return
+    State, // leave , yield , goto , label , call
     Call,
     //fn
     Param,
@@ -275,9 +260,7 @@ pub enum Setting {
     Yield,
     Leave,
     // array and str
-    Length,
     Data,
-    Size,
     //all
     Throw,
     Error,
@@ -295,14 +278,6 @@ impl Setting {
             "function" => Setting::Function,
             "debug" => Setting::Debug,
             "state" => Setting::State,
-            "custom" => Setting::Custom,
-            //custom -------
-            "index_access" | "custom_index_access" => Setting::CustomIndexAccess,
-            "constructor" | "custom_constructor" => Setting::CustomConstructor,
-            "generic" | "custom_generic" => Setting::CustomGeneric,
-            "iterator" | "custom_iterator" => Setting::CustomIterator,
-            "display" | "custom_display" => Setting::CustomDisplay,
-            "operators" | "custom_operators" => Setting::CustomOperators,
             //fn ---
             "param" => Setting::Param,
             "statement" => Setting::Statement,
@@ -322,9 +297,6 @@ impl Setting {
             "call" => Setting::Call,
             //enum --
             "variants" => Setting::Variants,
-            //array and str -------
-            "length" => Setting::Length,
-            "size" => Setting::Size,
             "data" => Setting::Data,
             "error" => Setting::Error,
             "handle" => Setting::Handle,
@@ -340,14 +312,6 @@ impl Setting {
             Setting::Function => "function".to_string(),
             Setting::Debug => "debug".to_string(),
             Setting::State => "state".to_string(),
-            Setting::Custom => "custom".to_string(),
-            //custom -----
-            Setting::CustomIndexAccess => "custom_index_access".to_string(),
-            Setting::CustomConstructor => "custom_constructor".to_string(),
-            Setting::CustomGeneric => "custom_generic".to_string(),
-            Setting::CustomIterator => "custom_iterator".to_string(),
-            Setting::CustomDisplay => "custom_display".to_string(),
-            Setting::CustomOperators => "custom_operators".to_string(),
             //fn -------
             Setting::Param => "param".to_string(),
             Setting::Statement => "statement".to_string(),
@@ -367,9 +331,6 @@ impl Setting {
             Setting::Call => "call".to_string(),
             //enum -------
             Setting::Variants => "variants".to_string(),
-            //array and str -------
-            Setting::Length => "length".to_string(),
-            Setting::Size => "size".to_string(),
             Setting::Data => "data".to_string(),
             //all ------
             Setting::Error => "error".to_string(),
@@ -386,24 +347,53 @@ impl Setting {
 }
 #[derive(Debug, Clone, PartialEq, Copy, Eq, Hash)]
 pub enum HandleMethods {
-    IndexAccess,
-    Display,
-    Add,
-    Sub,
-    Mul,
+    IndexAccess, // scope[i]
+    IndexAssign, // scope[i] = value;
+    IndexIncrement, //scope[i]++
+    IndexDecrement, //scope[i]--
+    IndexPreIncrement, //++scope[i]
+    IndexPreDecrement, //--scope[i]
+    IndexAdd, //scope[i] += value;
+    IndexSub, //scope[i] -= value;
+    IndexMul, //scope[i] *= value;
+    IndexDiv, //scope[i] /= value;
+    IndexMod, //scope[i] %= value;
+    Display, // log() or to_string()
+    Add, //+ operator
+    Increment, //++ operator
+    Decrement, //-- operator
+    PreIncrement, //++ operator
+    PreDecrement, //-- operator
+    Sub, //- operator
+    Mul, //* operator
     Div,
-    Mod,
-    Iterator,
-    Next,
-    Length,
-    Size,
-    Call,
-    Leave,
-    Yield,
-    Data,
-    Break,
-    Error,
-    Exit,
+    /// operator
+    Mod, //% operator
+    Not, // ! operator
+    Negate, //- operator
+    Arrow, //-> operator
+    ArrowAssign, //-> operator
+    FatArrow, //=> operator
+    Equal, //= operator
+    PartialEqual, //== operator
+    NotEqual, // != operator
+    GreaterThan, //> operator
+    LessThan, //< operator
+    GreaterThanEqual, //>= operator
+    LessThanEqual, //<= operator
+    And, // && operator
+    Or, // || operator
+    Iterator, // for in loop
+    Next, // for in loop
+    Length, // length()
+    Size, // sizeof()
+    Call, // handle the call of the scope : scope();
+    Leave, // leave
+    Yield, // yield
+    Data, //todo : remove this
+    Break, // break
+    Error, // error
+    Exit, // exit
     Drop, //todo:  make it essentially the same as exit and the user has to implement it specifically in custom scope
     NotFound,
 }
@@ -411,12 +401,40 @@ impl HandleMethods {
     pub fn from_str(s: &str) -> Self {
         match s {
             "index_access" => HandleMethods::IndexAccess,
+            "index_assign" => HandleMethods::IndexAssign,
+            "index_increment" => HandleMethods::IndexIncrement,
+            "index_decrement" => HandleMethods::IndexDecrement,
+            "index_pre_increment" => HandleMethods::IndexPreIncrement,
+            "index_pre_decrement" => HandleMethods::IndexPreDecrement,
+            "index_add" => HandleMethods::IndexAdd,
+            "index_sub" => HandleMethods::IndexSub,
+            "index_mul" => HandleMethods::IndexMul,
+            "index_div" => HandleMethods::IndexDiv,
+            "index_mod" => HandleMethods::IndexMod,
             "display" => HandleMethods::Display,
             "add" => HandleMethods::Add,
+            "increment" => HandleMethods::Increment,
+            "decrement" => HandleMethods::Decrement,
+            "pre_increment" => HandleMethods::PreIncrement,
+            "pre_decrement" => HandleMethods::PreDecrement,
             "sub" => HandleMethods::Sub,
             "mul" => HandleMethods::Mul,
             "div" => HandleMethods::Div,
             "mod" => HandleMethods::Mod,
+            "not" => HandleMethods::Not,
+            "negate" => HandleMethods::Negate,
+            "arrow" => HandleMethods::Arrow,
+            "arrow_assign" => HandleMethods::ArrowAssign,
+            "fat_arrow" => HandleMethods::FatArrow,
+            "equal" => HandleMethods::Equal,
+            "partial_equal" => HandleMethods::PartialEqual,
+            "not_equal" => HandleMethods::NotEqual,
+            "greater_than" => HandleMethods::GreaterThan,
+            "less_than" => HandleMethods::LessThan,
+            "greater_than_equal" => HandleMethods::GreaterThanEqual,
+            "less_than_equal" => HandleMethods::LessThanEqual,
+            "and" => HandleMethods::And,
+            "or" => HandleMethods::Or,
             "iterator" => HandleMethods::Iterator,
             "next" => HandleMethods::Next,
             "length" => HandleMethods::Length,
@@ -436,16 +454,45 @@ impl HandleMethods {
     pub fn as_str(&self) -> &str {
         match self {
             HandleMethods::IndexAccess => "index_access",
+            HandleMethods::IndexAssign => "index_assign",
+            HandleMethods::IndexIncrement => "index_increment",
+            HandleMethods::IndexDecrement => "index_decrement",
+            HandleMethods::IndexPreIncrement => "index_pre_increment",
+            HandleMethods::IndexPreDecrement => "index_pre_decrement",
+            HandleMethods::IndexAdd => "index_add",
+            HandleMethods::IndexSub => "index_sub",
+            HandleMethods::IndexMul => "index_mul",
+            HandleMethods::IndexDiv => "index_div",
+            HandleMethods::IndexMod => "index_mod",
             HandleMethods::Display => "display",
             HandleMethods::Iterator => "iterator",
             HandleMethods::Next => "next",
             HandleMethods::Length => "length",
             HandleMethods::Size => "size",
             HandleMethods::Add => "add",
+            HandleMethods::Increment => "increment",
+            HandleMethods::Decrement => "decrement",
+            HandleMethods::PreIncrement => "pre_increment",
+            HandleMethods::PreDecrement => "pre_decrement",
+
             HandleMethods::Sub => "sub",
             HandleMethods::Mul => "mul",
             HandleMethods::Div => "div",
             HandleMethods::Mod => "mod",
+            HandleMethods::Not => "not",
+            HandleMethods::Negate => "negate",
+            HandleMethods::Arrow => "arrow",
+            HandleMethods::ArrowAssign => "arrow_assign",
+            HandleMethods::FatArrow => "fat_arrow",
+            HandleMethods::Equal => "equal",
+            HandleMethods::PartialEqual => "partial_equal",
+            HandleMethods::NotEqual => "not_equal",
+            HandleMethods::GreaterThan => "greater_than",
+            HandleMethods::LessThan => "less_than",
+            HandleMethods::GreaterThanEqual => "greater_than_equal",
+            HandleMethods::LessThanEqual => "less_than_equal",
+            HandleMethods::And => "and",
+            HandleMethods::Or => "or",
             HandleMethods::Drop => "drop",
             HandleMethods::Exit => "exit",
             HandleMethods::Break => "break",
@@ -473,7 +520,7 @@ pub enum Expr {
 
     ObjectLiteral(Vec<Stmt>),
 
-    Instantiate { 
+    Instantiate {
         target: Box<Expr>,
         args: Vec<Expr>,
     },
@@ -549,11 +596,7 @@ impl Expr {
             Expr::LiteralString(s) => format!("\"{}\"", s),
             Expr::LiteralChar(c) => format!("'{}'", c),
             Expr::LiteralBool(val) => {
-                if *val {
-                    "true".to_string()
-                } else {
-                    "false".to_string()
-                }
+                if *val { "true".to_string() } else { "false".to_string() }
             }
             Expr::ArrayLiteral(elements) => {
                 let mut elems_code = Vec::new();
@@ -567,45 +610,40 @@ impl Expr {
             Expr::This => "this".to_string(),
             Expr::Super => "super".to_string(), // will be handled in PropertyAccess
             Expr::Global => "global".to_string(),
-            Expr::BinaryOp {
-                left,
-                operator,
-                right,
-            } => "unimplemented".to_string(),
+            Expr::BinaryOp { left, operator, right } => "unimplemented".to_string(),
             Expr::PostfixUpdate { left, operator } => format!("{}{}", left.as_str(), operator),
             Expr::PrefixUpdate { right, operator } => format!("{}{}", operator, right.as_str()),
             Expr::UnaryOp { operator, operand } => format!("{}{}", operator, operand.as_str()),
-            Expr::Call { callee, args } => format!(
-                "{}({})",
-                callee.as_str(),
-                args.iter()
-                    .map(|a| a.as_str())
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            ),
-            Expr::Instantiate { target, args } => format!(
-                "{}({})",
-                target.as_str(),
-                args.iter()
-                    .map(|a| a.as_str())
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            ),
+            Expr::Call { callee, args } =>
+                format!(
+                    "{}({})",
+                    callee.as_str(),
+                    args
+                        .iter()
+                        .map(|a| a.as_str())
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                ),
+            Expr::Instantiate { target, args } =>
+                format!(
+                    "{}({})",
+                    target.as_str(),
+                    args
+                        .iter()
+                        .map(|a| a.as_str())
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                ),
             Expr::Modify { target } => format!("&{}", target.as_str()),
             Expr::Copy { target } => format!("copy({})", target.as_str()),
 
             Expr::PropertyAccess { object, property } => {
                 format!("{}.{}", object.as_str(), property.as_str())
             }
-            Expr::NamespaceAccess {
-                namespace,
-                property,
-            } => format!("{}::{}", namespace, property.as_str()),
-            Expr::ArrayAllocate {
-                type_node,
-                size,
-                length,
-            } => format!("new {}[{}]", type_node.as_str(), size.as_str()),
+            Expr::NamespaceAccess { namespace, property } =>
+                format!("{}::{}", namespace, property.as_str()),
+            Expr::ArrayAllocate { type_node, size, length } =>
+                format!("new {}[{}]", type_node.as_str(), size.as_str()),
             Expr::New { type_node, target } => {
                 format!("new {}[{}]", type_node.as_str(), target.as_str())
             }
@@ -619,6 +657,7 @@ pub enum Decl {
         visibility: Visibility,
         editability: Editability,
         type_node: BaseType,
+        assign_op: String,
         name: String,
         value: Expr,
     },
@@ -626,6 +665,7 @@ pub enum Decl {
         visibility: Visibility,
         editability: Editability,
         type_node: BaseType,
+        assign_op: String,
         name: String,
         length: Expr,
         value: Expr,
@@ -648,8 +688,6 @@ pub enum Decl {
         params: Option<Vec<Param>>,
         flags: Option<Vec<Flag>>,
         labels: Option<Vec<String>>,
-
-        length: i64,
         data: Option<Expr>,
         extends: String,
         return_type: Option<BaseType>,
@@ -675,7 +713,6 @@ pub enum Decl {
         static_block: Vec<Decl>,
         generics: Vec<BaseType>,
         handle_block: Vec<Decl>,
-        length: i64,
         constructor: Option<Vec<ConstructorDecl>>,
     },
     BlueprintDecl {
@@ -708,7 +745,6 @@ pub enum Decl {
         handles: Vec<HandleMethods>,
         settings: Vec<Setting>,
         handle_block: Vec<Decl>,
-        length: i64,
         variants: Vec<EnumVariant>,
     },
     FnDecl {
@@ -733,9 +769,9 @@ pub enum Decl {
     NameDecl {
         name: String,
         inner_type: BaseType, // the type the name points to (Unknown = inferred)
-        target: Expr,         // the value or variable being referenced
+        target: Expr, // the value or variable being referenced
         access_mode: AccessMode, // ReadOnly | ReadWrite
-        is_heap: bool,        // true if target came from `new` (heap-allocated)
+        is_heap: bool, // true if target came from `new` (heap-allocated)
     },
 
     /// `T* x[N] = new T[...]`  or  `T* x = val`
@@ -751,10 +787,7 @@ pub enum Decl {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Declaration(Decl),
-    Reassign {
-        name: String,
-        value: Expr,
-    },
+
     CaseStmt {
         option: Expr,
         set: Expr,
@@ -784,7 +817,7 @@ pub enum Stmt {
         catch_param: String,
         catch_block: Vec<Stmt>,
     },
-    EnableStmt(String),  // enable <flag> or enable all
+    EnableStmt(String), // enable <flag> or enable all
     DisableStmt(String), // disable <flag> or disable all
 
     // ── Control Flow ──────────────────────────────────────────
@@ -794,6 +827,7 @@ pub enum Stmt {
     /// target ممكن يكون identifier بسيط أو property chain (obj.field)
     ReassignStmt {
         target: Expr,
+        op: String,
         value: Expr,
     },
     AddPropertyStmt {
@@ -851,7 +885,7 @@ pub enum Stmt {
 pub enum EitherBlock {
     /// `{ statements... }` — inline block
     Inline(Vec<Stmt>),
-    /// `scope_name(args)` — استدعاء scope
+    /// `scope_name(args)`
     External(Expr),
 }
 
@@ -873,12 +907,12 @@ pub struct EnumVariant {
     pub name: String,
     pub data_type: Option<BaseType>, // e.g. Success(int) -> vec!["int"]
 }
-// 1. طرق تعريف الـ Blueprint (الـ 3 سيناريوهات اللي صممناها سوا)
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum BlueprintDef {
-    Explicit(Vec<BlueprintField>), // طريقة البلوك الصريح: { int(32) x; }
-    FromExistingObject(String),    // طريقة النسخ: blueprint P = existing_obj;
-    FromTemporaryObject(Vec<ObjectField>), // طريقة الاستنتاج: blueprint P = {x: 3, y: 6};
+    Explicit(Vec<BlueprintField>),
+    FromExistingObject(String),
+    FromTemporaryObject(Vec<ObjectField>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -4,61 +4,202 @@ use crate::frontend::parser::ast::*;
 use crate::frontend::parser::parser::Parser;
 
 impl Parser {
-    pub(crate) fn parse_statement(&mut self, scope: String) -> Result<Option<Stmt>, String> {
-        eprintln!(
-            "DISPATCH: {:?} at line {}",
-            self.peek().kind,
-            self.peek().line
-        );
+    pub(crate) fn parse_statement(&mut self, scope: ScopeType) -> Result<Option<Stmt>, String> {
+        eprintln!("DISPATCH: {:?} at line {}", self.peek().kind, self.peek().line);
         let result: Result<crate::frontend::parser::ast::Stmt, String> = match &self.peek().kind {
             TokenKind::SemiColon => {
                 self.advance();
                 return Ok(None);
             }
-            TokenKind::Import => self.parse_import_stmt().map(Stmt::Declaration),
-            TokenKind::Export => self.parse_exported_stmt().map(Stmt::Declaration),
-            TokenKind::Const => self.parse_const().map(Stmt::Declaration),
+            TokenKind::Import | TokenKind::Export => {
+                if !matches!(scope, ScopeType::Global) {
+                    return Err(
+                        format!(
+                            "Syntax Error: {:?} statements are only allowed at global scope",
+                            self.peek().kind
+                        )
+                    );
+                }
+                if self.peek().kind == TokenKind::Import {
+                    self.parse_import_stmt().map(Stmt::Declaration)
+                } else {
+                    self.parse_exported_stmt().map(Stmt::Declaration)
+                }
+            }
+            TokenKind::Const => self.parse_const(scope).map(Stmt::Declaration),
             | TokenKind::TypeInt
             | TokenKind::TypeFloat
             | TokenKind::TypeChar
             | TokenKind::TypeBool
-            | TokenKind::TypeType
-          /*//todo | TokenKind::TypeObject */=> self.parse_var_decl(true, false).map(Stmt::Declaration),
+            /*//todo | TokenKind::TypeObject */
+            | TokenKind::TypeType => self.parse_var_decl(scope, false).map(Stmt::Declaration),
             TokenKind::TypeName => self.parse_name().map(Stmt::Declaration),
-            TokenKind::TypeBluePrint => self.parse_blueprint_decl().map(Stmt::Declaration),
-            TokenKind::Impl => self.parse_impl_decl().map(Stmt::Declaration),
             TokenKind::Set => self.parse_reassign_stmt(),
-            TokenKind::If => self.parse_if_stmt(),
-            TokenKind::For => self.parse_for_stmt(),
-            TokenKind::Loop => self.parse_loop_stmt(),
-            TokenKind::While => self.parse_while_stmt(),
-            TokenKind::Switch => self.parse_switch_stmt(),
-            TokenKind::Fn => self.parse_fn_decl().map(Stmt::Declaration),
-            TokenKind::TypeClass => self.parse_class_decl().map(Stmt::Declaration),
-                        TokenKind::TypeCustom => self.parse_custom_decl().map(Stmt::Declaration),
-            TokenKind::TypeStruct => self.parse_struct_decl().map(Stmt::Declaration),
-            TokenKind::TypeEnum => self.parse_enum_decl().map(Stmt::Declaration),
-            TokenKind::Del => self.parse_del_stmt(),
+
+            | TokenKind::TypeBluePrint
+            | TokenKind::Impl
+            | TokenKind::Fn
+            | TokenKind::TypeClass
+            | TokenKind::TypeCustom
+            | TokenKind::TypeStruct
+            | TokenKind::TypeEnum
+            | TokenKind::Del => {
+                if
+                    !matches!(
+                        scope,
+                        ScopeType::Global |
+                            ScopeType::Class |
+                            ScopeType::Struct |
+                            ScopeType::Custom |
+                            ScopeType::Handle |
+                            ScopeType::Label |
+                            ScopeType::Block |
+                            ScopeType::Fn |
+                            ScopeType::Impl
+                    )
+                {
+                    return Err(
+                        format!(
+                            "Syntax Error: {:?} declarations are not allowed in this scope",
+                            self.peek().kind
+                        )
+                    );
+                }
+                match self.peek().kind {
+                    TokenKind::TypeBluePrint => self.parse_blueprint_decl().map(Stmt::Declaration),
+                    TokenKind::Impl => self.parse_impl_decl().map(Stmt::Declaration),
+                    TokenKind::Fn => self.parse_fn_decl().map(Stmt::Declaration),
+                    TokenKind::TypeClass => self.parse_class_decl().map(Stmt::Declaration),
+                    TokenKind::TypeCustom => self.parse_custom_decl().map(Stmt::Declaration),
+                    TokenKind::TypeStruct => self.parse_struct_decl().map(Stmt::Declaration),
+                    TokenKind::TypeEnum => self.parse_enum_decl().map(Stmt::Declaration),
+                    TokenKind::Del => self.parse_del_stmt(),
+                    _ => unreachable!(),
+                }
+            }
+
+            | TokenKind::If
+            | TokenKind::For
+            | TokenKind::Loop
+            | TokenKind::While
+            | TokenKind::Switch => {
+                if
+                    !matches!(
+                        scope,
+                        ScopeType::Global |
+                            ScopeType::Block |
+                            ScopeType::Fn |
+                            ScopeType::Label |
+                            ScopeType::Loop
+                    )
+                {
+                    return Err(
+                        format!(
+                            "Syntax Error: {:?} statements are not allowed in this scope",
+                            self.peek().kind
+                        )
+                    );
+                }
+                match self.peek().kind {
+                    TokenKind::If => self.parse_if_stmt(),
+                    TokenKind::For => self.parse_for_stmt(),
+                    TokenKind::Loop => self.parse_loop_stmt(),
+                    TokenKind::While => self.parse_while_stmt(),
+                    TokenKind::Switch => self.parse_switch_stmt(),
+                    _ => unreachable!(),
+                }
+            }
+
             TokenKind::Leave => {
+                if
+                    !matches!(
+                        scope,
+                        ScopeType::Block |
+                            ScopeType::Fn |
+                            ScopeType::Label |
+                            ScopeType::Custom |
+                            ScopeType::Struct |
+                            ScopeType::Class |
+                            ScopeType::Enum |
+                            ScopeType::Case |
+                            ScopeType::Loop
+                    )
+                {
+                    return Err(
+                        "Syntax Error: Leave statements are not allowed in this scope".to_string()
+                    );
+                }
                 self.advance();
                 self.consume(TokenKind::SemiColon, "Expected ';' after leave")?;
                 Ok(Stmt::LeaveStmt)
             }
-            TokenKind::Yield => self.parse_yield_stmt(),
-            TokenKind::Call => self.parse_call_stmt(),
-            TokenKind::Break => {
-                self.advance();
-                self.consume(TokenKind::SemiColon, "Expected ';' after break")?;
-                Ok(Stmt::BreakStmt)
-            }
-            TokenKind::Continue => {
-                self.advance();
-                self.consume(TokenKind::SemiColon, "Expected ';' after continue")?;
-                Ok(Stmt::ContinueStmt)
-            }
-            TokenKind::Return => {
-                self.advance();
 
+            TokenKind::Yield => {
+                if !matches!(scope, ScopeType::Custom | ScopeType::Label) {
+                    return Err(
+                        "Syntax Error: Yield statements are only allowed inside custom scope".to_string()
+                    );
+                }
+                self.parse_yield_stmt()
+            }
+
+            TokenKind::Call => {
+                if
+                    !matches!(
+                        scope,
+                        ScopeType::Global |
+                            ScopeType::Block |
+                            ScopeType::Fn |
+                            ScopeType::Label |
+                            ScopeType::Loop |
+                            ScopeType::Handle
+                    )
+                {
+                    return Err(
+                        "Syntax Error: Call statements are not allowed in this scope".to_string()
+                    );
+                }
+                self.parse_call_stmt()
+            }
+
+            TokenKind::Break | TokenKind::Continue => {
+                if !matches!(scope, ScopeType::Block | ScopeType::Case | ScopeType::Loop) {
+                    return Err(
+                        format!(
+                            "Syntax Error: {:?} statements are not allowed in this scope",
+                            self.peek().kind
+                        )
+                    );
+                }
+                let kind = self.peek().kind.clone();
+                self.advance();
+                self.consume(
+                    TokenKind::SemiColon,
+                    format!("Expected ';' after {:?}", kind).as_str()
+                )?;
+                if kind == TokenKind::Break {
+                    Ok(Stmt::BreakStmt)
+                } else {
+                    Ok(Stmt::ContinueStmt)
+                }
+            }
+
+            TokenKind::Return => {
+                if
+                    !matches!(
+                        scope,
+                        ScopeType::Block |
+                            ScopeType::Fn |
+                            ScopeType::Label |
+                            ScopeType::Case |
+                            ScopeType::Loop
+                    )
+                {
+                    return Err(
+                        "Syntax Error: Return statements are not allowed in this scope".to_string()
+                    );
+                }
+                self.advance();
                 if self.peek().kind == TokenKind::SemiColon {
                     self.advance();
                     Ok(Stmt::ReturnStmt(Expr::Identifier("null".to_string())))
@@ -74,13 +215,63 @@ impl Parser {
                     }
                 }
             }
+
             TokenKind::Throw => self.parse_throw_stmt(),
             TokenKind::Try => self.parse_try_catch_stmt(),
-            // Custom keyword: `my_list<int(32)> items -> [1, 2];`
+
             TokenKind::Identifier(_) => self.parse_expression_or_reassignment(),
-            TokenKind::This => self.parse_expression_or_reassignment(),
-            TokenKind::Super => self.parse_expression_or_reassignment(),
-            TokenKind::Goto => self.parse_goto_stmt( scope.clone()),
+
+            TokenKind::This => {
+                if
+                    !matches!(
+                        scope,
+                        ScopeType::Class |
+                            ScopeType::Struct |
+                            ScopeType::Custom |
+                            ScopeType::Handle |
+                            ScopeType::Label |
+                            ScopeType::Block |
+                            ScopeType::Fn
+                    )
+                {
+                    return Err("Syntax Error: 'this' is not allowed in this scope".to_string());
+                }
+                self.parse_expression_or_reassignment()
+            }
+
+            TokenKind::Super => {
+                if
+                    !matches!(
+                        scope,
+                        ScopeType::Class |
+                            ScopeType::Struct |
+                            ScopeType::Custom |
+                            ScopeType::Handle |
+                            ScopeType::Label
+                    )
+                {
+                    return Err("Syntax Error: 'super' is not allowed in this scope".to_string());
+                }
+                self.parse_expression_or_reassignment()
+            }
+
+            TokenKind::Goto => {
+                if
+                    !matches!(
+                        scope,
+                        ScopeType::Handle |
+                            ScopeType::Label |
+                            ScopeType::Fn |
+                            ScopeType::Custom |
+                            ScopeType::Block
+                    )
+                {
+                    return Err(
+                        "Syntax Error: Goto statements are not allowed in this scope".to_string()
+                    );
+                }
+                self.parse_goto_stmt()
+            }
             _ => self.parse_expression_stmt(),
         };
 
@@ -99,7 +290,6 @@ impl Parser {
             }
         }
     }
-
     pub(crate) fn parse_import_stmt(&mut self) -> Result<Decl, String> {
         self.advance(); // consume 'import'
         let mut module_path: Vec<String> = Vec::new();
@@ -142,32 +332,26 @@ impl Parser {
             imports,
         })
     }
-    pub(crate) fn parse_const(&mut self) -> Result<Decl, String> {
+    pub(crate) fn parse_const(&mut self, scope: ScopeType) -> Result<Decl, String> {
         self.advance(); // consume 'const'
 
-        // هنا بنشيل الـ .map(Stmt::Declaration) ونستخدم الـ ? عشان يفضل نوع المتغير Decl
         let mut decl = match &self.peek().kind {
-            TokenKind::TypeInt
+            | TokenKind::TypeInt
             | TokenKind::TypeFloat
             | TokenKind::TypeChar
             | TokenKind::TypeBool
-            | TokenKind::TypeType => self.parse_var_decl(true, false)?,
+            | TokenKind::TypeType => self.parse_var_decl(scope, false)?,
             TokenKind::TypeName => self.parse_name()?,
-            _ => return Err("Syntax Error: Expected variable declaration".to_string()),
+            _ => {
+                return Err("Syntax Error: Expected variable declaration".to_string());
+            }
         };
 
-        // تصليح كلمة match وتصليح الحقول لتطابق الـ Decl والـ editability بحرف سمول
         match &mut decl {
-            Decl::VarDecl {
-                ref mut editability,
-                ..
-            } => {
+            Decl::VarDecl { ref mut editability, .. } => {
                 *editability = Editability::NotEditable;
             }
-            Decl::ArrayDecl {
-                ref mut editability,
-                ..
-            } => {
+            Decl::ArrayDecl { ref mut editability, .. } => {
                 *editability = Editability::NotEditable;
             }
             _ => {
@@ -187,41 +371,42 @@ impl Parser {
             TokenKind::TypeStruct => self.parse_struct_decl()?,
             TokenKind::TypeCustom => self.parse_custom_decl()?,
             TokenKind::TypeEnum => self.parse_enum_decl()?,
-            kind => return Err(format!("Syntax Error: Cannot export '{:?}', only let, fn, scope, class, struct, and enum can be exported", kind)),
+            kind => {
+                return Err(
+                    format!(
+                        "Syntax Error: Cannot export '{:?}', only let, fn, scope, class, struct, and enum can be exported",
+                        kind
+                    )
+                );
+            }
         };
 
         // Set is_exported flag to true
         match &mut stmt {
-            Decl::FnDecl {
-                ref mut is_exported,
-                ..
-            } => *is_exported = true,
-            Decl::BlockDecl {
-                ref mut is_exported,
-                ..
-            } => *is_exported = true,
-            Decl::CustomDecl {
-                ref mut is_exported,
-                ..
-            } => *is_exported = true,
-            Decl::ClassDecl {
-                ref mut is_exported,
-                ..
-            } => *is_exported = true,
-            Decl::StructDecl {
-                ref mut is_exported,
-                ..
-            } => *is_exported = true,
-            Decl::EnumDecl {
-                ref mut is_exported,
-                ..
-            } => *is_exported = true,
-            Decl::VarDecl {
-                ref mut visibility, ..
-            } => *visibility = Visibility::Public,
-            Decl::ArrayDecl {
-                ref mut visibility, ..
-            } => *visibility = Visibility::Public,
+            Decl::FnDecl { ref mut is_exported, .. } => {
+                *is_exported = true;
+            }
+            Decl::BlockDecl { ref mut is_exported, .. } => {
+                *is_exported = true;
+            }
+            Decl::CustomDecl { ref mut is_exported, .. } => {
+                *is_exported = true;
+            }
+            Decl::ClassDecl { ref mut is_exported, .. } => {
+                *is_exported = true;
+            }
+            Decl::StructDecl { ref mut is_exported, .. } => {
+                *is_exported = true;
+            }
+            Decl::EnumDecl { ref mut is_exported, .. } => {
+                *is_exported = true;
+            }
+            Decl::VarDecl { ref mut visibility, .. } => {
+                *visibility = Visibility::Public;
+            }
+            Decl::ArrayDecl { ref mut visibility, .. } => {
+                *visibility = Visibility::Public;
+            }
             _ => {}
         }
 
@@ -230,12 +415,13 @@ impl Parser {
 
     pub(crate) fn parse_var_decl(
         &mut self,
-        is_global: bool,
-        no_semi: bool,
+        scope: ScopeType,
+        no_semi: bool
     ) -> Result<Decl, String> {
         let var_meta: VarMetadata;
         let type_name = self.parse_type()?;
         let name = self.get_identifier("Expected variable name after type")?;
+        let mut assign_op = String::new();
         let mut size = None;
         if self.peek().kind == TokenKind::LBracket {
             //[size]
@@ -249,7 +435,8 @@ impl Parser {
         }
         let mut value = Expr::Identifier("__default__".to_string());
 
-        if self.peek().kind == TokenKind::Arrow || self.peek().kind == TokenKind::Assign {
+        if self.peek().kind == TokenKind::Assign || self.peek().kind == TokenKind::Arrow {
+            assign_op = self.peek().kind.clone().as_str().to_string();
             self.advance();
             value = self.parse_expression()?;
         }
@@ -261,26 +448,19 @@ impl Parser {
                 self.advance();
             }
         }
-        let is_heaped = if let BaseType::Pointer(_) = type_name {
-            true
+        let is_heaped = if let BaseType::Pointer(_) = type_name { true } else { false };
+        let visibility = if scope == ScopeType::Global {
+            Visibility::Public
         } else {
-            false
+            Visibility::Private
         };
         if size.is_none() {
             var_meta = VarMetadata {
                 name: name.clone(),
                 type_node: type_name.clone(),
-                visibility: if is_global {
-                    Visibility::Public
-                } else {
-                    Visibility::Private
-                },
+                visibility: visibility,
                 editability: Editability::Editable,
-                scope: if is_global {
-                    ScopeType::Global
-                } else {
-                    ScopeType::Local
-                },
+                scope: scope,
                 is_heaped: is_heaped,
                 is_array: false,
             };
@@ -297,6 +477,7 @@ impl Parser {
                     visibility: Visibility::Private,
                     editability: Editability::Editable,
                     type_node: type_name,
+                    assign_op,
                     name,
                     value,
                 })
@@ -305,17 +486,9 @@ impl Parser {
             var_meta = VarMetadata {
                 name: name.clone(),
                 type_node: type_name.clone(),
-                visibility: if is_global {
-                    Visibility::Public
-                } else {
-                    Visibility::Private
-                },
+                visibility: visibility,
                 editability: Editability::Editable,
-                scope: if is_global {
-                    ScopeType::Global
-                } else {
-                    ScopeType::Local
-                },
+                scope: scope,
                 is_heaped: is_heaped,
                 is_array: true,
             };
@@ -333,6 +506,7 @@ impl Parser {
                     editability: Editability::Editable,
                     type_node: type_name,
                     name,
+                    assign_op,
                     length: size.unwrap(),
                     value,
                 })
@@ -350,18 +524,23 @@ impl Parser {
 
         let target = self.parse_expression()?;
 
-        if self.peek().kind != TokenKind::Arrow && self.peek().kind != TokenKind::Assign {
-            return Err(format!(
-                "Syntax Error: Expected '->' or '=' after target in set statement at line {}, column {}",
-                self.peek().line, self.peek().column
-            ));
+        let op = self.peek().kind.as_str().to_string();
+        if op != TokenKind::Arrow.as_str() && op != TokenKind::Assign.as_str() {
+            return Err(
+                format!(
+                    "Syntax Error: Expected '->' or '=' after target in set statement at line {}, column {}",
+                    self.peek().line,
+                    self.peek().column
+                )
+            );
         }
+
         self.advance();
 
         let value = self.parse_expression()?;
         self.consume(TokenKind::SemiColon, "Expected ';' after set statement")?;
 
-        Ok(Stmt::ReassignStmt { target, value })
+        Ok(Stmt::ReassignStmt { target, value, op })
     }
 
     // --- if (cond) { ... } else { ... } -------------------
@@ -420,7 +599,7 @@ impl Parser {
 
         self.consume(
             TokenKind::Arrow,
-            "Expected '->' after loop count (use: loop N -> { } or loop N -> scope())",
+            "Expected '->' after loop count (use: loop N -> { } or loop N -> scope())"
         )?;
 
         let body = if self.peek().kind == TokenKind::LBrace {
@@ -446,7 +625,10 @@ impl Parser {
         let condition = self.parse_expression()?;
         self.consume(TokenKind::RParen, "Expected ')' after while condition")?;
 
-        self.consume(TokenKind::Arrow, "Expected '->' after while condition (use: while (cond) -> { } or while (cond) -> scope())")?;
+        self.consume(
+            TokenKind::Arrow,
+            "Expected '->' after while condition (use: while (cond) -> { } or while (cond) -> scope())"
+        )?;
 
         let body = if self.peek().kind == TokenKind::LBrace {
             self.advance(); // '{'
@@ -525,7 +707,7 @@ impl Parser {
             body
         } else {
             return Err(
-                "External switch scopes are not supported yet; use a switch block".to_string(),
+                "External switch scopes are not supported yet; use a switch block".to_string()
             );
         };
 
@@ -595,14 +777,13 @@ impl Parser {
             None
         } else {
             let stmt = match self.peek().kind {
-                TokenKind::Const
+                | TokenKind::Const
                 | TokenKind::TypeInt
                 | TokenKind::TypeFloat
                 | TokenKind::TypeChar
                 | TokenKind::TypeBool
-                | TokenKind::TypeName => {
-                    self.parse_var_decl(false, false).map(Stmt::Declaration)?
-                }
+                | TokenKind::TypeName =>
+                    self.parse_var_decl(ScopeType::Block, false).map(Stmt::Declaration)?,
                 _ => self.parse_expression_stmt()?,
             };
             Some(Box::new(stmt))
@@ -620,14 +801,16 @@ impl Parser {
         } else {
             let expr = self.parse_expression()?;
             let op = self.peek().kind.clone();
-            if op == TokenKind::Arrow
-                || op == TokenKind::Assign
-                || op == TokenKind::PlusAssign
-                || op == TokenKind::MinusAssign
-                || op == TokenKind::MulAssign
-                || op == TokenKind::DivAssign
+            self.advance();
+            print!("DEBUG: parse_for_stmt: op: {:?}", op);
+            if
+                op == TokenKind::Arrow ||
+                op == TokenKind::Assign ||
+                op == TokenKind::PlusAssign ||
+                op == TokenKind::MinusAssign ||
+                op == TokenKind::MulAssign ||
+                op == TokenKind::DivAssign
             {
-                self.advance();
                 let mut value = self.parse_expression()?;
                 if op == TokenKind::PlusAssign {
                     value = Expr::BinaryOp {
@@ -654,10 +837,14 @@ impl Parser {
                         right: Box::new(value),
                     };
                 }
-                Some(Box::new(Stmt::ReassignStmt {
-                    target: expr,
-                    value,
-                }))
+
+                Some(
+                    Box::new(Stmt::ReassignStmt {
+                        target: expr,
+                        value,
+                        op: op.as_str().to_string(),
+                    })
+                )
             } else {
                 Some(Box::new(Stmt::ExpressionStmt(expr)))
             }
@@ -691,11 +878,12 @@ impl Parser {
         // We already consumed `for (`
         // Now we parse the item
         let item = match self.peek().kind {
-            TokenKind::Const
+            | TokenKind::Const
             | TokenKind::TypeInt
             | TokenKind::TypeFloat
             | TokenKind::TypeChar
-            | TokenKind::TypeBool => self.parse_var_decl(false, true).map(Stmt::Declaration)?, // pass true for `no_semi`
+            | TokenKind::TypeBool =>
+                self.parse_var_decl(ScopeType::Block, true).map(Stmt::Declaration)?, // pass true for `no_semi`
             TokenKind::TypeName => self.parse_name().map(Stmt::Declaration)?,
             _ => {
                 let expr = self.parse_expression()?;
@@ -744,18 +932,7 @@ impl Parser {
         Ok(Stmt::ThrowStmt(expr))
     }
 
-    pub(crate) fn parse_goto_stmt(&mut self, scope: String) -> Result<Stmt, String> {
-        if scope.is_empty() {
-            return Err(
-                "Syntax Error: You can't use goto outside of a label or the call method"
-                    .to_string(),
-            );
-        } else if !scope.contains("@") && !scope.contains("call") {
-            return Err(
-                "Syntax Error: You can't use goto outside of a label or the call method"
-                    .to_string(),
-            );
-        }
+    pub(crate) fn parse_goto_stmt(&mut self) -> Result<Stmt, String> {
         self.advance(); // consume 'goto'
         if self.peek().kind == TokenKind::Arrow {
             self.advance();
@@ -800,25 +977,26 @@ impl Parser {
 
             // `TypeName varName ->` pattern
             let is_var_decl = match (next1, next2) {
-                (Some(TokenKind::Identifier(_)), Some(TokenKind::Arrow)) => true,
+                (Some(TokenKind::Identifier(_)), Some(TokenKind::Assign)) => true,
                 (Some(TokenKind::Less), _) => {
-                    // `TypeName<...> varName ->` - بنفحص أبعد
-                    // نبحث عن `>` ثم Identifier ثم `->`
                     let mut i = self.current + 2;
                     let mut depth = 1;
                     while i < self.tokens.len() && depth > 0 {
                         match &self.tokens[i].kind {
-                            TokenKind::Less => depth += 1,
-                            TokenKind::Greater => depth -= 1,
+                            TokenKind::Less => {
+                                depth += 1;
+                            }
+                            TokenKind::Greater => {
+                                depth -= 1;
+                            }
                             _ => {}
                         }
                         i += 1;
                     }
-                    // بعد الـ `>`: هل في Identifier ثم `->`؟
                     matches!(
                         (
                             self.tokens.get(i).map(|t| &t.kind),
-                            self.tokens.get(i + 1).map(|t| &t.kind)
+                            self.tokens.get(i + 1).map(|t| &t.kind),
                         ),
                         (Some(TokenKind::Identifier(_)), Some(TokenKind::Arrow))
                     )
@@ -827,7 +1005,7 @@ impl Parser {
             };
 
             if is_var_decl {
-                return self.parse_var_decl(true, false).map(Stmt::Declaration);
+                return self.parse_var_decl(ScopeType::Block, false).map(Stmt::Declaration);
             }
         }
 
@@ -835,14 +1013,28 @@ impl Parser {
 
         // `target -> value;` or `target = value;`
         let op = self.peek().kind.clone();
-        if op == TokenKind::Arrow
-            || op == TokenKind::Assign
-            || op == TokenKind::PlusAssign
-            || op == TokenKind::MinusAssign
-            || op == TokenKind::MulAssign
-            || op == TokenKind::DivAssign
+        if op == TokenKind::Arrow {
+            self.advance(); // consume '->'
+            let value = self.parse_expression()?;
+            self.consume(TokenKind::SemiColon, "Expected ';' after arrow expression")?;
+
+            return Ok(
+                Stmt::ExpressionStmt(Expr::BinaryOp {
+                    left: Box::new(expr),
+                    operator: "->".to_string(),
+                    right: Box::new(value),
+                })
+            );
+        }
+
+        if
+            op == TokenKind::Assign ||
+            op == TokenKind::PlusAssign ||
+            op == TokenKind::MinusAssign ||
+            op == TokenKind::MulAssign ||
+            op == TokenKind::DivAssign
         {
-            self.advance(); // consume '->' or '=' or '+=' etc.
+            self.advance(); // consume '=' or '+=' etc.
             let mut value = self.parse_expression()?;
 
             if op == TokenKind::PlusAssign {
@@ -870,37 +1062,40 @@ impl Parser {
                     right: Box::new(value),
                 };
             }
-
+            let op_str = if op == TokenKind::Arrow {
+                op.as_str().to_string()
+            } else if op == TokenKind::Assign {
+                op.as_str().to_string()
+            } else {
+                op.as_str().to_string()
+            };
             self.consume(TokenKind::SemiColon, "Expected ';' after reassignment")?;
             return Ok(Stmt::ReassignStmt {
                 target: expr,
                 value,
+                op: op_str,
             });
         }
+
         print!("DEBUG: parse_expression_reassign_stmt: expr: {:?}", expr);
         if self.peek().kind == TokenKind::SemiColon {
-            self.consume(
-                TokenKind::SemiColon,
-                "Expected ';' after expression statement",
-            )?;
+            self.consume(TokenKind::SemiColon, "Expected ';' after expression statement")?;
         }
         Ok(Stmt::ExpressionStmt(expr))
     }
 
     pub(crate) fn parse_expression_stmt(&mut self) -> Result<Stmt, String> {
         let expr = self.parse_expression()?;
-        print!(
-            "DEBUG: parse_expression_stmt: 1. expr: {:?} \n",
-            self.peek().kind
-        );
+        print!("DEBUG: parse_expression_stmt: 1. expr: {:?} \n", self.peek().kind);
         // --- Bare reassignment: x = 10; or this.x = 20; ---
         let op = self.peek().kind.clone();
-        if op == TokenKind::Assign
-            || op == TokenKind::Arrow
-            || op == TokenKind::PlusAssign
-            || op == TokenKind::MinusAssign
-            || op == TokenKind::MulAssign
-            || op == TokenKind::DivAssign
+        if
+            op == TokenKind::Assign ||
+            op == TokenKind::Arrow ||
+            op == TokenKind::PlusAssign ||
+            op == TokenKind::MinusAssign ||
+            op == TokenKind::MulAssign ||
+            op == TokenKind::DivAssign
         {
             self.advance(); // consume '=' or '->' or '+=' etc
             let mut value = self.parse_expression()?;
@@ -930,25 +1125,23 @@ impl Parser {
                     right: Box::new(value),
                 };
             }
-
-            self.consume(
-                TokenKind::SemiColon,
-                "Expected ';' after assignment statement",
-            )?;
+            let op_str = if op == TokenKind::Arrow {
+                op.as_str().to_string()
+            } else if op == TokenKind::Assign {
+                op.as_str().to_string()
+            } else {
+                op.as_str().to_string()
+            };
+            self.consume(TokenKind::SemiColon, "Expected ';' after assignment statement")?;
             return Ok(Stmt::ReassignStmt {
                 target: expr,
                 value,
+                op: op_str,
             });
         }
-        print!(
-            "DEBUG: parse_expression_stmt: 3. expr: {:?} \n",
-            self.peek().kind
-        );
+        print!("DEBUG: parse_expression_stmt: 3. expr: {:?} \n", self.peek().kind);
         if self.peek().kind == TokenKind::SemiColon {
-            self.consume(
-                TokenKind::SemiColon,
-                "Expected ';' after expression statement",
-            )?;
+            self.consume(TokenKind::SemiColon, "Expected ';' after expression statement")?;
         }
         Ok(Stmt::ExpressionStmt(expr))
     }
@@ -968,10 +1161,9 @@ impl Parser {
             self.advance();
             n
         } else {
-            return Err(format!(
-                "Expected parameter name in catch block at line {}",
-                self.peek().line
-            ));
+            return Err(
+                format!("Expected parameter name in catch block at line {}", self.peek().line)
+            );
         };
 
         self.consume(TokenKind::RParen, "Expected ')' after catch parameter")?;
@@ -986,9 +1178,6 @@ impl Parser {
             catch_block,
         })
     }
-
-    /// يقرأ قائمة statements حتى '}' ويستهلك الـ '}'
-    /// يُستعمل في كل block: if/else/loop/while body
 
     // ====================================================
     // OOP & Enum Parsers

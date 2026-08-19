@@ -53,7 +53,7 @@ impl Parser {
         }
         self.consume(TokenKind::LBrace, "Expected '{' to open function body")?;
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-            match self.parse_statement("function".to_string()) {
+            match self.parse_statement(ScopeType::Fn) {
                 Ok(Some(stmt)) => statement_block.push(stmt),
                 Ok(None) => {
                     if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
@@ -92,7 +92,7 @@ impl Parser {
         self.consume(TokenKind::Arrow, "Expected '->' to open block body")?;
         self.consume(TokenKind::LBrace, "Expected '{' to open block body")?;
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-            match self.parse_statement("block".to_string()) {
+            match self.parse_statement(ScopeType::Block) {
                 Ok(Some(stmt)) => statements.push(stmt),
                 Ok(None) => {
                     if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {

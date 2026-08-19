@@ -1,4 +1,4 @@
-use crate::frontend::lexer::token::{Token, TokenKind};
+use crate::frontend::lexer::token::{ Token, TokenKind };
 
 pub struct Scanner {
     source: Vec<char>,
@@ -53,7 +53,9 @@ impl Scanner {
                     self.column = 1;
                     self.advance();
                 }
-                _ => break,
+                _ => {
+                    break;
+                }
             }
         }
     }
@@ -127,7 +129,6 @@ impl Scanner {
 
             "static" => Some(TokenKind::Static),
 
-            "length" => Some(TokenKind::TypeLength),
             "data" => Some(TokenKind::TypeData),
             // memory / instances
             "modify" => Some(TokenKind::Modify),
@@ -145,14 +146,6 @@ impl Scanner {
             // scope impl / unrestricted type
             "statement" => Some(TokenKind::Statement),
 
-            // for custom
-            "index_access" => Some(TokenKind::CustomIndexAccess),
-            "display" => Some(TokenKind::CustomDisplay),
-            "iterator" => Some(TokenKind::CustomIterator),
-            "operators" => Some(TokenKind::CustomOperators),
-
-            "custom_generic" => Some(TokenKind::CustomGeneric),
-            "custom_constructor" => Some(TokenKind::CustomConstructor),
             "constructor" => Some(TokenKind::Constructor),
             // context / magic types
             "name" => Some(TokenKind::TypeName),
@@ -165,8 +158,6 @@ impl Scanner {
             "throw" => Some(TokenKind::Throw),
             "error" => Some(TokenKind::TypeError),
             "enable" => Some(TokenKind::Enable),
-            "disable" => Some(TokenKind::Disable),
-            "all" => Some(TokenKind::All),
             "import" => Some(TokenKind::Import),
             "export" => Some(TokenKind::Export),
 
@@ -233,8 +224,9 @@ impl Scanner {
                 // Float: a '.' followed by at least one digit. A trailing bare '.'
                 // (e.g. `5.` or `5.foo`) is left alone so `.` can still be a Dot token
                 // (property access, etc.) on the next scan.
-                let is_float = self.peek() == Some('.')
-                    && matches!(self.peek_at(1), Some(d) if d.is_ascii_digit());
+                let is_float =
+                    self.peek() == Some('.') &&
+                    matches!(self.peek_at(1), Some(d) if d.is_ascii_digit());
 
                 if is_float {
                     num_str.push(self.advance().unwrap()); // consume '.'
@@ -247,18 +239,26 @@ impl Scanner {
                     }
                     match num_str.parse::<f64>() {
                         Ok(f) => TokenKind::Float(f),
-                        Err(_) => TokenKind::Error(format!(
-                            "Invalid float literal '{}' at line {}",
-                            num_str, start_line
-                        )),
+                        Err(_) =>
+                            TokenKind::Error(
+                                format!(
+                                    "Invalid float literal '{}' at line {}",
+                                    num_str,
+                                    start_line
+                                )
+                            ),
                     }
                 } else {
                     match num_str.parse::<i64>() {
                         Ok(i) => TokenKind::Int(i),
-                        Err(_) => TokenKind::Error(format!(
-                            "Integer literal '{}' out of range at line {}",
-                            num_str, start_line
-                        )),
+                        Err(_) =>
+                            TokenKind::Error(
+                                format!(
+                                    "Integer literal '{}' out of range at line {}",
+                                    num_str,
+                                    start_line
+                                )
+                            ),
                     }
                 }
             }
@@ -282,10 +282,9 @@ impl Scanner {
                 if terminated {
                     TokenKind::String(s.clone())
                 } else {
-                    TokenKind::Error(format!(
-                        "Unterminated string literal starting at line {}",
-                        start_line
-                    ))
+                    TokenKind::Error(
+                        format!("Unterminated string literal starting at line {}", start_line)
+                    )
                 }
             }
 
@@ -298,16 +297,15 @@ impl Scanner {
                             self.advance(); // consume closing quote
                             TokenKind::Char(inner)
                         } else {
-                            TokenKind::Error(format!(
-                                "Invalid char literal starting at line {}: expected closing '\''",
-                                start_line
-                            ))
+                            TokenKind::Error(
+                                format!("Invalid char literal starting at line {}: expected closing '\''", start_line)
+                            )
                         }
                     }
-                    None => TokenKind::Error(format!(
-                        "Unterminated char literal at line {}: unexpected EOF",
-                        start_line
-                    )),
+                    None =>
+                        TokenKind::Error(
+                            format!("Unterminated char literal at line {}: unexpected EOF", start_line)
+                        ),
                 }
             }
 
@@ -344,10 +342,9 @@ impl Scanner {
                     if closed {
                         TokenKind::MultiLineComment
                     } else {
-                        TokenKind::Error(format!(
-                            "Unterminated block comment starting at line {}",
-                            start_line
-                        ))
+                        TokenKind::Error(
+                            format!("Unterminated block comment starting at line {}", start_line)
+                        )
                     }
                 } else if let Some('=') = self.peek() {
                     self.advance();
@@ -440,8 +437,7 @@ impl Scanner {
                     TokenKind::Or
                 } else {
                     TokenKind::Error(
-                        "Unsupported operator '|' (bitwise OR is not supported; did you mean '||'?)"
-                            .to_string(),
+                        "Unsupported operator '|' (bitwise OR is not supported; did you mean '||'?)".to_string()
                     )
                 }
             }
@@ -462,10 +458,10 @@ impl Scanner {
                 }
             }
 
-            other => TokenKind::Error(format!(
-                "Unexpected character '{}' at line {}",
-                other, start_line
-            )),
+            other =>
+                TokenKind::Error(
+                    format!("Unexpected character '{}' at line {}", other, start_line)
+                ),
         };
 
         Token::new(kind, start_line, start_column)

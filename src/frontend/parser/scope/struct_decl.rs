@@ -10,7 +10,6 @@ impl Parser {
         let mut enabled_settings: Vec<Setting> = Vec::new();
         let mut used_settings: Vec<Setting> = Vec::new();
         let mut constructor: Option<Vec<ConstructorDecl>> = None;
-        let mut enabled_handles: Vec<HandleMethods> = Vec::new();
         let mut used_handles: Vec<HandleMethods> = Vec::new();
         let mut handle_block: Vec<Decl> = Vec::new();
         let mut public_block_ast: Vec<Decl> = Vec::new();
@@ -20,14 +19,14 @@ impl Parser {
         let mut name = self.get_identifier("Expected struct name")?;
 
         let mut meta = TypeMetadata {
-            name: name.clone(),      //[*]
-            fields: HashMap::new(),  //[*] we will add all of variables in the struct
-            constructor: None,       //[*]
-            params: Vec::new(),      //[*]
-            generics: Vec::new(),    //[*]
+            name: name.clone(), //[*]
+            fields: HashMap::new(), //[*] we will add all of variables in the struct
+            constructor: None, //[*]
+            params: Vec::new(), //[*]
+            generics: Vec::new(), //[*]
             methods: HashMap::new(), //[*]
-            handles: Vec::new(),     //[*]
-            vars: HashMap::new(),    //[]
+            handles: Vec::new(), //[*]
+            vars: HashMap::new(), //[]
             is_enum: false,
             variants: None,
         };
@@ -35,8 +34,6 @@ impl Parser {
         enabled_settings.push(Setting::Public);
         enabled_settings.push(Setting::Static);
         // adding allowed handles
-        //we have display only
-        enabled_handles.push(HandleMethods::Display);
 
         self.consume(TokenKind::Arrow, "Expected '->' to open struct body")?;
         self.consume(TokenKind::LBrace, "Expected '{' to open struct body")?;
@@ -53,11 +50,20 @@ impl Parser {
                 //====================================================================
                 if t == TokenKind::Constructor {
                     if used_settings.contains(&Setting::Constructor) {
-                        return Err(format!("Syntax Error: Duplicate 'constructor' block in struct '{}'  at line {}, column {}", name, self.peek().line, self.peek().column));
+                        return Err(
+                            format!(
+                                "Syntax Error: Duplicate 'constructor' block in struct '{}'  at line {}, column {}",
+                                name,
+                                self.peek().line,
+                                self.peek().column
+                            )
+                        );
                     } else {
                         used_settings.push(Setting::Constructor);
                         match self.parse_constructor_decl(&mut meta) {
-                            Ok(c) => constructor = c,
+                            Ok(c) => {
+                                constructor = c;
+                            }
                             Err(e) => {
                                 eprintln!("Syntax Error in scope constructor: {}", e);
                                 self.synchronize();
@@ -71,11 +77,17 @@ impl Parser {
                 //====================================================================
                 if t == TokenKind::Handle {
                     if used_settings.contains(&Setting::Handle) {
-                        return Err(format!("Syntax Error: Duplicate 'handle' block in struct '{}'  at line {}, column {}", name, self.peek().line, self.peek().column));
+                        return Err(
+                            format!(
+                                "Syntax Error: Duplicate 'handle' block in struct '{}'  at line {}, column {}",
+                                name,
+                                self.peek().line,
+                                self.peek().column
+                            )
+                        );
                     } else {
                         used_settings.push(Setting::Handle);
-                        handle_block =
-                            self.parse_handle_block(&mut enabled_handles, &mut used_handles)?;
+                        handle_block = self.parse_handle_block(&mut used_handles)?;
                         continue;
                     }
                 }
@@ -84,11 +96,17 @@ impl Parser {
                 //====================================================================
                 if self.peek().kind == TokenKind::Public {
                     if used_settings.contains(&Setting::Public) {
-                        return Err(format!("Syntax Error: Duplicate 'public' block in struct '{}'  at line {}, column {}", name, self.peek().line, self.peek().column));
+                        return Err(
+                            format!(
+                                "Syntax Error: Duplicate 'public' block in struct '{}'  at line {}, column {}",
+                                name,
+                                self.peek().line,
+                                self.peek().column
+                            )
+                        );
                     } else {
                         used_settings.push(Setting::Public);
-                        public_block_ast =
-                            self.parse_field_block(&mut meta, Visibility::Public, Vec::new())?;
+                        public_block_ast = self.parse_field_block(&mut meta, Visibility::Public)?;
                         continue;
                     }
                 }
@@ -97,11 +115,17 @@ impl Parser {
                 //====================================================================
                 if t == TokenKind::Private {
                     if used_settings.contains(&Setting::Private) {
-                        return Err(format!("Syntax Error: Duplicate 'private' block in struct '{}'  at line {}, column {}", name, self.peek().line, self.peek().column));
+                        return Err(
+                            format!(
+                                "Syntax Error: Duplicate 'private' block in struct '{}'  at line {}, column {}",
+                                name,
+                                self.peek().line,
+                                self.peek().column
+                            )
+                        );
                     } else {
                         used_settings.push(Setting::Private);
-                        private_block_ast =
-                            self.parse_field_block(&mut meta, Visibility::Private, Vec::new())?;
+                        private_block_ast = self.parse_field_block(&mut meta, Visibility::Private)?;
                         continue;
                     }
                 }
@@ -110,23 +134,33 @@ impl Parser {
                 //====================================================================
                 if t == TokenKind::Static {
                     if used_settings.contains(&Setting::Static) {
-                        return Err(format!("Syntax Error: Duplicate 'static' block in struct '{}'  at line {}, column {}", name, self.peek().line, self.peek().column));
+                        return Err(
+                            format!(
+                                "Syntax Error: Duplicate 'static' block in struct '{}'  at line {}, column {}",
+                                name,
+                                self.peek().line,
+                                self.peek().column
+                            )
+                        );
                     } else {
                         used_settings.push(Setting::Static);
-                        static_block_ast =
-                            self.parse_field_block(&mut meta, Visibility::Private, Vec::new())?;
+                        static_block_ast = self.parse_field_block(&mut meta, Visibility::Private)?;
                         continue;
                     }
                 }
             } else {
-                print!("DEBUG:[ Invalid field found : '{}' ] or already used in this scope at , that is not allow in the array typed scope to use it \n\t - use custom typed scope with enable some setting it will work if it valid" , t.as_str());
-                return Err((format!(
-                    "Syntax Error: Invalid field [{}] declaration at line {}, column {}",
-                    t.as_str(),
-                    self.peek().line,
-                    self.peek().column
-                ))
-                .to_string());
+                print!(
+                    "DEBUG:[ Invalid field found : '{}' ] or already used in this scope at , that is not allow in the array typed scope to use it \n\t - use custom typed scope with enable some setting it will work if it valid",
+                    t.as_str()
+                );
+                return Err(
+                    format!(
+                        "Syntax Error: Invalid field [{}] declaration at line {}, column {}",
+                        t.as_str(),
+                        self.peek().line,
+                        self.peek().column
+                    ).to_string()
+                );
             }
         }
         self.consume(TokenKind::RBrace, "Expected '}' to close struct body")?;

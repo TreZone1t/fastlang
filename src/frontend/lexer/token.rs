@@ -1,5 +1,4 @@
 #[derive(Debug, PartialEq, Clone)]
-
 pub enum TokenKind {
     // 1. Data Types
     Int(i64),
@@ -11,48 +10,46 @@ pub enum TokenKind {
     //we will make Str and Array as a primitive type
     // 2. Keywords
     //Let,      // let   we will remove let to make the syntax more simple
-    Const,    // const
-    Set,      // set
-    If,       // if
-    Else,     // else
+    Const, // const
+    Set, // set
+    If, // if
+    Else, // else
     Switch, // switch // i don't know how to implement it but it will be using scope we will make a new scope type for it.
-    Case,   // case
-    For,    // for
-    In,     // in
-    While,  // while
-    Loop,   // loop
-    Break,  // break
+    Case, // case
+    For, // for
+    In, // in
+    While, // while
+    Loop, // loop
+    Break, // break
     Continue, // continue
     Return, // return
-    Fn,     // fn
-    Del,    // del
-    Add,    // add
+    Fn, // fn
+    Del, // del
+    Add, // add
 
     Constructor, // constructor
-    Extends,     // extends
-    Super,       // super
+    Extends, // extends
+    Super, // super
 
     Import, // import
     Export, // export
-    New,    // new
-    Copy,   // copy
+    New, // new
+    Copy, // copy
     Modify, // modify
-    This,   // this
+    This, // this
     Global, // global
 
-    Try,     // try
-    Catch,   // catch
-    Throw,   // throw
-    Enable,  // enable
-    Disable, // disable
-    All,     // all
+    Try, // try
+    Catch, // catch
+    Throw, // throw
+    Enable, // enable
 
     //new meta
-    Leave,             // leave
-    Yield,             // yield
-    Goto,              // goto
-    Call,              // call
-    Label,             // label
+    Leave, // leave
+    Yield, // yield
+    Goto, // goto
+    Call, // call
+    Label, // label
     LabelName(String), // label_name  @string
     // comments
     MultiLineComment,
@@ -61,12 +58,12 @@ pub enum TokenKind {
     // 3. Built-in Types
 
     // Primitives
-    TypeInt,   // int
+    TypeInt, // int
     TypeFloat, // float
-    TypeChar,  // char
-    TypeBool,  // bool
-    TypeVoid,  // void
-    TypeType,  // type
+    TypeChar, // char
+    TypeBool, // bool
+    TypeVoid, // void
+    TypeType, // type
     //the mabeuptype is removed and we will add a alternative for it as a ast node if we need it
     // but i don't think so
 
@@ -74,16 +71,15 @@ pub enum TokenKind {
     TypeError, //todo : remove this
 
     // built-in fn
-    SizeOf,   // sizeof()
-    TypeOf,   // typeof()
+    SizeOf, // sizeof()
+    TypeOf, // typeof()
     ToString, // to_string()
-    Log,      // log()
+    Log, // log()
 
     // Context Types
-    Scope,         // scope    //todo we may used in a future update as a ref type like
-    TypeLength,    // length   //* with  array and str
-    TypeData,      // data     //* with  array and str
-    TypeName,      // name
+    Scope, // scope    //todo we may used in a future update as a ref type like
+    TypeData, // data     //* with  array and str
+    TypeName, // name
     TypeBluePrint, // blueprint  //* with objects
     // blueprint support
     Impl, // impl
@@ -91,85 +87,78 @@ pub enum TokenKind {
     TypeObject, // object    //* with oop scopes and custom
     TypeCustom, // custom
     TypeStruct, // struct
-    TypeBlock,  // block
-    TypeClass,  // class
-    TypeEnum,   // enum
+    TypeBlock, // block
+    TypeClass, // class
+    TypeEnum, // enum
     //scopes fields
-    Param,     // param    //*  with  scope and fn and custom and init
-    Init,      // init for getting constructor   //* with  oop scopes and custom
-    Flag,      // flag      //* with  scope and fn and looped and block and custom
-    Static,    // static    //* with  oop scopes and custom
-    Public,    // public    //* with  class and struct and  custom and scope
-    Private,   // private   //* with  class and struct and  custom and scope
-    Handle,    // handle    //* with all meta-block: handle.<flag> -> { ... }
+    Param, // param    //*  with  scope and fn and custom and init
+    Init, // init for getting constructor   //* with  oop scopes and custom
+    Flag, // flag      //* with  scope and fn and looped and block and custom
+    Static, // static    //* with  oop scopes and custom
+    Public, // public    //* with  class and struct and  custom and scope
+    Private, // private   //* with  class and struct and  custom and scope
+    Handle, // handle    //* with all meta-block: handle.<flag> -> { ... }
     Statement, // statement //* with all meta-block: statement -> { ... }
     Variants,
 
-    // for custom
-    CustomIndexAccess, // index_access
-    CustomConstructor, // constructor
-    CustomGeneric,     // custom_generic
-    CustomIterator,    // iterator
-    CustomDisplay,     // display
-    CustomOperators,   // operators
     // 4. Operators / punctuation
-    Assign,   // =
-    Arrow,    // ->
+    Assign, // =
+    Arrow, // ->
     FatArrow, // =>
-    Dot,      // .
-    Not,      // !
-    Plus,     // +
-    Minus,    // -
+    Dot, // .
+    Not, // !
+    Plus, // +
+    Minus, // -
     Multiply, // *
-    Divide,   // /
+    Divide, // /
 
-    PlusPlus,    // ++
-    MinusMinus,  // --
-    PlusAssign,  // +=
+    PlusPlus, // ++
+    MinusMinus, // --
+    PlusAssign, // +=
     MinusAssign, // -=
-    MulAssign,   // *=
-    DivAssign,   // /=
-    DotDotDot,   // ...  //todo: add it
-    Mod,         // %
-    Underscore,  // _
+    MulAssign, // *=
+    DivAssign, // /=
+    DotDotDot, // ...  //todo: add it
+    Mod, // %
+    Underscore, // _
 
     // logical
     And, // && or and
-    Or,  // || or or
+    Or, // || or or
 
     // Relational
-    Eq,        // ==
-    NotEq,     // !=
-    Greater,   // >
-    Less,      // <
+    Eq, // ==
+    NotEq, // !=
+    Greater, // >
+    Less, // <
     GreaterEq, // >=
-    LessEq,    // <=
+    LessEq, // <=
 
     Ampersand, // &
-    At,        // @
+    At, // @
 
     //not used yet
-    Hash,       //#  we will use it in future update for hex and colors
+    Hash, //#  we will use it in future update for hex and colors
     DollarSign, //$
-    Tilde,      //~
+    Tilde, //~
 
     // Symbols
-    LParen,      // (
-    RParen,      // )
-    LBrace,      // {
-    RBrace,      // }
-    LBracket,    // [
-    RBracket,    // ]
-    Colon,       // :
+    LParen, // (
+    RParen, // )
+    LBrace, // {
+    RBrace, // }
+    LBracket, // [
+    RBracket, // ]
+    Colon, // :
     DoubleColon, // ::
-    Comma,       // ,
-    SemiColon,   // ;
+    Comma, // ,
+    SemiColon, // ;
 
     EOF,
     Default, // legacy catch-all, no longer emitted by the scanner (kept so nothing
     // downstream that matches on it breaks); prefer Error(String) instead.
     Error(String), // lexical error with a human-readable message; scanning continues
-                   // afterward so the parser can still synchronize() and report more errors.
+    // afterward so the parser can still synchronize() and report more errors.
 }
 impl TokenKind {
     pub fn as_str(&self) -> &str {
@@ -209,8 +198,6 @@ impl TokenKind {
             TokenKind::Catch => "catch",
             TokenKind::Throw => "throw",
             TokenKind::Enable => "enable",
-            TokenKind::Disable => "disable",
-            TokenKind::All => "all",
             TokenKind::Leave => "leave",
             TokenKind::Yield => "yield",
             TokenKind::Goto => "goto",
@@ -226,16 +213,9 @@ impl TokenKind {
             TokenKind::Private => "private",
             TokenKind::Public => "public",
             TokenKind::Static => "static",
-            TokenKind::TypeLength => "length",
             TokenKind::SizeOf => "sizeof",
             TokenKind::TypeData => "data",
             TokenKind::Statement => "statement",
-            TokenKind::CustomIndexAccess => "index_access",
-            TokenKind::CustomConstructor => "constructor",
-            TokenKind::CustomGeneric => "generic",
-            TokenKind::CustomIterator => "iterator",
-            TokenKind::CustomDisplay => "display",
-            TokenKind::CustomOperators => "operators",
             TokenKind::Param => "param",
             TokenKind::Init => "init",
             TokenKind::TypeBluePrint => "blueprint",

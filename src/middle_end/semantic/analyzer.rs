@@ -1,7 +1,7 @@
 use crate::frontend::parser::ast::*;
-use crate::middle_end::semantic::environment::{Environment, SymbolInfo};
+use crate::middle_end::semantic::environment::{ Environment, SymbolInfo };
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{ HashMap, HashSet };
 use std::rc::Rc;
 
 pub struct SemanticAnalyzer {
@@ -38,11 +38,7 @@ impl SemanticAnalyzer {
     }
 
     fn inject_stdlib(&mut self) {
-        let std_funcs = vec![
-            ("log", "void"),
-            ("input", "string"),
-            ("to_string", "string"),
-        ];
+        let std_funcs = vec![("log", "void"), ("input", "string"), ("to_string", "string")];
 
         for (name, _ret_type) in std_funcs {
             let info = SymbolInfo {
@@ -60,10 +56,7 @@ impl SemanticAnalyzer {
 
     pub fn record_dependency(&mut self, dep: String) {
         if let Some(ctx) = &self.current_context {
-            self.dependency_graph
-                .entry(ctx.clone())
-                .or_insert_with(HashSet::new)
-                .insert(dep);
+            self.dependency_graph.entry(ctx.clone()).or_insert_with(HashSet::new).insert(dep);
         }
     }
 
@@ -80,12 +73,7 @@ impl SemanticAnalyzer {
     }
 
     fn leave_scope(&mut self) {
-        let parent = self
-            .current_env
-            .borrow()
-            .parent
-            .clone()
-            .expect("Cannot leave global scope");
+        let parent = self.current_env.borrow().parent.clone().expect("Cannot leave global scope");
         self.current_env = parent;
     }
 
@@ -94,19 +82,19 @@ impl SemanticAnalyzer {
             Stmt::Declaration(decl) => {
                 self.visit_declaration(decl)?;
             }
-            Stmt::ReassignStmt { target, value } => {
+            Stmt::ReassignStmt { target, value, op } => {
                 let expr_type = self.visit_expression(value)?;
                 let target_type = self.visit_expression(target)?;
 
                 if let Expr::Identifier(name) = target {
                     if let Some(info) = self.current_env.borrow().lookup(name) {
-                        if info.editability
-                            == crate::frontend::parser::ast::Editability::NotEditable
+                        if
+                            info.editability ==
+                            crate::frontend::parser::ast::Editability::NotEditable
                         {
-                            return Err(format!(
-                                "Semantic Error: Cannot reassign constant '{}'",
-                                name
-                            ));
+                            return Err(
+                                format!("Semantic Error: Cannot reassign constant '{}'", name)
+                            );
                         }
                     }
                 }
@@ -120,26 +108,32 @@ impl SemanticAnalyzer {
                         if let Expr::Identifier(name) = target {
                             let maybe_info = self.current_env.borrow().lookup(name);
                             if let Some(mut info) = maybe_info {
-                                info.type_node =
-                                    Some(BaseType::Generic(Box::new(vec![BaseType::from_str(
-                                        expr_type.as_str(),
-                                    )])));
+                                info.type_node = Some(
+                                    BaseType::Generic(
+                                        Box::new(vec![BaseType::from_str(expr_type.as_str())])
+                                    )
+                                );
                                 self.current_env.borrow_mut().update(name, info);
                             }
                         }
-                    } else if expected_type != expr_type
-                        && expected_type != "unknown"
-                        && expr_type != "unknown"
-                        && expr_type != "object"
+                    } else if
+                        expected_type != expr_type &&
+                        expected_type != "unknown" &&
+                        expr_type != "unknown" &&
+                        expr_type != "object"
                     {
-                        return Err(format!(
-                            "Semantic Error: Cannot reassign smart pointer 'name<{}>' to type '{}'",
-                            expected_type, expr_type
-                        ));
+                        return Err(
+                            format!(
+                                "Semantic Error: Cannot reassign smart pointer 'name<{}>' to type '{}'",
+                                expected_type,
+                                expr_type
+                            )
+                        );
                     }
-                } else if target_type != expr_type
-                    && target_type != "unknown"
-                    && expr_type != "unknown"
+                } else if
+                    target_type != expr_type &&
+                    target_type != "unknown" &&
+                    expr_type != "unknown"
                 {
                     if target_type == "name" && expr_type == "object" {
                         // السماح بتعيين object لـ name
@@ -147,10 +141,13 @@ impl SemanticAnalyzer {
                         // السماح بتعيين الأنواع
                     } else {
                         if !self.types_are_compatible(&target_type, &expr_type) {
-                            return Err(format!(
-                                "Semantic Error: Cannot assign '{}' to type '{}'",
-                                expr_type, target_type
-                            ));
+                            return Err(
+                                format!(
+                                    "Semantic Error: Cannot assign '{}' to type '{}'",
+                                    expr_type,
+                                    target_type
+                                )
+                            );
                         }
                     }
                 }
@@ -158,22 +155,14 @@ impl SemanticAnalyzer {
             Stmt::ExpressionStmt(expr) => {
                 self.visit_expression(expr)?;
             }
-            Stmt::CaseStmt {
-                option: _,
-                set: _,
-                body,
-            } => {
+            Stmt::CaseStmt { option: _, set: _, body } => {
                 self.enter_scope();
                 for s in body {
                     self.visit_statement(s)?;
                 }
                 self.leave_scope();
             }
-            Stmt::IfStmt {
-                condition,
-                then_block,
-                else_block,
-            } => {
+            Stmt::IfStmt { condition, then_block, else_block } => {
                 let cond_type = self.visit_expression(condition)?;
                 if cond_type != "bool" && cond_type != "unknown" {
                     return Err("Semantic Error: if condition must be a boolean".to_string());
@@ -192,40 +181,35 @@ impl SemanticAnalyzer {
                     self.leave_scope();
                 }
             }
-            Stmt::ForInStmt {
-                item,
-                iterable,
-                body,
-            } => {
+            Stmt::ForInStmt { item, iterable, body } => {
                 let iterable_type = self.visit_expression(iterable)?;
 
                 let item_type = if iterable_type.starts_with("array<") {
-                    iterable_type
-                        .trim_start_matches("array<")
-                        .trim_end_matches(">")
-                        .to_string()
+                    iterable_type.trim_start_matches("array<").trim_end_matches(">").to_string()
                 } else if iterable_type == "string" {
                     "char".to_string()
                 } else {
-                    return Err(format!(
-                        "Semantic Error: Expected array or string in for-in loop, got '{}'",
-                        iterable_type
-                    ));
+                    return Err(
+                        format!("Semantic Error: Expected array or string in for-in loop, got '{}'", iterable_type)
+                    );
                 };
 
                 self.enter_scope();
 
-                if let Stmt::Declaration(crate::frontend::parser::ast::Decl::VarDecl {
-                    type_node,
-                    ..
-                }) = &**item
+                if
+                    let Stmt::Declaration(
+                        crate::frontend::parser::ast::Decl::VarDecl { type_node, .. },
+                    ) = &**item
                 {
                     let declared_type = type_node.as_str();
                     if !self.types_are_compatible(&declared_type, &item_type) {
-                        return Err(format!(
-                            "Semantic Error: Type mismatch in for-in loop. Iterable elements are '{}', but item is declared as '{}'",
-                            item_type, declared_type
-                        ));
+                        return Err(
+                            format!(
+                                "Semantic Error: Type mismatch in for-in loop. Iterable elements are '{}', but item is declared as '{}'",
+                                item_type,
+                                declared_type
+                            )
+                        );
                     }
                 }
 
@@ -263,9 +247,7 @@ impl SemanticAnalyzer {
                     }
                 }
             }
-            Stmt::SwitchStmt {
-                condition, cases, ..
-            } => {
+            Stmt::SwitchStmt { condition, cases, .. } => {
                 self.visit_expression(condition)?;
                 self.enter_scope();
                 self.active_flags.push("+has_break".to_string());
@@ -278,12 +260,7 @@ impl SemanticAnalyzer {
             Stmt::DelStmt { target, is_array } => {
                 self.visit_expression(target)?;
             }
-            Stmt::ForStmt {
-                init,
-                condition,
-                increment,
-                body,
-            } => {
+            Stmt::ForStmt { init, condition, increment, body } => {
                 self.enter_scope();
                 if let Some(i) = init {
                     self.visit_statement(i)?;
@@ -315,7 +292,9 @@ impl SemanticAnalyzer {
             }
             Stmt::ReturnStmt(expr) => {
                 if !self.active_flags.contains(&"+has_return".to_string()) {
-                    return Err("Semantic Error: Return statement is not allowed in this scope. 'has_return' flag is not enabled.".to_string());
+                    return Err(
+                        "Semantic Error: Return statement is not allowed in this scope. 'has_return' flag is not enabled.".to_string()
+                    );
                 }
 
                 let actual_type = self.visit_expression(expr)?;
@@ -323,34 +302,37 @@ impl SemanticAnalyzer {
                 if let Some(expected_type) = &self.active_return_type {
                     let expected_type_str: &str = &expected_type.as_str();
 
-                    if actual_type != "unknown"
-                        && expected_type_str != "unknown"
-                        && !self.types_are_compatible(&expected_type_str.to_string(), &actual_type)
+                    if
+                        actual_type != "unknown" &&
+                        expected_type_str != "unknown" &&
+                        !self.types_are_compatible(&expected_type_str.to_string(), &actual_type)
                     {
-                        return Err(format!(
-                            "Semantic Error: Return type mismatch. Expected '{}', got '{}'",
-                            Self::format_type(expected_type),
-                            actual_type
-                        ));
+                        return Err(
+                            format!(
+                                "Semantic Error: Return type mismatch. Expected '{}', got '{}'",
+                                Self::format_type(expected_type),
+                                actual_type
+                            )
+                        );
                     }
                 }
             }
             Stmt::BreakStmt => {
                 if !self.active_flags.contains(&"+has_break".to_string()) {
-                    return Err("Semantic Error: Break statement is not allowed outside loops or switch statements. 'has_break' flag is not enabled.".to_string());
+                    return Err(
+                        "Semantic Error: Break statement is not allowed outside loops or switch statements. 'has_break' flag is not enabled.".to_string()
+                    );
                 }
             }
             Stmt::ThrowStmt(expr) => {
                 if !self.active_flags.contains(&"+has_throw".to_string()) {
-                    return Err("Semantic Error: Throw statement is not allowed here. 'has_throw' flag is not enabled.".to_string());
+                    return Err(
+                        "Semantic Error: Throw statement is not allowed here. 'has_throw' flag is not enabled.".to_string()
+                    );
                 }
                 self.visit_expression(expr)?;
             }
-            Stmt::TryCatchStmt {
-                try_block,
-                catch_param,
-                catch_block,
-            } => {
+            Stmt::TryCatchStmt { try_block, catch_param, catch_block } => {
                 self.enter_scope();
                 for s in try_block {
                     self.visit_statement(s)?;
@@ -367,9 +349,7 @@ impl SemanticAnalyzer {
                     settings: std::collections::HashSet::new(),
                     is_array: false,
                 };
-                self.current_env
-                    .borrow_mut()
-                    .define(catch_param.clone(), info)?;
+                self.current_env.borrow_mut().define(catch_param.clone(), info)?;
                 for s in catch_block {
                     self.visit_statement(s)?;
                 }
@@ -383,13 +363,7 @@ impl SemanticAnalyzer {
 
     fn visit_declaration(&mut self, decl: &Decl) -> Result<(), String> {
         match decl {
-            Decl::VarDecl {
-                visibility,
-                editability,
-                type_node,
-                name,
-                value,
-            } => {
+            Decl::VarDecl { visibility, editability, type_node, name, value, assign_op } => {
                 let prev_context = self.current_context.clone();
                 self.current_context = Some(name.clone());
                 let expr_type = self.visit_expression(value)?;
@@ -402,40 +376,31 @@ impl SemanticAnalyzer {
                     match base_decl {
                         "name" => {
                             if expr_type != "unknown" && expr_type != "object" {
-                                final_type_node =
-                                    BaseType::Name(Box::new(BaseType::from_str(&expr_type)));
+                                final_type_node = BaseType::Name(
+                                    Box::new(BaseType::from_str(&expr_type))
+                                );
                                 declared_type = format!("name<{}>", expr_type);
                             }
                         }
-                        "blueprint" => {
-                            if expr_type != "object" {
-                                return Err(format!(
-                                    "Semantic Error: 'blueprint' must be initialized with an object literal, got '{}'",
-                                    expr_type
-                                ));
-                            }
-                        }
-                        "length" | "size" => {
-                            if !expr_type.starts_with("int") {
-                                return Err(format!(
-                                    "Semantic Error: '{}' expects an integer value, got '{}'",
-                                    declared_type, expr_type
-                                ));
-                            }
-                        }
                         _ => {
-                            if !self.types_are_compatible(&declared_type, &expr_type) {
-                                return Err(format!(
-                                    "Semantic Error: Type mismatch for '{}'. Declared '{}', got '{}'",
-                                    name, declared_type, expr_type
-                                ));
+                            if
+                                !self.types_are_compatible(&declared_type, &expr_type) &&
+                                assign_op != "->"
+                            {
+                                return Err(
+                                    format!(
+                                        "Semantic Error: Type mismatch for '{}'. Declared '{}', got '{}'",
+                                        name,
+                                        declared_type,
+                                        expr_type
+                                    )
+                                );
                             }
                         }
                     }
                 }
 
-                let deps = self
-                    .dependency_graph
+                let deps = self.dependency_graph
                     .get(&name.clone())
                     .cloned()
                     .unwrap_or_default()
@@ -461,6 +426,7 @@ impl SemanticAnalyzer {
                 name,
                 length,
                 value,
+                assign_op,
             } => {
                 let expr_type = self.visit_expression(value)?;
                 self.visit_expression(length)?;
@@ -477,11 +443,13 @@ impl SemanticAnalyzer {
                         if **inner == BaseType::Unknown && expr_type != "unknown" {
                             let inner_type = if expr_type.starts_with("array<") {
                                 BaseType::Array {
-                                    base_type: Box::new(BaseType::from_str(
-                                        expr_type
-                                            .trim_start_matches("array<")
-                                            .trim_end_matches(">"),
-                                    )),
+                                    base_type: Box::new(
+                                        BaseType::from_str(
+                                            expr_type
+                                                .trim_start_matches("array<")
+                                                .trim_end_matches(">")
+                                        )
+                                    ),
                                     size: Box::new(None),
                                 }
                             } else {
@@ -492,18 +460,23 @@ impl SemanticAnalyzer {
                     }
 
                     if let BaseType::Name(_) = tn {
-                        if expr_type == "unknown"
-                            || expr_type == "array"
-                            || expr_type == format!("array<{}>", declared_type)
-                            || (declared_type == "char"
-                                && (expr_type == "string" || expr_type == "str"))
+                        if
+                            expr_type == "unknown" ||
+                            expr_type == "array" ||
+                            expr_type == format!("array<{}>", declared_type) ||
+                            (declared_type == "char" &&
+                                (expr_type == "string" || expr_type == "str"))
                         {
                             // Valid
                         } else if !self.types_are_compatible(&declared_type, &expr_type) {
-                            return Err(format!(
-                                "Semantic Error: Type mismatch for array '{}'. Declared '{}', got '{}'",
-                                name, declared_type, expr_type
-                            ));
+                            return Err(
+                                format!(
+                                    "Semantic Error: Type mismatch for array '{}'. Declared '{}', got '{}'",
+                                    name,
+                                    declared_type,
+                                    expr_type
+                                )
+                            );
                         }
                     }
                 } else {
@@ -530,7 +503,6 @@ impl SemanticAnalyzer {
                 params,
                 flags,
                 labels: _,
-                length: _,
                 data,
                 extends: _,
                 return_type: _,
@@ -551,10 +523,14 @@ impl SemanticAnalyzer {
                     let has_label = s.contains(&crate::frontend::parser::ast::Setting::Label);
 
                     if has_label && (has_public || has_private || has_stmt) {
-                        return Err(format!("Semantic Error: Custom block '{}' is marked as 'label' and cannot be combined with other modifiers.", name));
+                        return Err(
+                            format!("Semantic Error: Custom block '{}' is marked as 'label' and cannot be combined with other modifiers.", name)
+                        );
                     }
                     if has_stmt && (has_public || has_private) {
-                        return Err(format!("Semantic Error: Custom block '{}' is marked as 'statement' and cannot have 'public' or 'private' modifiers.", name));
+                        return Err(
+                            format!("Semantic Error: Custom block '{}' is marked as 'statement' and cannot have 'public' or 'private' modifiers.", name)
+                        );
                     }
                 }
 
@@ -586,8 +562,9 @@ impl SemanticAnalyzer {
                     }
                 }
 
-                if let Some(h_vec) =
-                    handles as &Option<Vec<crate::frontend::parser::ast::HandleMethods>>
+                if
+                    let Some(h_vec) =
+                        handles as &Option<Vec<crate::frontend::parser::ast::HandleMethods>>
                 {
                     if h_vec.contains(&crate::frontend::parser::ast::HandleMethods::Error) {
                         self.active_flags.push("+has_throw".to_string());
@@ -609,23 +586,8 @@ impl SemanticAnalyzer {
                         is_array: false,
                         dependencies: Vec::new(),
                     };
-                    self.current_env
-                        .borrow_mut()
-                        .define("data".to_string(), data_info)?;
+                    self.current_env.borrow_mut().define("data".to_string(), data_info)?;
                 }
-
-                let length_info = SymbolInfo {
-                    dependencies: Vec::new(),
-                    name: "length".to_string(),
-                    type_node: Some(BaseType::Int32),
-                    visibility: Visibility::Public,
-                    editability: Editability::Editable,
-                    settings: std::collections::HashSet::new(),
-                    is_array: false,
-                };
-                self.current_env
-                    .borrow_mut()
-                    .define("length".to_string(), length_info)?;
 
                 if let Some(ref params_vec) = params {
                     for p in params_vec {
@@ -638,9 +600,7 @@ impl SemanticAnalyzer {
                             is_array: false,
                             dependencies: Vec::new(),
                         };
-                        self.current_env
-                            .borrow_mut()
-                            .define(p.name.clone(), param_info)?;
+                        self.current_env.borrow_mut().define(p.name.clone(), param_info)?;
                     }
                 }
 
@@ -679,9 +639,7 @@ impl SemanticAnalyzer {
                                 is_array: false,
                                 dependencies: Vec::new(),
                             };
-                            self.current_env
-                                .borrow_mut()
-                                .define(param.name.clone(), param_info)?;
+                            self.current_env.borrow_mut().define(param.name.clone(), param_info)?;
                         }
                         let prev_stmt_ctor = self.in_statement_scope;
                         self.in_statement_scope = true;
@@ -694,36 +652,23 @@ impl SemanticAnalyzer {
                 }
 
                 if let Some(ref handle_stmts) = handle_block {
-                    let allowed_handle_names = [
-                        "index_access",
-                        "display",
-                        "add",
-                        "sub",
-                        "mul",
-                        "div",
-                        "mod",
-                        "iterator",
-                        "next",
-                        "length",
-                        "size",
-                        "call",
-                        "label",
-                        "goto",
-                        "leave",
-                        "data",
-                        "yield",
-                        "has_error",
-                    ];
                     for d in handle_stmts {
                         if let Decl::FnDecl { name: fn_name, .. } = d {
-                            if !allowed_handle_names.contains(&fn_name.as_str()) {
-                                return Err(format!(
-                                    "Semantic Error: Invalid handle function name '{}'.",
-                                    fn_name
-                                ));
+                            if
+                                handles.is_some() &&
+                                !handles
+                                    .as_ref()
+                                    .unwrap()
+                                    .contains(&HandleMethods::from_str(fn_name.as_str()))
+                            {
+                                return Err(
+                                    format!("Semantic Error: Invalid handle function name '{}'.", fn_name)
+                                );
                             }
                         } else {
-                            return Err("Semantic Error: Only function declarations (fn) are allowed inside a handle block.".to_string());
+                            return Err(
+                                "Semantic Error: Only function declarations (fn) are allowed inside a handle block.".to_string()
+                            );
                         }
                         self.visit_declaration(d)?;
                     }
@@ -746,7 +691,6 @@ impl SemanticAnalyzer {
                 static_block,
                 generics: _,
                 handle_block,
-                length: _,
                 constructor,
             } => {
                 let info = SymbolInfo {
@@ -793,9 +737,7 @@ impl SemanticAnalyzer {
                                 is_array: false,
                                 dependencies: Vec::new(),
                             };
-                            self.current_env
-                                .borrow_mut()
-                                .define(param.name.clone(), param_info)?;
+                            self.current_env.borrow_mut().define(param.name.clone(), param_info)?;
                         }
                         let prev_stmt_ctor = self.in_statement_scope;
                         self.in_statement_scope = true;
@@ -864,9 +806,7 @@ impl SemanticAnalyzer {
                                 is_array: false,
                                 dependencies: Vec::new(),
                             };
-                            self.current_env
-                                .borrow_mut()
-                                .define(param.name.clone(), param_info)?;
+                            self.current_env.borrow_mut().define(param.name.clone(), param_info)?;
                         }
                         for stmt in &ctor.body {
                             self.visit_statement(stmt)?;
@@ -880,7 +820,6 @@ impl SemanticAnalyzer {
             Decl::EnumDecl {
                 is_exported,
                 name,
-                length: _,
                 handles: _,
                 settings: _,
                 handle_block,
@@ -912,24 +851,14 @@ impl SemanticAnalyzer {
                 self.leave_scope();
                 self.in_custom_scope = prev_in_custom;
             }
-            Decl::BlockDecl {
-                is_exported: _,
-                name: _,
-                statements,
-            } => {
+            Decl::BlockDecl { is_exported: _, name: _, statements } => {
                 self.enter_scope();
                 for s in statements {
                     self.visit_statement(s)?;
                 }
                 self.leave_scope();
             }
-            Decl::FnDecl {
-                is_exported,
-                name,
-                params,
-                return_type,
-                body,
-            } => {
+            Decl::FnDecl { is_exported, name, params, return_type, body } => {
                 let info = SymbolInfo {
                     dependencies: Vec::new(),
                     name: name.clone(),
@@ -960,9 +889,7 @@ impl SemanticAnalyzer {
                         is_array: false,
                         dependencies: Vec::new(),
                     };
-                    self.current_env
-                        .borrow_mut()
-                        .define(p.name.clone(), param_info)?;
+                    self.current_env.borrow_mut().define(p.name.clone(), param_info)?;
                 }
                 for s in body {
                     self.visit_statement(s)?;
@@ -989,11 +916,7 @@ impl SemanticAnalyzer {
                 }
                 self.leave_scope();
             }
-            Decl::BlueprintDecl {
-                name,
-                definition: _,
-                ..
-            } => {
+            Decl::BlueprintDecl { name, definition: _, .. } => {
                 let info = SymbolInfo {
                     dependencies: Vec::new(),
                     name: name.clone(),
@@ -1008,10 +931,9 @@ impl SemanticAnalyzer {
             Decl::ImplDecl { target, methods } => {
                 let lookup = self.current_env.borrow().lookup(target);
                 if lookup.is_none() {
-                    return Err(format!(
-                        "Semantic Error: Blueprint '{}' not found for impl block",
-                        target
-                    ));
+                    return Err(
+                        format!("Semantic Error: Blueprint '{}' not found for impl block", target)
+                    );
                 }
 
                 self.enter_scope();
@@ -1027,13 +949,7 @@ impl SemanticAnalyzer {
                 self.active_flags.retain(|x| x != "+has_return");
                 self.leave_scope();
             }
-            Decl::NameDecl {
-                name,
-                inner_type,
-                target,
-                access_mode,
-                is_heap: _,
-            } => {
+            Decl::NameDecl { name, inner_type, target, access_mode, is_heap: _ } => {
                 let prev_context = self.current_context.clone();
                 self.current_context = Some(name.clone());
                 let target_type = self.visit_expression(target)?;
@@ -1055,12 +971,7 @@ impl SemanticAnalyzer {
                 self.current_env.borrow_mut().define(name.clone(), info)?;
                 self.current_context = prev_context;
             }
-            Decl::PointerDecl {
-                name,
-                inner_type,
-                length,
-                value,
-            } => {
+            Decl::PointerDecl { name, inner_type, length, value } => {
                 let prev_context = self.current_context.clone();
                 self.current_context = Some(name.clone());
                 let _val_type = self.visit_expression(value)?;
@@ -1101,7 +1012,9 @@ impl SemanticAnalyzer {
                 for el in elements {
                     let inferred = self.visit_expression(el)?;
                     match &element_type {
-                        None => element_type = Some(inferred),
+                        None => {
+                            element_type = Some(inferred);
+                        }
                         Some(prev) if prev == &inferred => {}
                         Some(_) => {
                             element_type = Some("unknown".to_string());
@@ -1110,10 +1023,12 @@ impl SemanticAnalyzer {
                     }
                 }
 
-                Ok(format!(
-                    "array<{}>",
-                    element_type.unwrap_or_else(|| "unknown".to_string())
-                ))
+                Ok(
+                    format!(
+                        "array<{}>",
+                        element_type.unwrap_or_else(|| "unknown".to_string())
+                    )
+                )
             }
             Expr::ObjectLiteral(stmts) => {
                 self.enter_scope();
@@ -1131,8 +1046,7 @@ impl SemanticAnalyzer {
                 println!("DEBUG: Checking identifier '{}', len: {}", name, name.len());
                 match self.current_env.borrow().lookup(name) {
                     Some(info) => {
-                        let mut type_str = info
-                            .type_node
+                        let mut type_str = info.type_node
                             .as_ref()
                             .map(|t: &crate::frontend::parser::ast::BaseType| t.as_str())
                             .unwrap_or_else(|| "unknown".to_string());
@@ -1145,26 +1059,22 @@ impl SemanticAnalyzer {
                         if self.in_struct || self.in_class || self.in_custom_scope {
                             return Ok("auto".to_string());
                         }
-                        return Err(format!(
-                            "Semantic Error: Identifier '{}' is not defined in this scope.",
-                            name
-                        ));
+                        return Err(
+                            format!("Semantic Error: Identifier '{}' is not defined in this scope.", name)
+                        );
                     }
                 }
             }
-            Expr::NamespaceAccess {
-                namespace,
-                property,
-            } => {
+            Expr::NamespaceAccess { namespace, property } => {
                 if let Some(metadata) = self.global_metadata.get(namespace) {
-                    let prop_name =
-                        match &**property {
-                            Expr::Identifier(prop_name) => prop_name.clone(),
-                            _ => return Err(
-                                "Semantic Error: Expected identifier for static property access"
-                                    .to_string(),
-                            ),
-                        };
+                    let prop_name = match &**property {
+                        Expr::Identifier(prop_name) => prop_name.clone(),
+                        _ => {
+                            return Err(
+                                "Semantic Error: Expected identifier for static property access".to_string()
+                            );
+                        }
+                    };
                     if let Some(t_node) = metadata.fields.get(&prop_name) {
                         return Ok(t_node.as_str());
                     }
@@ -1191,10 +1101,9 @@ impl SemanticAnalyzer {
                     }
 
                     if name != "Some" && self.current_env.borrow().lookup(name).is_none() {
-                        return Err(format!(
-                            "Semantic Error: Function '{}' is not defined in this scope.",
-                            name
-                        ));
+                        return Err(
+                            format!("Semantic Error: Function '{}' is not defined in this scope.", name)
+                        );
                     }
                 }
                 for arg in args {
@@ -1204,7 +1113,9 @@ impl SemanticAnalyzer {
             }
             Expr::This => {
                 if !self.in_class && !self.in_struct && !self.in_custom_scope {
-                    return Err("Semantic Error: Cannot use 'this' outside of a class, struct, or custom scope".to_string());
+                    return Err(
+                        "Semantic Error: Cannot use 'this' outside of a class, struct, or custom scope".to_string()
+                    );
                 }
                 if let Some(name) = &self.current_type_name {
                     Ok(name.clone())
@@ -1214,7 +1125,9 @@ impl SemanticAnalyzer {
             }
             Expr::Global => {
                 if self.current_env.borrow().parent.is_none() {
-                    eprintln!("Warning: Using 'global' in the global scope is redundant and considered ugly code.");
+                    eprintln!(
+                        "Warning: Using 'global' in the global scope is redundant and considered ugly code."
+                    );
                 }
                 Ok("object".to_string())
             }
@@ -1232,11 +1145,7 @@ impl SemanticAnalyzer {
                 let t = self.visit_expression(target)?;
                 Ok(t)
             }
-            Expr::ArrayAllocate {
-                type_node,
-                size,
-                length,
-            } => {
+            Expr::ArrayAllocate { type_node, size, length } => {
                 self.visit_expression(size)?;
                 if let Some(l) = length {
                     self.visit_expression(l)?;
@@ -1245,23 +1154,6 @@ impl SemanticAnalyzer {
             }
             _ => Ok("unknown".to_string()),
         }
-    }
-
-    fn validate_magic_type_assignment(&self, magic: &str, source: &str) -> Result<(), String> {
-        match magic {
-            "length" | "size" => {
-                if !["str", "array", "unknown"].contains(&source) {
-                    return Err(format!(
-                        "Semantic Error: '{}' can only be used with array, str. Got '{}'",
-                        magic, source
-                    ));
-                }
-            }
-            "param" => {}
-            "init" => {}
-            _ => {}
-        }
-        Ok(())
     }
 
     fn types_are_compatible(&self, expected: &str, actual: &str) -> bool {
@@ -1294,8 +1186,9 @@ impl SemanticAnalyzer {
             let inner = expected.trim_start_matches("name<").trim_end_matches(">");
             return inner == actual;
         }
-        if (expected == "string" || expected == "custom<string>")
-            && (actual == "str" || actual == "string")
+        if
+            (expected == "string" || expected == "custom<string>") &&
+            (actual == "str" || actual == "string")
         {
             return true;
         }

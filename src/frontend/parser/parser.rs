@@ -65,7 +65,7 @@ impl Parser {
         let mut statements = Vec::new();
 
         while !self.is_at_end() {
-            match self.parse_statement("global".to_string()) {
+            match self.parse_statement(ScopeType::Global) {
                 Ok(Some(stmt)) => statements.push(stmt),
 
                 // إضافة الاحتمال الناقص لتجاهل الجمل الفارغة
