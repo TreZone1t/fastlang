@@ -11,7 +11,7 @@ impl Parser {
                 self.advance();
                 return Ok(None);
             }
-            TokenKind::Import | TokenKind::Export => {
+            TokenKind::Import | TokenKind::Use | TokenKind::Export => {
                 if !matches!(scope, ScopeType::Global) {
                     return Err(
                         format!(
@@ -20,10 +20,11 @@ impl Parser {
                         )
                     );
                 }
-                if self.peek().kind == TokenKind::Import {
-                    self.parse_import_stmt().map(Stmt::Declaration)
-                } else {
-                    self.parse_exported_stmt().map(Stmt::Declaration)
+                match self.peek().kind {
+                    TokenKind::Import => self.parse_import_stmt().map(Stmt::Declaration),
+                    TokenKind::Use => self.parse_use_stmt().map(Stmt::Declaration),
+                    TokenKind::Export => self.parse_exported_stmt().map(Stmt::Declaration),
+                    _ => unreachable!(),
                 }
             }
             TokenKind::Const => self.parse_const(scope).map(Stmt::Declaration),
@@ -332,6 +333,26 @@ impl Parser {
             imports,
         })
     }
+
+    /// `use std;` — wildcard import of another module's public symbols.
+    pub(crate) fn parse_use_stmt(&mut self) -> Result<Decl, String> {
+        self.advance(); // consume 'use'
+        let mut module_path: Vec<String> = Vec::new();
+        module_path.push(self.get_identifier("Expected module name after 'use'")?);
+
+        while self.peek().kind == TokenKind::DoubleColon {
+            self.advance();
+            module_path.push(self.get_identifier("Expected module name after '::'")?);
+        }
+
+        self.consume(TokenKind::SemiColon, "Expected ';' after use statement")?;
+
+        Ok(Decl::Import {
+            module_path,
+            imports: None,
+        })
+    }
+
     pub(crate) fn parse_const(&mut self, scope: ScopeType) -> Result<Decl, String> {
         self.advance(); // consume 'const'
 
@@ -411,6 +432,45 @@ impl Parser {
         }
 
         Ok(stmt)
+    }
+
+    pub(crate) fn consume_optional_let(&mut self) {
+        if let TokenKind::Identifier(name) = &self.peek().kind {
+            if name == "let" {
+                self.advance();
+            }
+        }
+    }
+
+    pub(crate) fn is_var_decl_start(&self) -> bool {
+        match &self.peek().kind {
+            TokenKind::Const
+            | TokenKind::TypeInt
+            | TokenKind::TypeFloat
+            | TokenKind::TypeChar
+            | TokenKind::TypeBool
+            | TokenKind::TypeName
+            | TokenKind::TypeType => true,
+            TokenKind::Identifier(_) => {
+                let next = self.tokens.get(self.current + 1).map(|t| &t.kind);
+                matches!(
+                    next,
+                    Some(TokenKind::Identifier(_))
+                        | Some(TokenKind::Less)
+                        | Some(TokenKind::LBracket)
+                )
+            }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn parse_for_init_stmt(&mut self) -> Result<Stmt, String> {
+        self.consume_optional_let();
+        if self.is_var_decl_start() {
+            self.parse_var_decl(ScopeType::Block, false).map(Stmt::Declaration)
+        } else {
+            self.parse_expression_stmt()
+        }
     }
 
     pub(crate) fn parse_var_decl(
@@ -776,17 +836,7 @@ impl Parser {
             self.advance(); // skip ';'
             None
         } else {
-            let stmt = match self.peek().kind {
-                | TokenKind::Const
-                | TokenKind::TypeInt
-                | TokenKind::TypeFloat
-                | TokenKind::TypeChar
-                | TokenKind::TypeBool
-                | TokenKind::TypeName =>
-                    self.parse_var_decl(ScopeType::Block, false).map(Stmt::Declaration)?,
-                _ => self.parse_expression_stmt()?,
-            };
-            Some(Box::new(stmt))
+            Some(Box::new(self.parse_for_init_stmt()?))
         };
 
         let condition = if self.peek().kind == TokenKind::SemiColon {
@@ -801,8 +851,7 @@ impl Parser {
         } else {
             let expr = self.parse_expression()?;
             let op = self.peek().kind.clone();
-            self.advance();
-            print!("DEBUG: parse_for_stmt: op: {:?}", op);
+            // Only consume the op token if it's an assignment-like operator
             if
                 op == TokenKind::Arrow ||
                 op == TokenKind::Assign ||
@@ -811,6 +860,7 @@ impl Parser {
                 op == TokenKind::MulAssign ||
                 op == TokenKind::DivAssign
             {
+                self.advance(); // consume the assignment operator
                 let mut value = self.parse_expression()?;
                 if op == TokenKind::PlusAssign {
                     value = Expr::BinaryOp {
@@ -846,12 +896,17 @@ impl Parser {
                     })
                 )
             } else {
+                // Expression-only increment (e.g. i++ or function call)
+                // Do NOT advance - the next token should be RParen
                 Some(Box::new(Stmt::ExpressionStmt(expr)))
             }
         };
         self.consume(TokenKind::RParen, "Expected ')' after for clauses")?;
 
-        self.consume(TokenKind::Arrow, "Expected '->' after 'for' clauses")?;
+        // Support optional '->' arrow before body brace (FastLang syntax)
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance(); // consume '->'
+        }
 
         let body = if self.peek().kind == TokenKind::LBrace {
             self.advance();
@@ -876,19 +931,12 @@ impl Parser {
 
     pub(crate) fn parse_for_in_stmt_body(&mut self) -> Result<Stmt, String> {
         // We already consumed `for (`
-        // Now we parse the item
-        let item = match self.peek().kind {
-            | TokenKind::Const
-            | TokenKind::TypeInt
-            | TokenKind::TypeFloat
-            | TokenKind::TypeChar
-            | TokenKind::TypeBool =>
-                self.parse_var_decl(ScopeType::Block, true).map(Stmt::Declaration)?, // pass true for `no_semi`
-            TokenKind::TypeName => self.parse_name().map(Stmt::Declaration)?,
-            _ => {
-                let expr = self.parse_expression()?;
-                Stmt::ExpressionStmt(expr)
-            }
+        self.consume_optional_let();
+        let item = if self.is_var_decl_start() {
+            self.parse_var_decl(ScopeType::Block, true).map(Stmt::Declaration)?
+        } else {
+            let expr = self.parse_expression()?;
+            Stmt::ExpressionStmt(expr)
         };
 
         self.consume(TokenKind::In, "Expected 'in' in for-in loop")?;
@@ -971,7 +1019,12 @@ impl Parser {
 
     //TODO: fix this or remove it and build a better system for it
     pub(crate) fn parse_expression_or_reassignment(&mut self) -> Result<Stmt, String> {
-        if let TokenKind::Identifier(_) = self.peek().kind.clone() {
+        if let TokenKind::Identifier(name) = self.peek().kind.clone() {
+            if name == "let" {
+                self.advance();
+                return self.parse_var_decl(ScopeType::Block, false).map(Stmt::Declaration);
+            }
+
             let next1 = self.tokens.get(self.current + 1).map(|t| &t.kind);
             let next2 = self.tokens.get(self.current + 2).map(|t| &t.kind);
 

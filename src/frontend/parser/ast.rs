@@ -512,6 +512,7 @@ pub enum Expr {
     LiteralString(String),
     LiteralBool(bool),
     LiteralChar(char),
+    LiteralVoid,
     ArrayLiteral(Vec<Expr>),
     Identifier(String),
     Super,

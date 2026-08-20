@@ -159,6 +159,7 @@ impl Scanner {
             "error" => Some(TokenKind::TypeError),
             "enable" => Some(TokenKind::Enable),
             "import" => Some(TokenKind::Import),
+            "use" => Some(TokenKind::Use),
             "export" => Some(TokenKind::Export),
 
             "_" => Some(TokenKind::Underscore),

@@ -43,6 +43,8 @@ impl CodeGenerator {
                     "nullptr".to_string()
                 } else if name == "None" {
                     "std::nullopt".to_string()
+                } else if name == "__default__" {
+                    "{}".to_string()
                 } else {
                     name.clone()
                 }

@@ -17,15 +17,15 @@ impl CodeGenerator {
         }
     }
 
-    pub(crate) fn emit_operator_overloads(&mut self, handle_block: &Option<Vec<Stmt>>) {
+    pub(crate) fn emit_operator_overloads(&mut self, handle_block: &Option<Vec<Decl>>) {
         if let Some(handles) = handle_block {
             for h in handles {
-                if let Stmt::Declaration(Decl::FnDecl {
+                if let Decl::FnDecl {
                     name,
                     params,
                     return_type,
                     ..
-                }) = h
+                } = h
                 {
                     let op = match name.as_str() {
                         "add" => Some("+"),
@@ -36,33 +36,11 @@ impl CodeGenerator {
                         _ => None,
                     };
 
-                    let ret_str = match return_type {
-                        BaseType::Int8 => "int8_t".to_string(),
-                        BaseType::Int16 => "int16_t".to_string(),
-                        BaseType::Int32 => "int32_t".to_string(),
-                        BaseType::Int64 => "int64_t".to_string(),
-                        BaseType::Float32 => "float".to_string(),
-                        BaseType::Float64 => "double".to_string(),
-                        BaseType::Char => "char".to_string(),
-                        BaseType::Bool => "bool".to_string(),
-                        BaseType::Array { base_type, .. } => base_type.as_str(),
-                        _ => "auto".to_string(),
-                    };
+                    let ret_str = crate::backend::cpp::stmt::type_to_cpp(return_type);
 
                     if let Some(o) = op {
                         if params.len() == 1 {
-                            let param_type = match params[0].type_node.clone() {
-                                BaseType::Int8 => "int8_t".to_string(),
-                                BaseType::Int16 => "int16_t".to_string(),
-                                BaseType::Int32 => "int32_t".to_string(),
-                                BaseType::Int64 => "int64_t".to_string(),
-                                BaseType::Float32 => "float".to_string(),
-                                BaseType::Float64 => "double".to_string(),
-                                BaseType::Char => "char".to_string(),
-                                BaseType::Bool => "bool".to_string(),
-                                BaseType::Array { base_type, .. } => base_type.as_str(),
-                                _ => "auto".to_string(),
-                            };
+                            let param_type = crate::backend::cpp::stmt::type_to_cpp(&params[0].type_node);
                             let param_name = &params[0].name;
                             self.emit(&format!(
                                 "{} operator{}({} {}) {{",
@@ -75,18 +53,7 @@ impl CodeGenerator {
                         }
                     } else if name == "index_access" {
                         if params.len() == 1 {
-                            let param_type = match params[0].type_node.clone() {
-                                BaseType::Int8 => "int8_t".to_string(),
-                                BaseType::Int16 => "int16_t".to_string(),
-                                BaseType::Int32 => "int32_t".to_string(),
-                                BaseType::Int64 => "int64_t".to_string(),
-                                BaseType::Float32 => "float".to_string(),
-                                BaseType::Float64 => "double".to_string(),
-                                BaseType::Char => "char".to_string(),
-                                BaseType::Bool => "bool".to_string(),
-                                BaseType::Array { base_type, .. } => base_type.as_str(),
-                                _ => "auto".to_string(),
-                            };
+                            let param_type = crate::backend::cpp::stmt::type_to_cpp(&params[0].type_node);
                             let param_name = &params[0].name;
                             self.emit(&format!(
                                 "{} operator[]({} {}) {{",

@@ -32,6 +32,7 @@ pub enum TokenKind {
     Super, // super
 
     Import, // import
+    Use, // use
     Export, // export
     New, // new
     Copy, // copy
@@ -188,6 +189,7 @@ impl TokenKind {
             TokenKind::Extends => "extends",
             TokenKind::Super => "super",
             TokenKind::Import => "import",
+            TokenKind::Use => "use",
             TokenKind::Export => "export",
             TokenKind::New => "new",
             TokenKind::Copy => "copy",

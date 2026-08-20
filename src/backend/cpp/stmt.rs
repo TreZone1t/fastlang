@@ -1,6 +1,37 @@
 use crate::backend::cpp::generator::CodeGenerator;
 use crate::frontend::parser::ast::*;
-// ... (imports and other CodeGenerator methods remain the same) ...
+
+pub(crate) fn type_to_cpp(t: &BaseType) -> String {
+    match t {
+        BaseType::Int8 => "int8_t".to_string(),
+        BaseType::Int16 => "int16_t".to_string(),
+        BaseType::Int32 => "int32_t".to_string(),
+        BaseType::Int64 => "int64_t".to_string(),
+        BaseType::Int128 => "__int128".to_string(),
+        BaseType::Float32 => "float".to_string(),
+        BaseType::Float64 => "double".to_string(),
+        BaseType::Char => "char".to_string(),
+        BaseType::Bool => "bool".to_string(),
+        BaseType::Void => "void".to_string(),
+        BaseType::Custom { name, generics, .. } | BaseType::Class { name, generics, .. } => {
+            if generics.is_empty() {
+                name.clone()
+            } else {
+                let gen_strs: Vec<String> = generics.iter().map(type_to_cpp).collect();
+                format!("{}<{}>", name, gen_strs.join(", "))
+            }
+        }
+        BaseType::Generic(inner_vec) => {
+            let strs: Vec<String> = inner_vec.iter().map(type_to_cpp).collect();
+            strs.join(", ")
+        }
+        BaseType::Pointer(inner) => format!("{}*", type_to_cpp(inner)),
+        BaseType::Name(inner) => format!("{}*", type_to_cpp(inner)),
+        BaseType::Array { base_type, .. } => format!("std::vector<{}>", type_to_cpp(base_type)),
+        BaseType::Unknown => "auto".to_string(),
+        _ => t.as_str(),
+    }
+}
 
 impl CodeGenerator {
     pub(crate) fn visit_statement(&mut self, stmt: &Stmt) {
@@ -15,7 +46,13 @@ impl CodeGenerator {
             Stmt::ReassignStmt { target, value, op } => {
                 let target_code = self.visit_expression(target);
                 let val_code = self.visit_expression(value);
-                self.emit(&format!("{} = {};", target_code, val_code));
+                if op == "->" {
+                    self.emit(&format!("{}.arrow_assign({});", target_code, val_code));
+                } else if op == "=" {
+                    self.emit(&format!("{} = {};", target_code, val_code));
+                } else {
+                    self.emit(&format!("{} {} {};", target_code, op, val_code));
+                }
             }
             Stmt::IfStmt { condition, then_block, else_block } => {
                 let cond_code = self.visit_expression(condition);
@@ -297,28 +334,29 @@ impl CodeGenerator {
                 self.indent_level -= 1;
                 self.emit("}");
             }
-            Decl::VarDecl { name, type_node, value, editability, .. } => {
+            Decl::VarDecl {
+                name,
+                type_node,
+                value,
+                editability,
+                assign_op,
+                ..
+            } => {
                 let val_code = self.visit_expression(value);
                 let is_param = val_code == "__param__";
-                let cpp_type = match type_node {
-                    BaseType::Bool => "bool".to_string(),
-                    BaseType::Char => "char".to_string(),
-                    BaseType::Float32 => "float".to_string(),
-                    BaseType::Float64 => "double".to_string(),
-                    BaseType::Int8 => "int8_t".to_string(),
-                    BaseType::Int16 => "int16_t".to_string(),
-                    BaseType::Int32 => "int32_t".to_string(),
-                    BaseType::Int64 => "int64_t".to_string(),
-                    BaseType::Array { base_type, .. } => base_type.as_str(),
-                    _ => "auto".to_string(),
-                };
+                let cpp_type = type_to_cpp(type_node);
                 let is_const = editability == &Editability::NotEditable;
                 let const_prefix = if is_const { "const " } else { "" };
 
                 if is_param {
                     self.emit(&format!("{}{} {};", const_prefix, cpp_type, name));
-                } else {
+                } else if assign_op == "->" {
+                    self.emit(&format!("{}{} {};", const_prefix, cpp_type, name));
+                    self.emit(&format!("{}.arrow_assign({});", name, val_code));
+                } else if assign_op == "=" {
                     self.emit(&format!("{}{} {} = {};", const_prefix, cpp_type, name, val_code));
+                } else {
+                    self.emit(&format!("{}{} {} {} {};", const_prefix, cpp_type, name, assign_op, val_code));
                 }
             }
             Decl::ArrayDecl {
@@ -328,23 +366,11 @@ impl CodeGenerator {
                 name,
                 length,
                 value,
-                assign_op,
+                assign_op: _,
             } => {
                 let val_code = self.visit_expression(value);
                 let len_code = self.visit_expression(length);
-
-                let cpp_type = match type_node {
-                    BaseType::Int8 => "int8_t".to_string(),
-                    BaseType::Int16 => "int16_t".to_string(),
-                    BaseType::Int32 => "int32_t".to_string(),
-                    BaseType::Int64 => "int64_t".to_string(),
-                    BaseType::Float32 => "float".to_string(),
-                    BaseType::Float64 => "double".to_string(),
-                    BaseType::Char => "char".to_string(),
-                    BaseType::Bool => "bool".to_string(),
-                    BaseType::Array { base_type, .. } => base_type.as_str(),
-                    _ => "auto".to_string(),
-                };
+                let cpp_type = type_to_cpp(type_node);
 
                 let is_const = editability == &Editability::NotEditable;
                 let const_prefix = if is_const { "const " } else { "" };
@@ -395,18 +421,7 @@ impl CodeGenerator {
                             .iter()
                             .filter(|p| p.type_node.as_str() != "type")
                             .map(|p| {
-                                let cpp_t = match p.type_node.clone() {
-                                    BaseType::Int8 => "int8_t".to_string(),
-                                    BaseType::Int16 => "int16_t".to_string(),
-                                    BaseType::Int32 => "int32_t".to_string(),
-                                    BaseType::Int64 => "int64_t".to_string(),
-                                    BaseType::Float32 => "float".to_string(),
-                                    BaseType::Float64 => "double".to_string(),
-                                    BaseType::Char => "char".to_string(),
-                                    BaseType::Bool => "bool".to_string(),
-                                    BaseType::Array { base_type, .. } => base_type.as_str(),
-                                    _ => "auto".to_string(),
-                                };
+                                let cpp_t = type_to_cpp(&p.type_node);
                                 format!("{} {}", cpp_t, p.name)
                             })
                             .collect();
@@ -453,18 +468,7 @@ impl CodeGenerator {
                             .iter()
                             .filter(|p| p.type_node.as_str() != "type")
                             .map(|p| {
-                                let cpp_t = match p.type_node.clone() {
-                                    BaseType::Int8 => "int8_t".to_string(),
-                                    BaseType::Int16 => "int16_t".to_string(),
-                                    BaseType::Int32 => "int32_t".to_string(),
-                                    BaseType::Int64 => "int64_t".to_string(),
-                                    BaseType::Float32 => "float".to_string(),
-                                    BaseType::Float64 => "double".to_string(),
-                                    BaseType::Char => "char".to_string(),
-                                    BaseType::Bool => "bool".to_string(),
-                                    BaseType::Array { base_type, .. } => base_type.as_str(),
-                                    _ => "auto".to_string(),
-                                };
+                                let cpp_t = type_to_cpp(&p.type_node);
                                 format!("{} {}", cpp_t, p.name)
                             })
                             .collect();
@@ -489,36 +493,15 @@ impl CodeGenerator {
                 self.emit("};");
             }
             Decl::FnDecl { name, params, return_type, body, is_exported: _ } => {
-                let mut ret_type_str = match return_type {
-                    BaseType::Int8 => "int8_t".to_string(),
-                    BaseType::Int16 => "int16_t".to_string(),
-                    BaseType::Int32 => "int32_t".to_string(),
-                    BaseType::Int64 => "int64_t".to_string(),
-                    BaseType::Float32 => "float".to_string(),
-                    BaseType::Float64 => "double".to_string(),
-                    BaseType::Char => "char".to_string(),
-                    BaseType::Bool => "bool".to_string(),
-                    BaseType::Array { base_type, .. } => base_type.as_str(),
-                    _ => "auto".to_string(),
+                let mut ret_type_str = if name == "main" {
+                    "int".to_string()
+                } else {
+                    type_to_cpp(return_type)
                 };
-                if name == "main" {
-                    ret_type_str = "int".to_string();
-                }
 
                 let mut param_strs = Vec::new();
                 for param in params {
-                    let param_type = match param.type_node.clone() {
-                        BaseType::Int8 => "int8_t".to_string(),
-                        BaseType::Int16 => "int16_t".to_string(),
-                        BaseType::Int32 => "int32_t".to_string(),
-                        BaseType::Int64 => "int64_t".to_string(),
-                        BaseType::Float32 => "float".to_string(),
-                        BaseType::Float64 => "double".to_string(),
-                        BaseType::Char => "char".to_string(),
-                        BaseType::Bool => "bool".to_string(),
-                        BaseType::Array { base_type, .. } => base_type.as_str(),
-                        _ => "auto".to_string(),
-                    };
+                    let param_type = type_to_cpp(&param.type_node);
                     param_strs.push(format!("{} {}", param_type, param.name));
                 }
 
@@ -536,6 +519,7 @@ impl CodeGenerator {
             }
             Decl::CustomDecl {
                 name,
+                params,
                 constructor,
                 statements,
                 public_block,
@@ -546,6 +530,12 @@ impl CodeGenerator {
                 handle_block,
                 ..
             } => {
+                if let Some(generics) = params {
+                    if !generics.is_empty() {
+                        let gen_params: Vec<String> = generics.iter().map(|g| format!("typename {}", g.name)).collect();
+                        self.emit(&format!("template <{}>", gen_params.join(", ")));
+                    }
+                }
                 self.custom_scopes.insert(name.clone());
                 self.emit(&format!("class {} {{", name));
                 self.emit("public:");
@@ -579,6 +569,8 @@ impl CodeGenerator {
                     self.emit("    return os;");
                     self.emit("}");
                 }
+
+                self.emit_operator_overloads(handle_block);
 
                 if let Some(d) = data {
                     let d_code = self.visit_expression(d);
@@ -639,18 +631,7 @@ impl CodeGenerator {
                     for h in handles {
                         if let Decl::FnDecl { name, return_type: rt, .. } = h {
                             if name == "call" || name == "leave" || name == "yield" {
-                                unified_return_type = match rt {
-                                    BaseType::Int8 => "int8_t".to_string(),
-                                    BaseType::Int16 => "int16_t".to_string(),
-                                    BaseType::Int32 => "int32_t".to_string(),
-                                    BaseType::Int64 => "int64_t".to_string(),
-                                    BaseType::Float32 => "float".to_string(),
-                                    BaseType::Float64 => "double".to_string(),
-                                    BaseType::Char => "char".to_string(),
-                                    BaseType::Bool => "bool".to_string(),
-                                    BaseType::Array { base_type, .. } => base_type.as_str(),
-                                    _ => "auto".to_string(),
-                                };
+                                unified_return_type = type_to_cpp(rt);
                                 break;
                             }
                         }
@@ -661,18 +642,7 @@ impl CodeGenerator {
                     for h in handles {
                         if let Decl::FnDecl { name, params, return_type, body, is_exported } = h {
                             if name == "call" {
-                                let ret_type_str = match return_type {
-                                    BaseType::Int8 => "int8_t".to_string(),
-                                    BaseType::Int16 => "int16_t".to_string(),
-                                    BaseType::Int32 => "int32_t".to_string(),
-                                    BaseType::Int64 => "int64_t".to_string(),
-                                    BaseType::Float32 => "float".to_string(),
-                                    BaseType::Float64 => "double".to_string(),
-                                    BaseType::Char => "char".to_string(),
-                                    BaseType::Bool => "bool".to_string(),
-                                    BaseType::Array { base_type, .. } => base_type.as_str(),
-                                    _ => "auto".to_string(),
-                                };
+                                let ret_type_str = type_to_cpp(return_type);
                                 self.emit(&format!("{} call() {{", ret_type_str));
                                 self.indent_level += 1;
                                 if has_throw_handle {
@@ -741,7 +711,11 @@ impl CodeGenerator {
 
                 if let Some(const_vec) = constructor {
                     for c in const_vec {
-                        self.emit("void init() {");
+                        let param_list: Vec<String> = c.params
+                            .iter()
+                            .map(|p| format!("{} {}", type_to_cpp(&p.type_node), p.name))
+                            .collect();
+                        self.emit(&format!("void init({}) {{", param_list.join(", ")));
                         self.indent_level += 1;
                         for s in &c.body {
                             self.visit_statement(s);

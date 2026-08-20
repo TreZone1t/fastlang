@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs;
 use std::rc::Rc;
 
@@ -41,6 +42,47 @@ pub fn report_visual_error(source: &str, line: usize, column: usize, err_msg: &s
         }
     }
     println!("   \x1b[34m|\x1b[0m\n");
+}
+
+fn module_import_deps(ast: &[Stmt]) -> Vec<(String, Option<Vec<String>>)> {
+    ast.iter()
+        .filter_map(|stmt| {
+            if let Stmt::Declaration(Decl::Import {
+                module_path,
+                imports,
+            }) = stmt
+            {
+                Some((module_path.join("/"), imports.clone()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn inject_module_exports(
+    analyzer: &mut SemanticAnalyzer,
+    dep_name: &str,
+    imports: &Option<Vec<String>>,
+    envs: &HashMap<String, Rc<RefCell<Environment>>>,
+) -> Result<(), String> {
+    let env = envs
+        .get(dep_name)
+        .ok_or_else(|| format!("Error: Module {} not found.", dep_name))?;
+    let symbols = env.borrow().symbols.clone();
+    for (sym_name, info) in symbols {
+        if info.visibility == Visibility::Public {
+            let should_inject = match imports {
+                Some(selected) => selected.contains(&sym_name),
+                None => true,
+            };
+            if should_inject {
+                println!("Module {} injected symbol: {}", dep_name, sym_name);
+                analyzer.current_env.borrow_mut().define(sym_name, info).ok();
+            }
+        }
+    }
+    Ok(())
 }
 
 fn main() {
@@ -98,44 +140,52 @@ fn main() {
     std::fs::write("ast_debug.txt", format!("{:#?}", program.main_ast)).unwrap();
 
     let mut envs: HashMap<String, Rc<RefCell<Environment>>> = HashMap::new();
+    let mut analyzed_modules = HashSet::new();
 
-    // Parse and analyze dependencies
-    for module in &program.modules {
-        let mut analyzer = SemanticAnalyzer::new(program.global_metadata.clone());
-        if let Err(e) = analyzer.analyze(&module.ast) {
-            eprintln!("Semantic Error in module {}: {}", module.name, e);
+    // Analyze dependency modules in dependency order (e.g. std before std/list).
+    while analyzed_modules.len() < program.modules.len() {
+        let mut progressed = false;
+        for module in &program.modules {
+            if analyzed_modules.contains(&module.name) {
+                continue;
+            }
+
+            let deps = module_import_deps(&module.ast);
+            if !deps.iter().all(|(dep, _)| analyzed_modules.contains(dep)) {
+                continue;
+            }
+
+            let mut analyzer = SemanticAnalyzer::new(program.global_metadata.clone());
+            for (dep_name, imports) in &deps {
+                if let Err(e) = inject_module_exports(&mut analyzer, dep_name, imports, &envs) {
+                    eprintln!("{}", e);
+                    std::process::exit(1);
+                }
+            }
+
+            if let Err(e) = analyzer.analyze(&module.ast) {
+                eprintln!("Semantic Error in module {}: {}", module.name, e);
+                std::process::exit(1);
+            }
+            envs.insert(module.name.clone(), analyzer.current_env);
+            analyzed_modules.insert(module.name.clone());
+            progressed = true;
+        }
+
+        if !progressed {
+            eprintln!("Error: cyclic or missing module dependencies detected.");
             std::process::exit(1);
         }
-        envs.insert(module.name.clone(), analyzer.current_env);
     }
 
     // Analyze main file
     println!("\n=== Semantic Analysis ===");
     let mut main_analyzer = SemanticAnalyzer::new(program.global_metadata.clone());
 
-    // Inject exported symbols
+    // Inject exported symbols from main's imports
     for (mod_name, imports) in &program.main_deps {
-        if let Some(env) = envs.get(mod_name) {
-            let symbols = env.borrow().symbols.clone();
-            for (sym_name, info) in symbols {
-                if info.visibility == Visibility::Public {
-                    let should_inject = match imports {
-                        Some(selected) => selected.contains(&sym_name),
-                        None => true,
-                    };
-
-                    if should_inject {
-                        println!("Module {} injected symbol: {}", mod_name, sym_name);
-                        main_analyzer
-                            .current_env
-                            .borrow_mut()
-                            .define(sym_name, info)
-                            .ok();
-                    }
-                }
-            }
-        } else {
-            eprintln!("Error: Module {} not found.", mod_name);
+        if let Err(e) = inject_module_exports(&mut main_analyzer, mod_name, imports, &envs) {
+            eprintln!("{}", e);
             std::process::exit(1);
         }
     }
@@ -200,7 +250,7 @@ fn main() {
     final_cpp.push_str(&header_gen.generate(&vec![], true, false));
 
     for module in &program.modules {
-        let cpp_namespace = module.name.replace("/", "_");
+        let cpp_namespace = module.name.split('/').next().unwrap_or(&module.name).replace("-", "_");
         final_cpp.push_str(&format!("namespace {} {{\n", cpp_namespace));
         let mut codegen = cpp::generator::CodeGenerator::new();
         let module_cpp = codegen.generate(&module.ast, false, false);

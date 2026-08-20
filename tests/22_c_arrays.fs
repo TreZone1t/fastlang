@@ -6,9 +6,8 @@ char arr3[6] = "hello";
 bool arr4[3] = [true, false, true];
 
 fn main() -> int(32) {
-    int(32) x = arr[0];
-    char c = arr3[1];
-    log(x);
-    log(c);
+    for (int(32) i = 0; i < 3; i++) {
+        log(arr[i]);
+    }
     return 0;
 }
