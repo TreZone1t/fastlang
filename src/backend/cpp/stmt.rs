@@ -15,7 +15,7 @@ pub(crate) fn type_to_cpp(t: &BaseType) -> String {
         BaseType::Void => "void".to_string(),
         BaseType::Custom { name, generics, .. } | BaseType::Class { name, generics, .. } => {
             if generics.is_empty() {
-                name.clone()
+                "".to_string()
             } else {
                 let gen_strs: Vec<String> = generics.iter().map(type_to_cpp).collect();
                 format!("{}<{}>", name, gen_strs.join(", "))
@@ -26,8 +26,38 @@ pub(crate) fn type_to_cpp(t: &BaseType) -> String {
             strs.join(", ")
         }
         BaseType::Pointer(inner) => format!("{}*", type_to_cpp(inner)),
-        BaseType::Name(inner) => format!("{}*", type_to_cpp(inner)),
-        BaseType::Array { base_type, .. } => format!("std::vector<{}>", type_to_cpp(base_type)),
+        BaseType::Name(inner) => {
+            if inner.as_str() == BaseType::Unknown.as_str() {
+                "fastlang_name".to_string()
+            } else {
+                format!("fastlang_name<{}>", type_to_cpp(inner))
+            }
+        }
+        BaseType::Modify(inner) => {
+            if inner.as_str() == BaseType::Unknown.as_str() {
+                "fastlang_modify".to_string()
+            } else {
+                let actual_inner = if let BaseType::Name(n) = &**inner { n } else { inner };
+                if actual_inner.as_str() == "unknown" {
+                    "fastlang_modify".to_string()
+                } else {
+                    format!("fastlang_modify<{}>", type_to_cpp(actual_inner))
+                }
+            }
+        }
+        BaseType::Copy(inner) => {
+            if inner.as_str() == BaseType::Unknown.as_str() {
+                "fastlang_copy".to_string()
+            } else {
+                let actual_inner = if let BaseType::Name(n) = &**inner { n } else { inner };
+                if actual_inner.as_str() == "unknown" {
+                    "fastlang_copy".to_string()
+                } else {
+                    format!("fastlang_copy<{}>", type_to_cpp(actual_inner))
+                }
+            }
+        }
+        BaseType::Array { base_type, .. } => format!("std::vector<{}>", type_to_cpp(base_type)), // TODO: fix this
         BaseType::Unknown => "auto".to_string(),
         _ => t.as_str(),
     }
@@ -163,15 +193,10 @@ impl CodeGenerator {
             }
             Stmt::DelStmt { target, is_array } => {
                 let expr_code = self.visit_expression(target);
-                //we need to check if the expr is a array or not
-                //expr will be a name or a array only so how we can check that
-                //we can check the output and search with the name of the array (expr_code)
-                //so we will see if after ( = new int32_t ) we have a [ ]
-                //self.output
                 if *is_array {
-                    self.emit(&format!("delete [] {};", expr_code));
+                    self.emit(&format!("_fastlang_del_array({});", expr_code));
                 } else {
-                    self.emit(&format!("delete {};", expr_code));
+                    self.emit(&format!("_fastlang_del({});", expr_code));
                 }
             }
             Stmt::ForStmt { init, condition, increment, body } => {
@@ -334,17 +359,11 @@ impl CodeGenerator {
                 self.indent_level -= 1;
                 self.emit("}");
             }
-            Decl::VarDecl {
-                name,
-                type_node,
-                value,
-                editability,
-                assign_op,
-                ..
-            } => {
+            Decl::VarDecl { name, type_node, value, editability, assign_op, place, .. } => {
                 let val_code = self.visit_expression(value);
                 let is_param = val_code == "__param__";
                 let cpp_type = type_to_cpp(type_node);
+
                 let is_const = editability == &Editability::NotEditable;
                 let const_prefix = if is_const { "const " } else { "" };
 
@@ -356,7 +375,16 @@ impl CodeGenerator {
                 } else if assign_op == "=" {
                     self.emit(&format!("{}{} {} = {};", const_prefix, cpp_type, name, val_code));
                 } else {
-                    self.emit(&format!("{}{} {} {} {};", const_prefix, cpp_type, name, assign_op, val_code));
+                    self.emit(
+                        &format!(
+                            "{}{} {} {} {};",
+                            const_prefix,
+                            cpp_type,
+                            name,
+                            assign_op,
+                            val_code
+                        )
+                    );
                 }
             }
             Decl::ArrayDecl {
@@ -532,7 +560,10 @@ impl CodeGenerator {
             } => {
                 if let Some(generics) = params {
                     if !generics.is_empty() {
-                        let gen_params: Vec<String> = generics.iter().map(|g| format!("typename {}", g.name)).collect();
+                        let gen_params: Vec<String> = generics
+                            .iter()
+                            .map(|g| format!("typename {}", g.name))
+                            .collect();
                         self.emit(&format!("template <{}>", gen_params.join(", ")));
                     }
                 }
@@ -763,59 +794,6 @@ impl CodeGenerator {
                 self.indent_level -= 1;
                 self.emit("}");
             }
-            // ── NameDecl ──────────────────────────────────────────────────
-            // `name x = val;`  →  auto& x = val;  (ReadOnly)
-            // `name x -> modify val;`  →  auto& x = val;  (ReadWrite / mutable ref)
-            // `name x -> new T[...]`  →  auto* x = new T[...];  (heap)
-            Decl::NameDecl { name, target, access_mode, is_heap, .. } => {
-                let target_code = self.visit_expression(target);
-                let cpp_decl = if *is_heap {
-                    // heap-allocated (e.g. new int(32)[...]) → raw pointer
-
-                    format!("auto* {} = {};", name, target_code)
-                } else {
-                    match access_mode {
-                        AccessMode::ReadOnly => {
-                            format!("const auto* {} = __fastlang_ptr({});", name, target_code)
-                        }
-                        AccessMode::ReadWrite => {
-                            format!("auto* {} = __fastlang_ptr({});", name, target_code)
-                        }
-                    }
-                };
-                self.emit(&cpp_decl);
-            }
-
-            // ── PointerDecl ───────────────────────────────────────────────
-            // `int(32)* x[5] = new int(32)[...]`  →  int32_t* x = new int32_t[5]{...};
-            Decl::PointerDecl { name, inner_type, length, value } => {
-                let cpp_inner = match inner_type {
-                    BaseType::Int8 => "int8_t".to_string(),
-                    BaseType::Int16 => "int16_t".to_string(),
-                    BaseType::Int32 => "int32_t".to_string(),
-                    BaseType::Int64 => "int64_t".to_string(),
-                    BaseType::Int128 => "__int128".to_string(),
-                    BaseType::Float32 => "float".to_string(),
-                    BaseType::Float64 => "double".to_string(),
-                    BaseType::Char => "char".to_string(),
-                    BaseType::Bool => "bool".to_string(),
-                    BaseType::Void => "void".to_string(),
-                    | BaseType::Custom { name: n, .. }
-                    | BaseType::Class { name: n, .. }
-                    | BaseType::Struct { name: n, .. } => n.clone(),
-                    _ => "auto".to_string(),
-                };
-                let val_code = self.visit_expression(value);
-                if let Some(len_expr) = length {
-                    let len_code = self.visit_expression(len_expr);
-                    self.emit(
-                        &format!("{}* {} = {}; // length: {}", cpp_inner, name, val_code, len_code)
-                    );
-                } else {
-                    self.emit(&format!("{}* {} = {};", cpp_inner, name, val_code));
-                }
-            }
-
             _ => {
                 self.emit(&format!("// TODO: unimplemented declaration {:?}", decl));
             }

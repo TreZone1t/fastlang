@@ -35,8 +35,7 @@ pub enum TokenKind {
     Use, // use
     Export, // export
     New, // new
-    Copy, // copy
-    Modify, // modify
+
     This, // this
     Global, // global
 
@@ -80,7 +79,11 @@ pub enum TokenKind {
     // Context Types
     Scope, // scope    //todo we may used in a future update as a ref type like
     TypeData, // data     //* with  array and str
+
     TypeName, // name
+    TypeCopy, // copy
+    TypeModify, // modify
+
     TypeBluePrint, // blueprint  //* with objects
     // blueprint support
     Impl, // impl
@@ -192,8 +195,8 @@ impl TokenKind {
             TokenKind::Use => "use",
             TokenKind::Export => "export",
             TokenKind::New => "new",
-            TokenKind::Copy => "copy",
-            TokenKind::Modify => "modify",
+            TokenKind::TypeCopy => "copy",
+            TokenKind::TypeModify => "modify",
             TokenKind::This => "this",
             TokenKind::Global => "global",
             TokenKind::Try => "try",

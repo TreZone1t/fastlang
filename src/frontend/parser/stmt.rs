@@ -33,8 +33,11 @@ impl Parser {
             | TokenKind::TypeChar
             | TokenKind::TypeBool
             /*//todo | TokenKind::TypeObject */
-            | TokenKind::TypeType => self.parse_var_decl(scope, false).map(Stmt::Declaration),
-            TokenKind::TypeName => self.parse_name().map(Stmt::Declaration),
+            | TokenKind::TypeType
+            | TokenKind::TypeName
+            | TokenKind::TypeModify
+            | TokenKind::TypeCopy => self.parse_var_decl(scope).map(Stmt::Declaration),
+
             TokenKind::Set => self.parse_reassign_stmt(),
 
             | TokenKind::TypeBluePrint
@@ -361,8 +364,13 @@ impl Parser {
             | TokenKind::TypeFloat
             | TokenKind::TypeChar
             | TokenKind::TypeBool
-            | TokenKind::TypeType => self.parse_var_decl(scope, false)?,
-            TokenKind::TypeName => self.parse_name()?,
+            | TokenKind::TypeType
+            | TokenKind::TypeName
+            | TokenKind::TypeCopy => self.parse_var_decl(scope)?,
+
+            TokenKind::TypeModify => {
+                return Err("Syntax Error: Modify is not allowed in const declaration".to_string());
+            }
             _ => {
                 return Err("Syntax Error: Expected variable declaration".to_string());
             }
@@ -444,7 +452,7 @@ impl Parser {
 
     pub(crate) fn is_var_decl_start(&self) -> bool {
         match &self.peek().kind {
-            TokenKind::Const
+            | TokenKind::Const
             | TokenKind::TypeInt
             | TokenKind::TypeFloat
             | TokenKind::TypeChar
@@ -455,9 +463,9 @@ impl Parser {
                 let next = self.tokens.get(self.current + 1).map(|t| &t.kind);
                 matches!(
                     next,
-                    Some(TokenKind::Identifier(_))
-                        | Some(TokenKind::Less)
-                        | Some(TokenKind::LBracket)
+                    Some(TokenKind::Identifier(_)) |
+                        Some(TokenKind::Less) |
+                        Some(TokenKind::LBracket)
                 )
             }
             _ => false,
@@ -467,17 +475,13 @@ impl Parser {
     pub(crate) fn parse_for_init_stmt(&mut self) -> Result<Stmt, String> {
         self.consume_optional_let();
         if self.is_var_decl_start() {
-            self.parse_var_decl(ScopeType::Block, false).map(Stmt::Declaration)
+            self.parse_var_decl(ScopeType::Block).map(Stmt::Declaration)
         } else {
             self.parse_expression_stmt()
         }
     }
 
-    pub(crate) fn parse_var_decl(
-        &mut self,
-        scope: ScopeType,
-        no_semi: bool
-    ) -> Result<Decl, String> {
+    pub(crate) fn parse_var_decl(&mut self, scope: ScopeType) -> Result<Decl, String> {
         let var_meta: VarMetadata;
         let type_name = self.parse_type()?;
         let name = self.get_identifier("Expected variable name after type")?;
@@ -501,14 +505,10 @@ impl Parser {
             value = self.parse_expression()?;
         }
 
-        if !no_semi {
-            // ! fix it
-            if self.peek().kind == TokenKind::SemiColon {
-                println!("DEBUG: parse_var_decl: {:?}", self.peek().kind);
-                self.advance();
-            }
+        if self.peek().kind == TokenKind::SemiColon {
+            println!("DEBUG: parse_var_decl: {:?}", self.peek().kind);
+            self.advance();
         }
-        let is_heaped = if let BaseType::Pointer(_) = type_name { true } else { false };
         let visibility = if scope == ScopeType::Global {
             Visibility::Public
         } else {
@@ -521,15 +521,17 @@ impl Parser {
                 visibility: visibility,
                 editability: Editability::Editable,
                 scope: scope,
-                is_heaped: is_heaped,
                 is_array: false,
             };
             self.var_metadata.insert(name.clone(), var_meta);
-            if is_heaped {
-                Ok(Decl::PointerDecl {
+            if matches!(value.clone(), Expr::New { type_node, target }) {
+                Ok(Decl::VarDecl {
+                    visibility: Visibility::Private,
+                    editability: Editability::Editable,
+                    type_node: type_name,
+                    place: Place::Heap,
+                    assign_op,
                     name,
-                    inner_type: type_name,
-                    length: None,
                     value,
                 })
             } else {
@@ -537,6 +539,7 @@ impl Parser {
                     visibility: Visibility::Private,
                     editability: Editability::Editable,
                     type_node: type_name,
+                    place: Place::Local,
                     assign_op,
                     name,
                     value,
@@ -549,15 +552,17 @@ impl Parser {
                 visibility: visibility,
                 editability: Editability::Editable,
                 scope: scope,
-                is_heaped: is_heaped,
                 is_array: true,
             };
             self.var_metadata.insert(name.clone(), var_meta);
-            if is_heaped {
-                Ok(Decl::PointerDecl {
+            if matches!(value.clone(), Expr::New { type_node, target }) {
+                Ok(Decl::ArrayDecl {
+                    visibility: Visibility::Private,
+                    editability: Editability::Editable,
+                    type_node: type_name,
                     name,
-                    inner_type: type_name,
-                    length: size.clone(),
+                    assign_op,
+                    length: size.unwrap(),
                     value,
                 })
             } else {
@@ -933,7 +938,7 @@ impl Parser {
         // We already consumed `for (`
         self.consume_optional_let();
         let item = if self.is_var_decl_start() {
-            self.parse_var_decl(ScopeType::Block, true).map(Stmt::Declaration)?
+            self.parse_var_decl(ScopeType::Block).map(Stmt::Declaration)?
         } else {
             let expr = self.parse_expression()?;
             Stmt::ExpressionStmt(expr)
@@ -1022,7 +1027,7 @@ impl Parser {
         if let TokenKind::Identifier(name) = self.peek().kind.clone() {
             if name == "let" {
                 self.advance();
-                return self.parse_var_decl(ScopeType::Block, false).map(Stmt::Declaration);
+                return self.parse_var_decl(ScopeType::Block).map(Stmt::Declaration);
             }
 
             let next1 = self.tokens.get(self.current + 1).map(|t| &t.kind);
@@ -1058,7 +1063,7 @@ impl Parser {
             };
 
             if is_var_decl {
-                return self.parse_var_decl(ScopeType::Block, false).map(Stmt::Declaration);
+                return self.parse_var_decl(ScopeType::Block).map(Stmt::Declaration);
             }
         }
 

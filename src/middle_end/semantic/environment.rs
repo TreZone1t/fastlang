@@ -16,20 +16,12 @@ pub struct FnSignature {
 
 #[derive(Debug, Clone)]
 pub struct BlueprintData {
-    /// اسم الـ blueprint (مثل "list", "Node", "Option")
     pub name: String,
-    /// الحقول (fields) مع أنواعها
     pub fields: HashMap<String, BaseType>,
-    /// الـ methods مع signatures كاملة
     pub methods: HashMap<String, FnSignature>,
-    /// الـ handles المُسجَّلة في هذا الـ blueprint
-    /// هذا ما يُمكّن الـ operator overloading
     pub handles: HashSet<HandleMethods>,
-    /// الـ settings (oop, function, etc.)
     pub settings: HashSet<Setting>,
-    /// أسماء الـ generic params (مثل ["T", "U"])
     pub generics: Vec<String>,
-    /// الـ params الخاصة بالـ custom scope
     pub params: Vec<Param>,
 }
 

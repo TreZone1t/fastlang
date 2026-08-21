@@ -26,8 +26,10 @@ pub enum BaseType {
     Char,
     Bool,
     Void,
-
-    Name(Box<BaseType>),
+    //It will contain a Generic BaseType
+    Name(Box<BaseType>), // name<T,T2,T3> //T , T2 , T3 are the expected types for the name but after
+    Modify(Box<BaseType>), // modify<T> we for now only support modify<T> for name but we may add the pointer also
+    Copy(Box<BaseType>), // copy<T> we for now only support copy<T> for name but we may add all the other types also
     Pointer(Box<BaseType>),
     Type(Box<BaseType>),
     Array {
@@ -72,7 +74,7 @@ pub enum BaseType {
         params: Vec<BaseType>,
         return_type: Box<BaseType>,
     },
-    Generic(Box<Vec<BaseType>>),
+    Generic(Vec<BaseType>),
 
     Unknown,
     Error,
@@ -91,6 +93,8 @@ impl BaseType {
             BaseType::Char => "char".to_string(),
             BaseType::Bool => "bool".to_string(),
             BaseType::Void => "void".to_string(),
+            BaseType::Modify(t) => format!("modify<{}>", t.as_str()),
+            BaseType::Copy(t) => format!("copy<{}>", t.as_str()),
             BaseType::Name(t) => format!("name<{}>", t.as_str()),
             BaseType::Pointer(t) => format!("pointer<{}>", t.as_str()),
             BaseType::Type(t) => format!("type<{}>", t.as_str()),
@@ -103,7 +107,13 @@ impl BaseType {
             BaseType::Enum { name, .. } => format!("enum<{}>", name),
             BaseType::Blueprint { name, .. } => format!("blueprint<{}>", name),
             BaseType::Method { .. } => "method".to_string(),
-            BaseType::Generic(_) => "generic".to_string(),
+            BaseType::Generic(inner_vec) => {
+                let strs: Vec<String> = inner_vec
+                    .iter()
+                    .map(|t| t.as_str())
+                    .collect();
+                strs.join(", ")
+            }
             BaseType::Unknown => "unknown".to_string(),
             BaseType::Error => "error".to_string(),
             BaseType::New(t) => format!("new<{}>", t),
@@ -121,7 +131,9 @@ impl BaseType {
             "char" => BaseType::Char,
             "bool" => BaseType::Bool,
             "void" => BaseType::Void,
-            "name" => BaseType::Name(Box::new(BaseType::Unknown)),
+            "name" => BaseType::Name(Box::new(BaseType::Generic(Vec::new()))), // name<T,T2,T3> //T , T2 , T3 are the expected types for the name but after
+            "modify" => BaseType::Modify(Box::new(BaseType::Unknown)),
+            "copy" => BaseType::Copy(Box::new(BaseType::Unknown)),
             "pointer" => BaseType::Pointer(Box::new(BaseType::Unknown)),
             "type" => BaseType::Type(Box::new(BaseType::Unknown)),
             "unknown" => BaseType::Unknown,
@@ -149,7 +161,6 @@ pub struct VarMetadata {
     pub visibility: Visibility,
     pub editability: Editability,
     pub scope: ScopeType,
-    pub is_heaped: bool, // true if the variable is a heaped pointer
     pub is_array: bool,
 }
 #[derive(Debug, Clone, PartialEq)]
@@ -165,13 +176,6 @@ pub struct TypeMetadata {
     pub is_enum: bool,
     pub variants: Option<Vec<EnumVariant>>,
 }
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum AccessMode {
-    ReadOnly, // default (e.g., let name x = y;)
-    ReadWrite, // when using modify (e.g., let name x = modify y;)
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScopeType {
     Fn,
@@ -530,12 +534,6 @@ pub enum Expr {
         size: Box<Expr>,
         length: Option<Box<Expr>>,
     },
-    Modify {
-        target: Box<Expr>,
-    },
-    Copy {
-        target: Box<Expr>,
-    },
     New {
         type_node: BaseType,
         target: Box<Expr>,
@@ -635,8 +633,6 @@ impl Expr {
                         .collect::<Vec<String>>()
                         .join(", ")
                 ),
-            Expr::Modify { target } => format!("&{}", target.as_str()),
-            Expr::Copy { target } => format!("copy({})", target.as_str()),
 
             Expr::PropertyAccess { object, property } => {
                 format!("{}.{}", object.as_str(), property.as_str())
@@ -653,11 +649,17 @@ impl Expr {
     }
 }
 #[derive(Debug, Clone, PartialEq)]
+pub enum Place {
+    Local,
+    Heap,
+}
+#[derive(Debug, Clone, PartialEq)]
 pub enum Decl {
     VarDecl {
         visibility: Visibility,
         editability: Editability,
         type_node: BaseType,
+        place: Place,
         assign_op: String,
         name: String,
         value: Expr,
@@ -762,26 +764,6 @@ pub enum Decl {
     Import {
         module_path: Vec<String>,
         imports: Option<Vec<String>>,
-    },
-
-    /// `name x = val;`  or  `name x -> modify val;`
-    /// A safe reference (smart pointer) to another value.
-    /// access_mode: ReadOnly (=) or ReadWrite (modify)
-    NameDecl {
-        name: String,
-        inner_type: BaseType, // the type the name points to (Unknown = inferred)
-        target: Expr, // the value or variable being referenced
-        access_mode: AccessMode, // ReadOnly | ReadWrite
-        is_heap: bool, // true if target came from `new` (heap-allocated)
-    },
-
-    /// `T* x[N] = new T[...]`  or  `T* x = val`
-    /// A raw (unsafe) heap pointer, just like C++ T*.
-    PointerDecl {
-        name: String,
-        inner_type: BaseType,
-        length: Option<Expr>, // if it's a pointer array
-        value: Expr,
     },
 }
 

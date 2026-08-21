@@ -91,7 +91,6 @@ impl Scanner {
             "continue" => Some(TokenKind::Continue),
             "break" => Some(TokenKind::Break),
 
-            "copy" => Some(TokenKind::Copy),
             "new" => Some(TokenKind::New),
 
             "class" => Some(TokenKind::TypeClass),
@@ -131,7 +130,9 @@ impl Scanner {
 
             "data" => Some(TokenKind::TypeData),
             // memory / instances
-            "modify" => Some(TokenKind::Modify),
+            "modify" => Some(TokenKind::TypeModify),
+            "copy" => Some(TokenKind::TypeCopy),
+
             "this" => Some(TokenKind::This),
             "global" => Some(TokenKind::Global),
 

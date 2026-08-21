@@ -32,7 +32,6 @@ impl Parser {
                 generics.push(self.parse_type()?);
             }
         }
-        self.consume(TokenKind::Greater, "Expected '>' after type parameters")?;
         Ok(())
     }
 
@@ -143,9 +142,40 @@ impl Parser {
                     let mut generics = Vec::new();
                     self.parse_generic_list(&mut generics)?;
                     self.consume(TokenKind::Greater, "Expected '>' after name type parameter")?;
-                    name_type = BaseType::Generic(Box::new(generics));
+                    name_type = BaseType::Generic(generics);
                 }
                 Ok(BaseType::Name(Box::new(name_type)))
+            }
+            TokenKind::TypeModify => {
+                self.advance(); //modify
+                let mut generics = Vec::new();
+                if self.peek().kind == TokenKind::Less {
+                    self.advance(); // '<'
+                    self.parse_generic_list(&mut generics)?;
+                    self.consume(TokenKind::Greater, "Expected '>' after modify types")?;
+                }
+
+                let name_inner = if generics.is_empty() {
+                    BaseType::Unknown
+                } else {
+                    BaseType::Generic(generics)
+                };
+                Ok(BaseType::Modify(Box::new(BaseType::Name(Box::new(name_inner)))))
+            }
+            TokenKind::TypeCopy => {
+                self.advance();
+                let mut generics = Vec::new();
+                if self.peek().kind == TokenKind::Less {
+                    self.advance(); // '<'
+                    self.parse_generic_list(&mut generics)?;
+                    self.consume(TokenKind::Greater, "Expected '>' after copy types")?;
+                }
+                let name_inner = if generics.is_empty() {
+                    BaseType::Unknown
+                } else {
+                    BaseType::Generic(generics)
+                };
+                Ok(BaseType::Copy(Box::new(BaseType::Name(Box::new(name_inner)))))
             }
             TokenKind::TypeType => {
                 self.advance();
@@ -464,24 +494,6 @@ impl Parser {
                 };
                 Ok(Expr::New {
                     type_node,
-                    target: Box::new(target),
-                })
-            }
-
-            // --- Copy: copy Target ---
-            TokenKind::Copy => {
-                self.advance();
-                let target = self.parse_expr(9)?;
-                Ok(Expr::Copy {
-                    target: Box::new(target),
-                })
-            }
-
-            // --- Modify: modify Target ---
-            TokenKind::Modify => {
-                self.advance();
-                let target = self.parse_expr(9)?;
-                Ok(Expr::Modify {
                     target: Box::new(target),
                 })
             }

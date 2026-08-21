@@ -44,7 +44,7 @@ export custom list<T> -> {
       fn get_head() -> name {
         return this.head;
       }
-      fn get_node(index: int(32)) -> name {
+      fn get_node(index: int(32)) -> name<node,void> {
         if (index < 0) {
           return void;
         }

@@ -11,11 +11,7 @@ impl CodeGenerator {
             Expr::LiteralString(s) => format!("\"{}\"", s),
             Expr::LiteralChar(c) => format!("'{}'", c),
             Expr::LiteralBool(val) => {
-                if *val {
-                    "true".to_string()
-                } else {
-                    "false".to_string()
-                }
+                if *val { "true".to_string() } else { "false".to_string() }
             }
             Expr::ArrayLiteral(elements) => {
                 let mut elems_code = Vec::new();
@@ -32,10 +28,12 @@ impl CodeGenerator {
                     temp_gen.visit_statement(s);
                 }
                 struct_code.push_str(&temp_gen.output);
-                struct_code.push_str(&format!(
-                    "{}}}; return std::make_shared<__Anon>(); }}())",
-                    "    ".repeat(self.indent_level)
-                ));
+                struct_code.push_str(
+                    &format!(
+                        "{}}}; return std::make_shared<__Anon>(); }}())",
+                        "    ".repeat(self.indent_level)
+                    )
+                );
                 struct_code
             }
             Expr::Identifier(name) => {
@@ -52,11 +50,7 @@ impl CodeGenerator {
             Expr::This => "this".to_string(),
             Expr::Super => "super".to_string(), // will be handled in PropertyAccess
             Expr::Global => "::".to_string(),
-            Expr::BinaryOp {
-                left,
-                operator,
-                right,
-            } => {
+            Expr::BinaryOp { left, operator, right } => {
                 let l = self.visit_expression(left);
                 let r = self.visit_expression(right);
                 format!("({} {} {})", l, operator, r)
@@ -113,18 +107,13 @@ impl CodeGenerator {
                 // Value instantiation in C++ (stack allocation)
                 format!("{}({})", target_code, args_code.join(", "))
             }
-            Expr::Modify { target } => {
-                // In FastLang, 'modify' means address-of (take the name)
-                let t_code = self.visit_expression(target);
-                format!("(&{})", t_code)
-            }
-            Expr::Copy { target } => self.visit_expression(target),
             Expr::PropertyAccess { object, property } => {
                 let obj_code = self.visit_expression(object);
-                if property == "set_next"
-                    || property == "get_next"
-                    || property == "get_value"
-                    || property == "set_value"
+                if
+                    property == "set_next" ||
+                    property == "get_next" ||
+                    property == "get_value" ||
+                    property == "set_value"
                 {
                     return format!("((std_list::Node<T>*){})->{}", obj_code, property);
                 }
@@ -138,18 +127,11 @@ impl CodeGenerator {
                     format!("{}.{}", obj_code, property) // we default to . since primitive objects might not be pointers, though shared_ptr requires ->
                 }
             }
-            Expr::NamespaceAccess {
-                namespace,
-                property,
-            } => {
+            Expr::NamespaceAccess { namespace, property } => {
                 let prop_code = self.visit_expression(property);
                 format!("{}::{}", namespace, prop_code)
             }
-            Expr::ArrayAllocate {
-                type_node,
-                size,
-                length,
-            } => {
+            Expr::ArrayAllocate { type_node, size, length } => {
                 let cpp_type = match type_node {
                     BaseType::Int8 => "int8_t",
                     BaseType::Int16 => "int16_t",

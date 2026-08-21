@@ -290,7 +290,7 @@ impl Parser {
                     self.consume(TokenKind::LBrace, "Expected '{' to open param block")?;
 
                     while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        match self.parse_var_decl(ScopeType::Custom, false) {
+                        match self.parse_var_decl(ScopeType::Custom) {
                             Ok(Decl::VarDecl { name, type_node, .. }) => {
                                 params.push(Param {
                                     name: name.clone(),
@@ -484,7 +484,6 @@ impl Parser {
                 editability: Editability::Editable,
                 scope: ScopeType::Custom,
                 is_array: false,
-                is_heaped: false,
             });
         }
 

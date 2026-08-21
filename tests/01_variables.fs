@@ -7,8 +7,8 @@
 fn main() -> int(32) {
     //the feature i want to add:
     //int(32) a, b, c;
-    int(32) a = 10 , b = 20 , c = 30;
-    int(32) z , x, y = 10;
+    //int(32) a = 10 , b = 20 , c = 30;
+    //int(32) z , x, y = 10;
     bool Is_active = true;
     char Initial = 'A';
     Is_active = false;
