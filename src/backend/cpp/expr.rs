@@ -63,6 +63,15 @@ impl CodeGenerator {
                 let r = self.visit_expression(right);
                 format!("{}{}", operator, r)
             }
+            Expr::IndexAccess { object, index } => {
+                let obj_code = self.visit_expression(object);
+                let index_code = self.visit_expression(index);
+                if let Some(scope) = self.custom_scopes.get(&obj_code) {
+                    format!("{}.index_access({})", obj_code, index_code)
+                } else {
+                    format!("{}[{}]", obj_code, index_code)
+                }
+            }
             Expr::UnaryOp { operator, operand } => {
                 let op_code = self.visit_expression(operand);
                 format!("{}{}", operator, op_code)

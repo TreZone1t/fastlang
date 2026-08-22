@@ -112,7 +112,27 @@ impl SemanticAnalyzer {
             self.dependency_graph.entry(ctx.clone()).or_insert_with(HashSet::new).insert(dep);
         }
     }
+    fn is_valid_pointer_rhs(&self, value: &Expr, expr_type: &str) -> bool {
+        if let Expr::UnaryOp { operator, .. } = value {
+            if operator == "&" {
+                return true;
+            }
+        }
+        if matches!(value, Expr::New { .. }) {
+            return true;
+        }
 
+        if
+            expr_type.starts_with("name<") ||
+            expr_type.starts_with("modify<") ||
+            expr_type.starts_with("copy<") ||
+            expr_type.starts_with("pointer<")
+        {
+            return true;
+        }
+
+        false
+    }
     // ----------------------------------------------------------
     // visit_statement
     // ----------------------------------------------------------
@@ -232,6 +252,21 @@ impl SemanticAnalyzer {
             }
 
             Stmt::DelStmt { target, .. } => {
+                if let Expr::Identifier(name) = target {
+                    if let Some(var_info) = self.current_env.borrow().lookup(name) {
+                        if let Some(type_node) = var_info.type_node() {
+                            if matches!(type_node, BaseType::Name(_)) {
+                                return Err(
+                                    format!("Semantic Error: Cannot delete name '{}'\n (name is a read-only ref delete it through a modify instead)", name)
+                                );
+                            }
+                        }
+                    } else {
+                        return Err(
+                            format!("Semantic Error: Cannot delete non-existent variable '{}'", name)
+                        );
+                    }
+                }
                 self.visit_expression(target)?;
             }
 
@@ -821,7 +856,7 @@ impl SemanticAnalyzer {
         let declared_type = type_node.as_str();
 
         if expr_type != "unknown" {
-            let base_decl = declared_type.split('<').next().unwrap_or(&declared_type);
+            let base_decl: &str = declared_type.split('<').next().unwrap_or(&declared_type);
 
             match base_decl {
                 // smart pointer - accept anything, infer inner if needed
@@ -880,7 +915,11 @@ impl SemanticAnalyzer {
                         .unwrap_or_default()
                         .into_iter()
                         .collect();
-
+                    if !self.is_valid_pointer_rhs(value, &expr_type) {
+                        return Err(
+                            format!("Semantic Error: Invalid assignment to smart pointer '{}'. Must be a reference (&), 'new' allocation, or another smart pointer.", name)
+                        );
+                    }
                     let info = SymbolInfo {
                         name: name.to_string(),
                         kind: SymbolKind::Variable {
@@ -931,7 +970,11 @@ impl SemanticAnalyzer {
                         .unwrap_or_default()
                         .into_iter()
                         .collect();
-
+                    if !self.is_valid_pointer_rhs(value, &expr_type) {
+                        return Err(
+                            format!("Semantic Error: Invalid assignment to a pointer '{}'. Must be a reference (&), 'new' allocation, or another  pointer.", name)
+                        );
+                    }
                     let info = SymbolInfo {
                         name: name.to_string(),
                         kind: SymbolKind::Variable {
@@ -1526,19 +1569,63 @@ impl SemanticAnalyzer {
 
             Expr::PrefixUpdate { right, .. } => self.visit_expression(right),
             Expr::PostfixUpdate { left, .. } => self.visit_expression(left),
-
+            // TODO: add check if the type of the object contains a index_access handle if it not a name or array or pointer
+            // TODO: add modify and copy
             Expr::IndexAccess { object, index } => {
                 self.visit_expression(index)?;
+
                 let obj_type = self.visit_expression(object)?;
-                if obj_type.starts_with("array<") {
-                    let inner = obj_type.trim_start_matches("array<").trim_end_matches('>');
-                    Ok(inner.to_string())
-                } else if obj_type.starts_with("name<") {
-                    let inner = obj_type.trim_start_matches("name<").trim_end_matches('>');
-                    Ok(inner.to_string())
-                } else if obj_type.starts_with("pointer<") {
-                    let inner = obj_type.trim_start_matches("pointer<").trim_end_matches('>');
-                    Ok(inner.to_string())
+
+                let mut current_type = obj_type.clone();
+
+                while
+                    current_type.starts_with("modify<") ||
+                    current_type.starts_with("copy<") ||
+                    current_type.starts_with("name<") ||
+                    current_type.starts_with("pointer<") ||
+                    current_type.starts_with("array<")
+                {
+                    if current_type.starts_with("modify<") {
+                        current_type = current_type
+                            .trim_start_matches("modify<")
+                            .trim_end_matches('>')
+                            .to_string();
+                    } else if current_type.starts_with("copy<") {
+                        current_type = current_type
+                            .trim_start_matches("copy<")
+                            .trim_end_matches('>')
+                            .to_string();
+                    } else if current_type.starts_with("name<") {
+                        current_type = current_type
+                            .trim_start_matches("name<")
+                            .trim_end_matches('>')
+                            .to_string();
+                    } else if current_type.starts_with("pointer<") {
+                        current_type = current_type
+                            .trim_start_matches("pointer<")
+                            .trim_end_matches('>')
+                            .to_string();
+                    } else if current_type.starts_with("array<") {
+                        current_type = current_type
+                            .trim_start_matches("array<")
+                            .trim_end_matches('>')
+                            .to_string();
+                    }
+                }
+
+                if current_type != obj_type {
+                    Ok(current_type)
+                } else if current_type != "unknown" {
+                    if let Some(meta) = self.global_metadata.get(&obj_type) {
+                        if meta.handles.contains(&HandleMethods::IndexAccess) {
+                            if let Some(ret_ty) = meta.methods.get("index_access") {
+                                return Ok(ret_ty.return_type.as_str());
+                            }
+                        }
+                    }
+                    Err(
+                        format!("Semantic Error: Type '{}' does not support index access (make a index_access handle for it).", obj_type)
+                    )
                 } else {
                     Ok("unknown".to_string())
                 }

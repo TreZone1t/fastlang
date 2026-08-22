@@ -167,7 +167,15 @@ impl Parser {
         meta.generics.clear();
         meta.params.clear();
         meta.handles = used_handles.clone();
-
+        for hdl in &handle_block {
+            if let Decl::FnDecl { name, params, return_type, .. } = hdl {
+                meta.methods.insert(name.clone(), FnType {
+                    name: name.clone(),
+                    params: params.clone(),
+                    return_type: return_type.clone(),
+                });
+            }
+        }
         self.metadata.insert(name.clone(), meta);
 
         return Ok(Decl::StructDecl {

@@ -3,7 +3,10 @@
 
  int(32) global_counter= 0;
  const float(64) pi = 3.14;
-
+fn make_name() -> name<int(32)> {
+    int(32) a = 10;
+    return &a;
+}
 fn main() -> int(32) {
     //the feature i want to add:
     //int(32) a, b, c;
@@ -21,17 +24,14 @@ fn main() -> int(32) {
     int(32) *ptr;
     ptr = &counter;
     *ptr = counter + 1;
-    /*
-    Successfully generated C++ code to tests\build\output.cpp
-Compiling to tests\build\app.exe...
-tests\build\output.cpp: In function 'int main()':
-tests\build\output.cpp:38:18: error: unable to deduce 'std::initializer_list<auto>*' from '<brace-enclosed initializer list>()'
-   38 |     auto* ptr = {};
-      |                  ^
-tests\build\output.cpp:38:18: note:   couldn't deduce template parameter 'auto'
-C++ compilation failed! Check tests\build\output.cpp for errors.
-    
-    */
+    //name<int(32)> ptr2 = make_name(); // this is not working yet
+    name<int(32)> ptr2;
+    //ptr2 = &counter;  // this is not working yet for the same reason i think
+    //log(ptr2);
+    int a = 10; // you can use int as usual
+    float b = 10.0; // you can use float as usual
+    log(a);
+    log(counter);
     log(c);
     return 0;
 }

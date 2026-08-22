@@ -110,6 +110,15 @@ impl Parser {
         for variant in &variants {
             meta.fields.insert(variant.name.clone(), BaseType::from_str(&name));
         }
+        for hdl in &handle_block {
+            if let Decl::FnDecl { name, params, return_type, .. } = hdl {
+                meta.methods.insert(name.clone(), FnType {
+                    name: name.clone(),
+                    params: params.clone(),
+                    return_type: return_type.clone(),
+                });
+            }
+        }
         self.metadata.insert(name.clone(), meta);
 
         self.consume(TokenKind::RBrace, "Expected '}' to close enum block")?;

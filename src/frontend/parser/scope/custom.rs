@@ -486,7 +486,15 @@ impl Parser {
                 is_array: false,
             });
         }
-
+        for hdl in &handle_block {
+            if let Decl::FnDecl { name, params, return_type, .. } = hdl {
+                meta.methods.insert(name.clone(), FnType {
+                    name: name.clone(),
+                    params: params.clone(),
+                    return_type: return_type.clone(),
+                });
+            }
+        }
         self.metadata.insert(name.clone(), meta);
         Ok(Decl::CustomDecl {
             is_exported: false,

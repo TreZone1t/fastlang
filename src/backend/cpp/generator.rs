@@ -16,7 +16,6 @@ impl CodeGenerator {
             yield_counter: 0,
         }
     }
-
     pub(crate) fn emit_operator_overloads(&mut self, handle_block: &Option<Vec<Decl>>) {
         if let Some(handles) = handle_block {
             for h in handles {
@@ -81,7 +80,7 @@ impl CodeGenerator {
         if emit_headers {
             self.output.push_str("#include <iostream>\n");
             self.output.push_str("#include <vector>\n");
-            self.output.push_str("#include <array>\n");
+            //  self.output.push_str("#include <array>\n");
             self.output.push_str("#include <memory>\n");
             self.output.push_str("#include <optional>\n");
             self.output.push_str("#include <stdexcept>\n\n");
@@ -163,6 +162,7 @@ impl CodeGenerator {
             self.emit("delete const_cast<T*>(ptr);");
             self.emit("ptr = nullptr;");
             self.emit("}");
+            self.emit("const T& operator[](size_t index) const { return ptr[index]; }");
             self.emit("fastlang_name(const T* p = nullptr) : ptr(p) {}");
             self.emit("fastlang_name(const fastlang_name& other) : ptr(other.ptr) {}");
             self.emit("fastlang_name(const fastlang_modify<T>& m);");
@@ -179,6 +179,7 @@ impl CodeGenerator {
             self.emit("delete ptr;");
             self.emit("ptr = nullptr;");
             self.emit("}");
+            self.emit("T& operator[](size_t index) { return ptr[index]; }");
             self.emit("fastlang_modify(T* p = nullptr) : ptr(p) {}");
             self.emit("fastlang_modify(const fastlang_modify& other) : ptr(other.ptr) {}");
             self.emit("fastlang_modify(const fastlang_name<T>& n);");
@@ -195,6 +196,7 @@ impl CodeGenerator {
             self.emit("delete ptr;");
             self.emit("ptr = nullptr;");
             self.emit("}");
+            self.emit("T& operator[](size_t index) { return ptr[index]; }");
             self.emit("fastlang_copy(T* p = nullptr) : ptr(p) {}");
             self.emit("fastlang_copy(const fastlang_copy& other) : ptr(other.ptr) {}");
             self.emit("fastlang_copy(const fastlang_name<T>& n);");
