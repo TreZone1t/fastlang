@@ -87,10 +87,11 @@ pub enum HandleLookupResult {
 //   "int32"          -> None
 // ─────────────────────────────────────────────────────────────────────────────
 pub fn extract_blueprint_name_from_type(type_str: &str) -> Option<String> {
-    const PREFIXES: &[&str] = &["custom<", "class<", "struct<", "enum<", "blueprint<"];
+    const PREFIXES: &[&str] = &["custom<", "class<", "struct<", "enum<", "blueprint<", "name<", "pointer<"];
     for prefix in PREFIXES {
         if let Some(rest) = type_str.strip_prefix(prefix) {
-            return Some(rest.trim_end_matches('>').to_string());
+            let base_name = rest.split('<').next().unwrap_or(rest).trim_end_matches('>').to_string();
+            return Some(base_name);
         }
     }
     None

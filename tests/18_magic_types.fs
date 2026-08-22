@@ -10,7 +10,7 @@ struct Node -> {
  }
  fn test_magic(y: int(32)) -> void {
      // Test 1: modify with let
-    name x = modify y;
+    modify x =  y;
     log(&x);
     // Test 2: copy with let
     int(32) arr2[3] = [1,2,3];

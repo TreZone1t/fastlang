@@ -68,14 +68,11 @@ export custom list<T> -> {
           this.length = this.length + 1;
         }
       }
-      fn size() -> int(32) {
-        return this.length;
-      }
       fn pop() -> T {
-        let name temp = this.head;
+       modify temp = this.head;
         if (temp !=  void) {
           this.head = temp.get_next();
-          let T val = temp.get_value();
+          T val = temp.get_value();
           del temp;
           this.length = this.length - 1;
           return val;
@@ -83,7 +80,7 @@ export custom list<T> -> {
         return 0;
       }
       fn extend_from_array(arr: T[]) -> void {
-        for (let int(32) i = 0; i < arr.size(); i = i + 1) -> {
+        for (int(32) i = 0; i < arr.size(); i = i + 1) -> {
           this.push(arr[i]);
         }
       }

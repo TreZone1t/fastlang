@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[test]
@@ -29,6 +29,16 @@ fn run_all_fs_tests() {
                 filename.starts_with("fail_") ||
                 filename.contains("_fail_") ||
                 filename.contains("fail");
+
+            let parent = path.parent().unwrap_or(Path::new(""));
+            let build_exe = parent.join("build").join(if cfg!(windows) { "app.exe" } else { "app" });
+            let root_exe = PathBuf::from(if cfg!(windows) { "./app.exe" } else { "./app" });
+            if build_exe.exists() {
+                let _ = fs::remove_file(&build_exe);
+            }
+            if root_exe.exists() {
+                let _ = fs::remove_file(&root_exe);
+            }
 
             println!("--------------------------------------------------");
             println!("Running test: {}", filename);
@@ -67,10 +77,14 @@ fn run_all_fs_tests() {
                     }
 
                     if !expected_lines.is_empty() {
-                        let exe_path = if cfg!(windows) { "./app.exe" } else { "./app" };
+                        let exe_to_run = if build_exe.exists() {
+                            build_exe.clone()
+                        } else {
+                            root_exe.clone()
+                        };
 
-                        if Path::new(exe_path).exists() {
-                            let app_output = Command::new(exe_path)
+                        if exe_to_run.exists() {
+                            let app_output = Command::new(&exe_to_run)
                                 .output()
                                 .expect("failed to execute compiled app");
 
@@ -101,7 +115,7 @@ fn run_all_fs_tests() {
                                 passed_tests += 1;
                             }
                         } else {
-                            println!("⚠️ WARNING: Executable not found for {} despite successful compilation.", filename);
+                            println!("⚠️ WARNING: Executable not found at {:?} (or root {:?}) for {} despite successful compilation. Stdout:\n{}", build_exe, root_exe, filename, String::from_utf8_lossy(&output.stdout));
                             passed_tests += 1;
                         }
                     } else {

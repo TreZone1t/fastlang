@@ -167,6 +167,26 @@ impl Parser {
         meta.generics.clear();
         meta.params.clear();
         meta.handles = used_handles.clone();
+        for decl in public_block_ast.iter().chain(private_block_ast.iter()).chain(static_block_ast.iter()) {
+            match decl {
+                Decl::VarDecl { name, type_node, .. } => {
+                    meta.fields.insert(name.clone(), type_node.clone());
+                }
+                Decl::DestructureDecl { assignments, type_node, .. } => {
+                    for (name, _) in assignments {
+                        meta.fields.insert(name.clone(), type_node.clone());
+                    }
+                }
+                Decl::FnDecl { name, params, return_type, .. } => {
+                    meta.methods.insert(name.clone(), FnType {
+                        name: name.clone(),
+                        params: params.clone(),
+                        return_type: return_type.clone(),
+                    });
+                }
+                _ => {}
+            }
+        }
         for hdl in &handle_block {
             if let Decl::FnDecl { name, params, return_type, .. } = hdl {
                 meta.methods.insert(name.clone(), FnType {

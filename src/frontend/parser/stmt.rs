@@ -380,6 +380,9 @@ impl Parser {
             Decl::VarDecl { ref mut editability, .. } => {
                 *editability = Editability::NotEditable;
             }
+            Decl::DestructureDecl { ref mut editability, .. } => {
+                *editability = Editability::NotEditable;
+            }
             Decl::ArrayDecl { ref mut editability, .. } => {
                 *editability = Editability::NotEditable;
             }
@@ -433,6 +436,9 @@ impl Parser {
             Decl::VarDecl { ref mut visibility, .. } => {
                 *visibility = Visibility::Public;
             }
+            Decl::DestructureDecl { ref mut visibility, .. } => {
+                *visibility = Visibility::Public;
+            }
             Decl::ArrayDecl { ref mut visibility, .. } => {
                 *visibility = Visibility::Public;
             }
@@ -481,99 +487,288 @@ impl Parser {
         }
     }
 
-    pub(crate) fn parse_var_decl(&mut self, scope: ScopeType) -> Result<Decl, String> {
-        let var_meta: VarMetadata;
-        let type_name = self.parse_type()?;
-        let name = self.get_identifier("Expected variable name after type")?;
-        let mut assign_op = String::new();
-        let mut size = None;
-        if self.peek().kind == TokenKind::LBracket {
-            //[size]
-            self.advance();
-            if matches!(self.peek().kind, TokenKind::Int(_)) {
-                size = Some(self.parse_expression()?);
-            } else {
-                return Err("Syntax Error: Expected size for array".to_string());
+    pub(crate) fn parse_pattern_item(&mut self) -> Result<Pattern, String> {
+        match &self.peek().kind.clone() {
+            TokenKind::Identifier(name) => {
+                let n = name.clone();
+                self.advance();
+                Ok(Pattern::Identifier(n))
             }
-            self.consume(TokenKind::RBracket, "Expected ']' after array size")?;
+            TokenKind::LParen => {
+                self.advance();
+                let mut items = Vec::new();
+                if self.peek().kind != TokenKind::RParen {
+                    items.push(self.parse_pattern_item()?);
+                    while self.peek().kind == TokenKind::Comma {
+                        self.advance();
+                        items.push(self.parse_pattern_item()?);
+                    }
+                }
+                self.consume(TokenKind::RParen, "Expected ')' after pattern tuple")?;
+                Ok(Pattern::Tuple(items))
+            }
+            TokenKind::LBracket => {
+                self.advance();
+                let mut items = Vec::new();
+                if self.peek().kind != TokenKind::RBracket {
+                    items.push(self.parse_pattern_item()?);
+                    while self.peek().kind == TokenKind::Comma {
+                        self.advance();
+                        items.push(self.parse_pattern_item()?);
+                    }
+                }
+                self.consume(TokenKind::RBracket, "Expected ']' after pattern list")?;
+                Ok(Pattern::Tuple(items))
+            }
+            TokenKind::LBrace => {
+                self.advance();
+                let mut fields = Vec::new();
+                while self.peek().kind != TokenKind::RBrace && self.peek().kind != TokenKind::EOF {
+                    if let TokenKind::Identifier(fname) = &self.peek().kind {
+                        fields.push(fname.clone());
+                        self.advance();
+                        if self.peek().kind == TokenKind::Comma || self.peek().kind == TokenKind::SemiColon {
+                            self.advance();
+                        }
+                    } else {
+                        return Err(format!("Expected field identifier inside destructuring braces, found {:?}", self.peek().kind));
+                    }
+                }
+                self.consume(TokenKind::RBrace, "Expected '}' after destructuring fields")?;
+                Ok(Pattern::Struct { name: None, fields })
+            }
+            other => Err(format!("Expected variable name or destructuring pattern, found {:?}", other)),
         }
-        let mut value = Expr::Identifier("__default__".to_string());
+    }
 
+    pub(crate) fn parse_destructuring_pattern(&mut self) -> Result<Pattern, String> {
+        let first = self.parse_pattern_item()?;
+        if self.peek().kind == TokenKind::Comma {
+            let mut list = vec![first];
+            while self.peek().kind == TokenKind::Comma {
+                self.advance();
+                list.push(self.parse_pattern_item()?);
+            }
+            Ok(Pattern::Tuple(list))
+        } else {
+            Ok(first)
+        }
+    }
+
+    pub(crate) fn parse_rhs_item(&mut self) -> Result<RhsValue, String> {
+        if self.peek().kind == TokenKind::LParen {
+            self.advance();
+            let mut items = Vec::new();
+            let mut has_comma = false;
+            if self.peek().kind != TokenKind::RParen {
+                items.push(self.parse_rhs_item()?);
+                while self.peek().kind == TokenKind::Comma {
+                    has_comma = true;
+                    self.advance();
+                    items.push(self.parse_rhs_item()?);
+                }
+            }
+            self.consume(TokenKind::RParen, "Expected ')' after group in RHS")?;
+            if has_comma || items.len() > 1 {
+                Ok(RhsValue::Group(items))
+            } else if items.len() == 1 {
+                Ok(items.into_iter().next().unwrap())
+            } else {
+                Ok(RhsValue::Group(Vec::new()))
+            }
+        } else {
+            let expr = self.parse_expression()?;
+            Ok(RhsValue::Single(expr))
+        }
+    }
+
+    pub(crate) fn parse_rhs_values(&mut self) -> Result<RhsValue, String> {
+        let first = self.parse_rhs_item()?;
+        if self.peek().kind == TokenKind::Comma {
+            let mut list = vec![first];
+            while self.peek().kind == TokenKind::Comma {
+                self.advance();
+                list.push(self.parse_rhs_item()?);
+            }
+            Ok(RhsValue::Group(list))
+        } else {
+            Ok(first)
+        }
+    }
+
+    pub(crate) fn parse_var_decl(&mut self, scope: ScopeType) -> Result<Decl, String> {
+        let mut type_name = self.parse_type()?;
+        let pattern = self.parse_destructuring_pattern()?;
+
+        let mut is_arr = false;
+        let mut array_sizes = Vec::new();
+        if let Pattern::Identifier(_) = &pattern {
+            while self.peek().kind == TokenKind::LBracket {
+                is_arr = true;
+                self.advance();
+                let size = if self.peek().kind != TokenKind::RBracket {
+                    Some(self.parse_expression()?)
+                } else {
+                    None
+                };
+                self.consume(TokenKind::RBracket, "Expected ']' after array size")?;
+                array_sizes.push(size);
+            }
+        }
+
+        let mut assign_op = String::new();
+        let mut rhs_opt = None;
         if self.peek().kind == TokenKind::Assign || self.peek().kind == TokenKind::Arrow {
             assign_op = self.peek().kind.clone().as_str().to_string();
             self.advance();
-            value = self.parse_expression()?;
+            rhs_opt = Some(self.parse_rhs_values()?);
         }
 
         if self.peek().kind == TokenKind::SemiColon {
-            println!("DEBUG: parse_var_decl: {:?}", self.peek().kind);
             self.advance();
         }
+
         let visibility = if scope == ScopeType::Global {
             Visibility::Public
         } else {
             Visibility::Private
         };
-        if size.is_none() {
-            var_meta = VarMetadata {
-                name: name.clone(),
-                type_node: type_name.clone(),
-                visibility: visibility,
-                editability: Editability::Editable,
-                scope: scope,
-                is_array: false,
-            };
-            self.var_metadata.insert(name.clone(), var_meta);
-            if matches!(value.clone(), Expr::New { type_node, target }) {
+
+        match pattern {
+            Pattern::Identifier(ref name) if !is_arr => {
+                let val = match rhs_opt {
+                    Some(RhsValue::Single(expr)) => expr,
+                    Some(RhsValue::Group(items)) => {
+                        // Case 7: int(32) x = (10, 20); -> ArrayLiteral
+                        let mut elems = Vec::new();
+                        for item in items {
+                            match item {
+                                RhsValue::Single(e) => elems.push(e),
+                                RhsValue::Group(_) => {
+                                    let mut sub = Vec::new();
+                                    flatten_rhs(&item, &mut sub);
+                                    elems.push(Expr::ArrayLiteral(sub));
+                                }
+                            }
+                        }
+                        Expr::ArrayLiteral(elems)
+                    }
+                    None => Expr::Identifier("__default__".to_string()),
+                };
+
+                let var_meta = VarMetadata {
+                    name: name.clone(),
+                    type_node: type_name.clone(),
+                    visibility: visibility.clone(),
+                    editability: Editability::Editable,
+                    scope,
+                    is_array: false,
+                };
+                self.var_metadata.insert(name.clone(), var_meta);
+
+                let place = if matches!(val, Expr::New { .. }) {
+                    Place::Heap
+                } else {
+                    Place::Local
+                };
+
                 Ok(Decl::VarDecl {
-                    visibility: Visibility::Private,
+                    visibility,
                     editability: Editability::Editable,
                     type_node: type_name,
-                    place: Place::Heap,
+                    place,
                     assign_op,
-                    name,
-                    value,
-                })
-            } else {
-                Ok(Decl::VarDecl {
-                    visibility: Visibility::Private,
-                    editability: Editability::Editable,
-                    type_node: type_name,
-                    place: Place::Local,
-                    assign_op,
-                    name,
-                    value,
+                    name: name.clone(),
+                    value: val,
                 })
             }
-        } else {
-            var_meta = VarMetadata {
-                name: name.clone(),
-                type_node: type_name.clone(),
-                visibility: visibility,
-                editability: Editability::Editable,
-                scope: scope,
-                is_array: true,
-            };
-            self.var_metadata.insert(name.clone(), var_meta);
-            if matches!(value.clone(), Expr::New { type_node, target }) {
-                Ok(Decl::ArrayDecl {
-                    visibility: Visibility::Private,
+            Pattern::Identifier(ref name) if is_arr => {
+                let val = match rhs_opt {
+                    Some(RhsValue::Single(expr)) => expr,
+                    Some(RhsValue::Group(items)) => {
+                        let mut elems = Vec::new();
+                        for item in items {
+                            match item {
+                                RhsValue::Single(e) => elems.push(e),
+                                RhsValue::Group(_) => {
+                                    let mut sub = Vec::new();
+                                    flatten_rhs(&item, &mut sub);
+                                    elems.push(Expr::ArrayLiteral(sub));
+                                }
+                            }
+                        }
+                        Expr::ArrayLiteral(elems)
+                    }
+                    None => Expr::Identifier("__default__".to_string()),
+                };
+
+                let elem_type = if array_sizes.len() > 1 {
+                    let mut t = type_name.clone();
+                    for size in array_sizes.iter().skip(1).rev() {
+                        t = BaseType::Array {
+                            base_type: Box::new(t),
+                            size: Box::new(size.clone()),
+                        };
+                    }
+                    t
+                } else {
+                    type_name.clone()
+                };
+
+                let var_meta = VarMetadata {
+                    name: name.clone(),
+                    type_node: elem_type.clone(),
+                    visibility: visibility.clone(),
                     editability: Editability::Editable,
-                    type_node: type_name,
-                    name,
+                    scope,
+                    is_array: true,
+                };
+                self.var_metadata.insert(name.clone(), var_meta);
+
+                let len_expr = array_sizes.first().cloned().flatten().unwrap_or(Expr::LiteralInt(0));
+
+                Ok(Decl::ArrayDecl {
+                    visibility,
+                    editability: Editability::Editable,
+                    type_node: elem_type,
+                    name: name.clone(),
                     assign_op,
-                    length: size.unwrap(),
-                    value,
+                    length: len_expr,
+                    value: val,
                 })
-            } else {
-                Ok(Decl::ArrayDecl {
-                    visibility: Visibility::Private,
+            }
+            _ => {
+                // Destructuring (multiple vars, tuple, struct)
+                let mut assignments = Vec::new();
+                if let Some(rhs) = rhs_opt {
+                    match_destructure(&pattern, &rhs, &mut assignments)?;
+                } else {
+                    let mut names = Vec::new();
+                    collect_pattern_identifiers(&pattern, &mut names);
+                    for n in names {
+                        assignments.push((n, Expr::Identifier("__default__".to_string())));
+                    }
+                }
+
+                for (name, _) in &assignments {
+                    let var_meta = VarMetadata {
+                        name: name.clone(),
+                        type_node: type_name.clone(),
+                        visibility: visibility.clone(),
+                        editability: Editability::Editable,
+                        scope: scope.clone(),
+                        is_array: false,
+                    };
+                    self.var_metadata.insert(name.clone(), var_meta);
+                }
+
+                Ok(Decl::DestructureDecl {
+                    visibility,
                     editability: Editability::Editable,
                     type_node: type_name,
-                    name,
+                    pattern,
+                    assignments,
                     assign_op,
-                    length: size.unwrap(),
-                    value,
                 })
             }
         }
@@ -1033,9 +1228,10 @@ impl Parser {
             let next1 = self.tokens.get(self.current + 1).map(|t| &t.kind);
             let next2 = self.tokens.get(self.current + 2).map(|t| &t.kind);
 
-            // `TypeName varName ->` pattern
+            // `TypeName varName =` or `TypeName<T> varName =` pattern
             let is_var_decl = match (next1, next2) {
-                (Some(TokenKind::Identifier(_)), Some(TokenKind::Assign)) => true,
+                (Some(TokenKind::Identifier(_)), Some(TokenKind::Assign | TokenKind::Arrow | TokenKind::SemiColon | TokenKind::LBracket)) => true,
+                (Some(TokenKind::LBrace), _) => true,
                 (Some(TokenKind::Less), _) => {
                     let mut i = self.current + 2;
                     let mut depth = 1;
@@ -1056,7 +1252,8 @@ impl Parser {
                             self.tokens.get(i).map(|t| &t.kind),
                             self.tokens.get(i + 1).map(|t| &t.kind),
                         ),
-                        (Some(TokenKind::Identifier(_)), Some(TokenKind::Arrow))
+                        (Some(TokenKind::Identifier(_)), Some(TokenKind::Arrow | TokenKind::Assign | TokenKind::SemiColon | TokenKind::LBracket)) |
+                        (Some(TokenKind::LBrace), _)
                     )
                 }
                 _ => false,
@@ -1248,6 +1445,124 @@ impl Parser {
             return Ok(s);
         } else {
             return Err(err_msg.to_string());
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RhsValue {
+    Single(Expr),
+    Group(Vec<RhsValue>),
+}
+
+fn match_destructure(
+    pattern: &Pattern,
+    value: &RhsValue,
+    results: &mut Vec<(String, Expr)>
+) -> Result<(), String> {
+    match pattern {
+        Pattern::Identifier(name) => {
+            match value {
+                RhsValue::Single(expr) => {
+                    results.push((name.clone(), expr.clone()));
+                    Ok(())
+                }
+                RhsValue::Group(items) => {
+                    let mut expr_elements = Vec::new();
+                    for item in items {
+                        match item {
+                            RhsValue::Single(e) => expr_elements.push(e.clone()),
+                            RhsValue::Group(_) => {
+                                let mut sub = Vec::new();
+                                flatten_rhs(item, &mut sub);
+                                expr_elements.push(Expr::ArrayLiteral(sub));
+                            }
+                        }
+                    }
+                    results.push((name.clone(), Expr::ArrayLiteral(expr_elements)));
+                    Ok(())
+                }
+            }
+        }
+        Pattern::Tuple(patterns) => {
+            match value {
+                RhsValue::Single(Expr::ArrayLiteral(elems)) if elems.len() == patterns.len() => {
+                    for (p, elem) in patterns.iter().zip(elems.iter()) {
+                        match_destructure(p, &RhsValue::Single(elem.clone()), results)?;
+                    }
+                    Ok(())
+                }
+                RhsValue::Single(expr) => {
+                    for p in patterns {
+                        match_destructure(p, &RhsValue::Single(expr.clone()), results)?;
+                    }
+                    Ok(())
+                }
+                RhsValue::Group(items) => {
+                    if items.len() == 1 {
+                        let single_item = &items[0];
+                        for p in patterns {
+                            match_destructure(p, single_item, results)?;
+                        }
+                        Ok(())
+                    } else if patterns.len() == items.len() {
+                        for (p, item) in patterns.iter().zip(items.iter()) {
+                            match_destructure(p, item, results)?;
+                        }
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "Semantic Error: Destructuring mismatch: {} variables on LHS vs {} values on RHS.",
+                            patterns.len(),
+                            items.len()
+                        ))
+                    }
+                }
+            }
+        }
+        Pattern::Struct { name: _, fields } => {
+            match value {
+                RhsValue::Single(expr) => {
+                    for f in fields {
+                        let prop_access = Expr::PropertyAccess {
+                            object: Box::new(expr.clone()),
+                            property: f.clone(),
+                        };
+                        results.push((f.clone(), prop_access));
+                    }
+                    Ok(())
+                }
+                RhsValue::Group(_) => {
+                    Err("Semantic Error: Cannot unpack struct pattern from tuple/group RHS.".to_string())
+                }
+            }
+        }
+    }
+}
+
+fn flatten_rhs(val: &RhsValue, out: &mut Vec<Expr>) {
+    match val {
+        RhsValue::Single(e) => out.push(e.clone()),
+        RhsValue::Group(items) => {
+            for it in items {
+                flatten_rhs(it, out);
+            }
+        }
+    }
+}
+
+fn collect_pattern_identifiers(pattern: &Pattern, out: &mut Vec<String>) {
+    match pattern {
+        Pattern::Identifier(n) => out.push(n.clone()),
+        Pattern::Tuple(pats) => {
+            for p in pats {
+                collect_pattern_identifiers(p, out);
+            }
+        }
+        Pattern::Struct { fields, .. } => {
+            for f in fields {
+                out.push(f.clone());
+            }
         }
     }
 }

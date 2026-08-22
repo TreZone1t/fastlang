@@ -43,6 +43,9 @@ impl Parser {
                 self.advance();
                 base_type = BaseType::Pointer(Box::new(base_type));
             } else if self.peek().kind == TokenKind::LBracket {
+                if !self.is_array_type_bracket() {
+                    break;
+                }
                 self.advance();
                 let mut len = None;
                 if self.peek().kind == TokenKind::Comma {
@@ -60,6 +63,41 @@ impl Parser {
         }
 
         Ok(base_type)
+    }
+
+    fn is_array_type_bracket(&self) -> bool {
+        let mut offset = 1;
+        let mut depth = 1;
+        let mut has_comma = false;
+        while let Some(tok) = self.tokens.get(self.current + offset) {
+            match &tok.kind {
+                TokenKind::LBracket => depth += 1,
+                TokenKind::RBracket => {
+                    depth -= 1;
+                    if depth == 0 {
+                        offset += 1;
+                        break;
+                    }
+                }
+                TokenKind::Comma if depth == 1 => {
+                    has_comma = true;
+                }
+                TokenKind::SemiColon | TokenKind::Assign | TokenKind::Arrow if depth == 0 => {
+                    break;
+                }
+                _ => {}
+            }
+            offset += 1;
+        }
+        if has_comma {
+            return false;
+        }
+        if let Some(after_tok) = self.tokens.get(self.current + offset) {
+            if after_tok.kind == TokenKind::Assign || after_tok.kind == TokenKind::Arrow {
+                return false;
+            }
+        }
+        true
     }
 
     pub(crate) fn parse_base_type(&mut self) -> Result<BaseType, String> {
@@ -187,6 +225,7 @@ impl Parser {
                 if self.peek().kind == TokenKind::Less {
                     self.advance(); // '<'
                     self.parse_generic_list(&mut generics)?;
+                    self.consume(TokenKind::Greater, "Expected '>' after generic type parameter")?;
                 }
 
                 if let Some(meta) = self.metadata.get(&n).cloned() {
@@ -422,6 +461,22 @@ impl Parser {
                     operand: Box::new(operand),
                 })
             }
+            TokenKind::TypeModify => {
+                self.advance();
+                let operand = self.parse_expr(7)?;
+                Ok(Expr::UnaryOp {
+                    operator: "modify".to_string(),
+                    operand: Box::new(operand),
+                })
+            }
+            TokenKind::TypeCopy => {
+                self.advance();
+                let operand = self.parse_expr(7)?;
+                Ok(Expr::UnaryOp {
+                    operator: "copy".to_string(),
+                    operand: Box::new(operand),
+                })
+            }
 
             // --- Arrays: [1, 2, 3] ---
             TokenKind::LBracket => {
@@ -529,6 +584,7 @@ impl Parser {
             TokenKind::DoubleColon => Some(20), // static access: Class::field
             TokenKind::LParen => Some(20), // function call:   foo(...)
             TokenKind::LBracket => Some(20), // array indexing: arr[0]
+            TokenKind::LBrace => Some(20), // object instantiation: TypeName { ... }
             TokenKind::PlusPlus => Some(21), // postfix ++
             TokenKind::MinusMinus => Some(21), // postfix --
             _ => None,
@@ -628,14 +684,32 @@ impl Parser {
                 })
             }
 
-            // --- Array Indexing: lhs[index] ---
+            // --- Array Indexing: lhs[index] or lhs[i, j] ---
             TokenKind::LBracket => {
                 self.advance();
-                let index = self.parse_expr(0)?;
+                let mut indices = Vec::new();
+                if self.peek().kind != TokenKind::RBracket {
+                    indices.push(self.parse_expr(0)?);
+                    while self.peek().kind == TokenKind::Comma {
+                        self.advance();
+                        indices.push(self.parse_expr(0)?);
+                    }
+                }
                 self.consume(TokenKind::RBracket, "Expected ']' after array index")?;
                 Ok(Expr::IndexAccess {
                     object: Box::new(lhs),
-                    index: Box::new(index),
+                    indices,
+                })
+            }
+
+            // --- TypeName { ... } instantiation ---
+            TokenKind::LBrace => {
+                self.advance();
+                let stmts = self.parse_block("object".to_string())?;
+                self.consume(TokenKind::RBrace, "Expected '}' after object literal")?;
+                Ok(Expr::Instantiate {
+                    target: Box::new(lhs),
+                    args: vec![Expr::ObjectLiteral(stmts)],
                 })
             }
 

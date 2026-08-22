@@ -99,7 +99,11 @@ impl BaseType {
             BaseType::Pointer(t) => format!("pointer<{}>", t.as_str()),
             BaseType::Type(t) => format!("type<{}>", t.as_str()),
             BaseType::Array { base_type, size } => {
-                format!("array<{}[{}]>", base_type.as_str(), size.clone().unwrap().as_str())
+                if let Some(s) = size.as_ref() {
+                    format!("array<{}[{}]>", base_type.as_str(), s.as_str())
+                } else {
+                    format!("array<{}>", base_type.as_str())
+                }
             }
             BaseType::Custom { name, .. } => format!("custom<{}>", name),
             BaseType::Struct { name, .. } => format!("struct<{}>", name),
@@ -554,7 +558,7 @@ pub enum Expr {
 
     IndexAccess {
         object: Box<Expr>,
-        index: Box<Expr>,
+        indices: Vec<Expr>,
     },
 
     Call {
@@ -613,6 +617,10 @@ impl Expr {
             Expr::PostfixUpdate { left, operator } => format!("{}{}", left.as_str(), operator),
             Expr::PrefixUpdate { right, operator } => format!("{}{}", operator, right.as_str()),
             Expr::UnaryOp { operator, operand } => format!("{}{}", operator, operand.as_str()),
+            Expr::IndexAccess { object, indices } => {
+                let idxs: Vec<String> = indices.iter().map(|i| i.as_str()).collect();
+                format!("{}[{}]", object.as_str(), idxs.join(", "))
+            }
             Expr::Call { callee, args } =>
                 format!(
                     "{}({})",
@@ -654,6 +662,15 @@ pub enum Place {
     Heap,
 }
 #[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    Identifier(String),
+    Tuple(Vec<Pattern>),
+    Struct {
+        name: Option<String>,
+        fields: Vec<String>,
+    },
+}
+#[derive(Debug, Clone, PartialEq)]
 pub enum Decl {
     VarDecl {
         visibility: Visibility,
@@ -663,6 +680,14 @@ pub enum Decl {
         assign_op: String,
         name: String,
         value: Expr,
+    },
+    DestructureDecl {
+        visibility: Visibility,
+        editability: Editability,
+        type_node: BaseType,
+        pattern: Pattern,
+        assignments: Vec<(String, Expr)>,
+        assign_op: String,
     },
     ArrayDecl {
         visibility: Visibility,
@@ -801,8 +826,6 @@ pub enum Stmt {
         catch_block: Vec<Stmt>,
     },
     EnableStmt(String), // enable <flag> or enable all
-    DisableStmt(String), // disable <flag> or disable all
-
     // ── Control Flow ──────────────────────────────────────────
     // set name -> value;
     // set obj.field -> value;   (property chain reassignment)

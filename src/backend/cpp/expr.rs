@@ -1,4 +1,5 @@
 use crate::backend::cpp::generator::CodeGenerator;
+use crate::backend::cpp::stmt::type_to_cpp;
 use crate::frontend::parser::ast::*;
 
 impl CodeGenerator {
@@ -63,18 +64,34 @@ impl CodeGenerator {
                 let r = self.visit_expression(right);
                 format!("{}{}", operator, r)
             }
-            Expr::IndexAccess { object, index } => {
+            Expr::IndexAccess { object, indices } => {
                 let obj_code = self.visit_expression(object);
-                let index_code = self.visit_expression(index);
-                if let Some(scope) = self.custom_scopes.get(&obj_code) {
-                    format!("{}.index_access({})", obj_code, index_code)
+                let indices_code: Vec<String> = indices
+                    .iter()
+                    .map(|i| self.visit_expression(i))
+                    .collect();
+                if self.custom_scopes.contains(&obj_code) || indices_code.len() > 1 {
+                    format!("{}.index_access({})", obj_code, indices_code.join(", "))
+                } else if indices_code.len() == 1 {
+                    format!("{}[{}]", obj_code, indices_code[0])
                 } else {
-                    format!("{}[{}]", obj_code, index_code)
+                    let chained = indices_code
+                        .iter()
+                        .map(|i| format!("[{}]", i))
+                        .collect::<Vec<_>>()
+                        .join("");
+                    format!("{}{}", obj_code, chained)
                 }
             }
             Expr::UnaryOp { operator, operand } => {
                 let op_code = self.visit_expression(operand);
-                format!("{}{}", operator, op_code)
+                if operator == "modify" {
+                    format!("fastlang_modify(&{})", op_code)
+                } else if operator == "copy" {
+                    format!("fastlang_copy(&{})", op_code)
+                } else {
+                    format!("{}{}", operator, op_code)
+                }
             }
             Expr::Call { callee, args } => {
                 let callee_code = self.visit_expression(callee);
@@ -109,6 +126,35 @@ impl CodeGenerator {
             }
             Expr::Instantiate { target, args } => {
                 let target_code = self.visit_expression(target);
+                if args.len() == 1 && matches!(args[0], Expr::ObjectLiteral(_)) {
+                    if let Expr::ObjectLiteral(ref stmts) = args[0] {
+                        let mut struct_code = format!("([&]() {{\n    {} __obj;\n", target_code);
+                        let mut temp_gen = CodeGenerator::new();
+                        temp_gen.indent_level = self.indent_level + 1;
+                        for s in stmts {
+                            match s {
+                                Stmt::Declaration(Decl::VarDecl { name, value, assign_op, .. }) => {
+                                    let v = temp_gen.visit_expression(value);
+                                    if v != "__default__" {
+                                        let op = if assign_op.is_empty() { "=" } else { assign_op.as_str() };
+                                        temp_gen.emit(&format!("__obj.{} {} {};", name, op, v));
+                                    }
+                                }
+                                Stmt::ReassignStmt { target, value, op } => {
+                                    let t = temp_gen.visit_expression(target);
+                                    let v = temp_gen.visit_expression(value);
+                                    temp_gen.emit(&format!("__obj.{} {} {};", t, op, v));
+                                }
+                                _ => {
+                                    temp_gen.visit_statement(s);
+                                }
+                            }
+                        }
+                        struct_code.push_str(&temp_gen.output);
+                        struct_code.push_str(&format!("{}return __obj;\n{}())", "    ".repeat(self.indent_level + 1), "    ".repeat(self.indent_level)));
+                        return struct_code;
+                    }
+                }
                 let mut args_code = Vec::new();
                 for arg in args {
                     args_code.push(self.visit_expression(arg));
@@ -141,18 +187,7 @@ impl CodeGenerator {
                 format!("{}::{}", namespace, prop_code)
             }
             Expr::ArrayAllocate { type_node, size, length } => {
-                let cpp_type = match type_node {
-                    BaseType::Int8 => "int8_t",
-                    BaseType::Int16 => "int16_t",
-                    BaseType::Int32 => "int32_t",
-                    BaseType::Int64 => "int64_t",
-                    BaseType::Int128 => "__int128",
-                    BaseType::Float32 => "float",
-                    BaseType::Float64 => "double",
-                    BaseType::Char => "char",
-                    BaseType::Bool => "bool",
-                    _ => "auto",
-                };
+                let cpp_type = type_to_cpp(type_node);
                 if let Some(init) = length {
                     let init_code = self.visit_expression(init);
                     format!("new {}[]{}", cpp_type, init_code)
@@ -162,21 +197,13 @@ impl CodeGenerator {
                 }
             }
             Expr::New { type_node, target } => {
-                let cpp_type = match type_node {
-                    BaseType::Int8 => "int8_t",
-                    BaseType::Int16 => "int16_t",
-                    BaseType::Int32 => "int32_t",
-                    BaseType::Int64 => "int64_t",
-                    BaseType::Int128 => "__int128",
-                    BaseType::Float32 => "float",
-                    BaseType::Float64 => "double",
-                    BaseType::Char => "char",
-                    BaseType::Bool => "bool",
-                    _ => "auto",
-                };
+                let cpp_type = type_to_cpp(type_node);
                 let target_code = self.visit_expression(target);
-                let len = target_code.split(',').count();
-                format!("new {}[{}]{}", cpp_type, len, target_code)
+                if target_code == "__default__" || target_code.is_empty() {
+                    format!("{}()", cpp_type)
+                } else {
+                    format!("{}({})", cpp_type, target_code)
+                }
             }
             _ => "/* unimplemented expr */".to_string(),
         }

@@ -279,6 +279,7 @@ impl CodeGenerator {
                 | Stmt::Declaration(Decl::CustomDecl { .. })
                 | Stmt::Declaration(Decl::EnumDecl { .. })
                 | Stmt::Declaration(Decl::FnDecl { .. })
+                | Stmt::Declaration(Decl::DestructureDecl { .. })
                 | Stmt::Declaration(Decl::VarDecl { .. }) => {
                     self.visit_statement(stmt);
                 }
@@ -318,6 +319,7 @@ impl CodeGenerator {
                         | Stmt::Declaration(Decl::StructDecl { .. })
                         | Stmt::Declaration(Decl::ArrayDecl { .. })
                         | Stmt::Declaration(Decl::VarDecl { .. })
+                        | Stmt::Declaration(Decl::DestructureDecl { .. })
                         | Stmt::Declaration(Decl::BlockDecl { .. })
                         | Stmt::Declaration(Decl::CustomDecl { .. })
                         | Stmt::Declaration(Decl::EnumDecl { .. })

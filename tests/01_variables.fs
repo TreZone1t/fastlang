@@ -24,10 +24,13 @@ fn main() -> int(32) {
     int(32) *ptr;
     ptr = &counter;
     *ptr = counter + 1;
-    //name<int(32)> ptr2 = make_name(); // this is not working yet
+    char names[6] = "hakim"; //the size of the array is 6 then the last char is '\0' 
+    log(names);
+    //name<int(32)> ptr2 = make_name(); // this is now working but i think there is a room for improvement
     name<int(32)> ptr2;
-    //ptr2 = &counter;  // this is not working yet for the same reason i think
-    //log(ptr2);
+    //log(*ptr2);
+    ptr2 = &counter;  // this is not working yet for the same reason i think
+    log(*ptr2);
     int a = 10; // you can use int as usual
     float b = 10.0; // you can use float as usual
     log(a);

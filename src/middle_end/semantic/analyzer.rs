@@ -114,7 +114,7 @@ impl SemanticAnalyzer {
     }
     fn is_valid_pointer_rhs(&self, value: &Expr, expr_type: &str) -> bool {
         if let Expr::UnaryOp { operator, .. } = value {
-            if operator == "&" {
+            if operator == "&"  {
                 return true;
             }
         }
@@ -479,21 +479,21 @@ impl SemanticAnalyzer {
             let is_copy = target_type.starts_with("copy");
 
             let inner = if is_modify {
-                target_type.trim_start_matches("modify<name<").trim_end_matches(">>")
+                strip_wrapper(strip_wrapper(target_type, "modify<"), "name<")
             } else if is_copy {
-                target_type.trim_start_matches("copy<name<").trim_end_matches(">>")
+                strip_wrapper(strip_wrapper(target_type, "copy<"), "name<")
             } else {
-                target_type.trim_start_matches("name<").trim_end_matches('>')
+                strip_wrapper(target_type, "name<")
             };
 
             let expr_inner = if expr_type.starts_with("array<") {
-                expr_type.trim_start_matches("array<").trim_end_matches('>')
+                strip_wrapper(expr_type, "array<")
             } else if expr_type.starts_with("modify<name<") {
-                expr_type.trim_start_matches("modify<name<").trim_end_matches(">>")
+                strip_wrapper(strip_wrapper(expr_type, "modify<"), "name<")
             } else if expr_type.starts_with("copy<name<") {
-                expr_type.trim_start_matches("copy<name<").trim_end_matches(">>")
+                strip_wrapper(strip_wrapper(expr_type, "copy<"), "name<")
             } else if expr_type.starts_with("name<") {
-                expr_type.trim_start_matches("name<").trim_end_matches('>')
+                strip_wrapper(expr_type, "name<")
             } else {
                 expr_type
             };
@@ -540,14 +540,14 @@ impl SemanticAnalyzer {
         }
 
         if target_type.starts_with("pointer<") {
-            let inner = target_type.trim_start_matches("pointer<").trim_end_matches('>');
+            let inner = strip_wrapper(target_type, "pointer<");
 
             let expr_inner = if expr_type.starts_with("array<") {
-                expr_type.trim_start_matches("array<").trim_end_matches('>')
+                strip_wrapper(expr_type, "array<")
             } else if expr_type.starts_with("pointer<") {
-                expr_type.trim_start_matches("pointer<").trim_end_matches('>')
+                strip_wrapper(expr_type, "pointer<")
             } else if expr_type.starts_with("name<") {
-                expr_type.trim_start_matches("name<").trim_end_matches('>')
+                strip_wrapper(expr_type, "name<")
             } else {
                 expr_type
             };
@@ -602,6 +602,12 @@ impl SemanticAnalyzer {
                 self.analyze_var_decl(visibility, editability, type_node, name, value, assign_op)?;
             }
 
+            Decl::DestructureDecl { visibility, editability, type_node, assignments, assign_op, .. } => {
+                for (name, val) in assignments {
+                    self.analyze_var_decl(visibility, editability, type_node, name, val, assign_op)?;
+                }
+            }
+
             Decl::ArrayDecl { visibility, editability, type_node, name, length, value, .. } => {
                 let expr_type = self.visit_expression(value)?;
                 self.visit_expression(length)?;
@@ -617,7 +623,7 @@ impl SemanticAnalyzer {
                     expr_type != "unknown" &&
                     !self.types_are_compatible(&declared_type, &expr_type) &&
                     !self.types_are_compatible(&declared_type, &array_inner) &&
-                    !(declared_type == "char" && (expr_type == "string" || expr_type == "str"))
+                    !(declared_type.contains("char") && (expr_type == "string" || expr_type == "str"))
                 {
                     return Err(
                         format!(
@@ -756,7 +762,11 @@ impl SemanticAnalyzer {
                     },
                     dependencies: vec![],
                 };
-                self.current_env.borrow_mut().define(name.clone(), fn_info)?;
+                if self.in_custom_scope {
+                    self.current_env.borrow_mut().define_or_update(name.clone(), fn_info);
+                } else {
+                    self.current_env.borrow_mut().define(name.clone(), fn_info)?;
+                }
 
                 let prev_flags = self.active_flags.clone();
                 let prev_return = self.active_return_type.clone();
@@ -915,7 +925,7 @@ impl SemanticAnalyzer {
                         .unwrap_or_default()
                         .into_iter()
                         .collect();
-                    if !self.is_valid_pointer_rhs(value, &expr_type) {
+                    if !is_modify && !is_copy && !self.is_valid_pointer_rhs(value, &expr_type) {
                         return Err(
                             format!("Semantic Error: Invalid assignment to smart pointer '{}'. Must be a reference (&), 'new' allocation, or another smart pointer.", name)
                         );
@@ -1180,6 +1190,27 @@ impl SemanticAnalyzer {
         if let Some(p_vec) = params {
             bp.params = p_vec.clone();
         }
+        if let Some(pb) = public_block {
+            for d in pb {
+                if let Decl::VarDecl { name: f_name, type_node, .. } = d {
+                    bp.fields.insert(f_name.clone(), type_node.clone());
+                }
+            }
+        }
+        if let Some(pb) = private_block {
+            for d in pb {
+                if let Decl::VarDecl { name: f_name, type_node, .. } = d {
+                    bp.fields.insert(f_name.clone(), type_node.clone());
+                }
+            }
+        }
+        if let Some(pb) = static_block {
+            for d in pb {
+                if let Decl::VarDecl { name: f_name, type_node, .. } = d {
+                    bp.fields.insert(f_name.clone(), type_node.clone());
+                }
+            }
+        }
         // Register handle method signatures
         if let Some(hb) = handle_block {
             for d in hb {
@@ -1202,6 +1233,8 @@ impl SemanticAnalyzer {
         self.in_statement_scope = false;
         let prev_return = self.active_return_type.clone();
         let prev_flags = self.active_flags.clone();
+        let prev_type_name = self.current_type_name.clone();
+        self.current_type_name = Some(name.to_string());
 
         self.active_return_type = None;
 
@@ -1244,25 +1277,36 @@ impl SemanticAnalyzer {
                         editability: Editability::Editable,
                         is_array: false,
                     },
-                    visibility: Visibility::Public,
+                    visibility: Visibility::Private,
                     dependencies: vec![],
                 };
                 self.current_env.borrow_mut().define(p.name.clone(), param_info)?;
             }
         }
 
-        if let Some(stmts) = statements {
-            for s in stmts {
-                self.visit_statement(s)?;
+        if let Some(pb) = private_block {
+            for d in pb {
+                self.visit_declaration(d)?;
+            }
+        }
+        if let Some(pb) = public_block {
+            for d in pb {
+                self.visit_declaration(d)?;
+            }
+        }
+        if let Some(sb) = static_block {
+            for d in sb {
+                self.visit_declaration(d)?;
             }
         }
 
-        for block in [private_block, public_block, static_block] {
-            if let Some(decls) = block {
-                for d in decls {
-                    self.visit_declaration(d)?;
-                }
+        if let Some(stmts) = statements {
+            let prev = self.in_statement_scope;
+            self.in_statement_scope = true;
+            for s in stmts {
+                self.visit_statement(s)?;
             }
+            self.in_statement_scope = prev;
         }
 
         if let Some(constructors) = constructor {
@@ -1323,6 +1367,7 @@ impl SemanticAnalyzer {
         self.active_return_type = prev_return;
         self.in_statement_scope = prev_in_stmt;
         self.in_custom_scope = prev_in_custom;
+        self.current_type_name = prev_type_name;
 
         Ok(())
     }
@@ -1346,6 +1391,11 @@ impl SemanticAnalyzer {
         for h in handles {
             bp.handles.insert(*h);
         }
+        for d in private_block.iter().chain(public_block).chain(static_block) {
+            if let Decl::VarDecl { name: f_name, type_node, .. } = d {
+                bp.fields.insert(f_name.clone(), type_node.clone());
+            }
+        }
         for d in handle_block {
             if let Decl::FnDecl { name: fn_name, params, return_type, .. } = d {
                 bp.methods.insert(fn_name.clone(), FnSignature {
@@ -1363,6 +1413,8 @@ impl SemanticAnalyzer {
         self.enter_scope();
         let prev = self.in_custom_scope;
         self.in_custom_scope = true;
+        let prev_type_name = self.current_type_name.clone();
+        self.current_type_name = Some(name.to_string());
 
         for d in private_block.iter().chain(public_block).chain(static_block).chain(handle_block) {
             self.visit_declaration(d)?;
@@ -1396,6 +1448,7 @@ impl SemanticAnalyzer {
 
         self.leave_scope();
         self.in_custom_scope = prev;
+        self.current_type_name = prev_type_name;
         Ok(())
     }
 
@@ -1571,8 +1624,10 @@ impl SemanticAnalyzer {
             Expr::PostfixUpdate { left, .. } => self.visit_expression(left),
             // TODO: add check if the type of the object contains a index_access handle if it not a name or array or pointer
             // TODO: add modify and copy
-            Expr::IndexAccess { object, index } => {
-                self.visit_expression(index)?;
+            Expr::IndexAccess { object, indices } => {
+                for idx in indices {
+                    self.visit_expression(idx)?; //todo: check if the index is the same type as the parameter of the index_access handle
+                }
 
                 let obj_type = self.visit_expression(object)?;
 
@@ -1614,10 +1669,23 @@ impl SemanticAnalyzer {
                 }
 
                 if current_type != obj_type {
+                    if indices.len() > 1 {
+                        return Err(
+                            format!("Semantic Error: Multi-index access [a, b] is only supported for custom types with an 'index_access' handle. Built-in arrays must use [a][b].")
+                        );
+                    }
                     Ok(current_type)
                 } else if current_type != "unknown" {
-                    if let Some(meta) = self.global_metadata.get(&obj_type) {
-                        if meta.handles.contains(&HandleMethods::IndexAccess) {
+                    let bp_name = extract_blueprint_name_from_type(&obj_type).unwrap_or_else(|| obj_type.clone());
+                    if let Some(bp) = self.current_env.borrow().lookup_blueprint(&bp_name) {
+                        if bp.handles.contains(&HandleMethods::IndexAccess) || bp.methods.contains_key("index_access") {
+                            if let Some(ret_sig) = bp.methods.get("index_access") {
+                                return Ok(ret_sig.return_type.as_str());
+                            }
+                        }
+                    }
+                    if let Some(meta) = self.global_metadata.get(&bp_name) {
+                        if meta.handles.contains(&HandleMethods::IndexAccess) || meta.methods.contains_key("index_access") {
                             if let Some(ret_ty) = meta.methods.get("index_access") {
                                 return Ok(ret_ty.return_type.as_str());
                             }
@@ -1635,7 +1703,8 @@ impl SemanticAnalyzer {
                 let obj_type = self.visit_expression(object)?;
 
                 // Try to find in blueprint
-                if let Some(bp_name) = extract_blueprint_name_from_type(&obj_type) {
+                let bp_name_opt = extract_blueprint_name_from_type(&obj_type).or_else(|| Some(obj_type.clone()));
+                if let Some(bp_name) = bp_name_opt {
                     if let Some(bp) = self.current_env.borrow().lookup_blueprint(&bp_name) {
                         if let Some(field_type) = bp.fields.get(property) {
                             return Ok(field_type.as_str());
@@ -1709,6 +1778,19 @@ impl SemanticAnalyzer {
         if expected.starts_with("float") && actual.starts_with("float") {
             return true;
         }
+        // array family
+        if expected.starts_with("array<") && actual.starts_with("array<") {
+            let exp_inner = expected.trim_start_matches("array<").trim_end_matches('>');
+            let act_inner = actual.trim_start_matches("array<").trim_end_matches('>');
+            let exp_base = exp_inner.split('[').next().unwrap_or(exp_inner);
+            let act_base = act_inner.split('[').next().unwrap_or(act_inner);
+            return self.types_are_compatible(exp_base, act_base);
+        }
+        if expected.starts_with("array<") {
+            let exp_inner = expected.trim_start_matches("array<").trim_end_matches('>');
+            let exp_base = exp_inner.split('[').next().unwrap_or(exp_inner);
+            return self.types_are_compatible(exp_base, actual);
+        }
         // string
         if
             (expected == "string" || expected == "custom<string>") &&
@@ -1718,10 +1800,13 @@ impl SemanticAnalyzer {
         }
         if expected == "str" && (actual == "string" || actual == "str") {
             return true;
+        }  // todo: make a custom type for generics elements 
+        if expected == "custom<T>" || expected == "T" || actual == "custom<T>" || actual == "T" {
+            return true;
         }
         // custom<X> compatible with X
         if expected.starts_with("custom<") {
-            let inner = expected.trim_start_matches("custom<").trim_end_matches('>');
+            let inner = strip_wrapper(expected, "custom<");
             if inner == actual {
                 return true;
             }
@@ -1742,23 +1827,23 @@ impl SemanticAnalyzer {
             return true;
         }
         if expected.starts_with("name<") {
-            let inner = expected.trim_start_matches("name<").trim_end_matches('>');
+            let inner = strip_wrapper(expected, "name<");
             if inner == "unknown" {
                 return true;
             }
             let actual_inner = if actual.starts_with("array<") {
-                actual.trim_start_matches("array<").trim_end_matches('>')
+                strip_wrapper(actual, "array<")
             } else if actual.starts_with("name<") {
-                actual.trim_start_matches("name<").trim_end_matches('>')
+                strip_wrapper(actual, "name<")
             } else if actual.starts_with("pointer<") {
-                actual.trim_start_matches("pointer<").trim_end_matches('>')
+                strip_wrapper(actual, "pointer<")
             } else {
                 actual
             };
             return self.types_are_compatible(inner, actual_inner);
         }
         if actual.starts_with("name<") {
-            let actual_inner = actual.trim_start_matches("name<").trim_end_matches('>');
+            let actual_inner = strip_wrapper(actual, "name<");
             return self.types_are_compatible(expected, actual_inner);
         }
 
@@ -1772,23 +1857,23 @@ impl SemanticAnalyzer {
             return true;
         }
         if expected.starts_with("pointer<") {
-            let inner = expected.trim_start_matches("pointer<").trim_end_matches('>');
+            let inner = strip_wrapper(expected, "pointer<");
             if inner == "unknown" {
                 return true;
             }
             let actual_inner = if actual.starts_with("array<") {
-                actual.trim_start_matches("array<").trim_end_matches('>')
+                strip_wrapper(actual, "array<")
             } else if actual.starts_with("pointer<") {
-                actual.trim_start_matches("pointer<").trim_end_matches('>')
+                strip_wrapper(actual, "pointer<")
             } else if actual.starts_with("name<") {
-                actual.trim_start_matches("name<").trim_end_matches('>')
+                strip_wrapper(actual, "name<")
             } else {
                 actual
             };
             return self.types_are_compatible(inner, actual_inner);
         }
         if actual.starts_with("pointer<") {
-            let actual_inner = actual.trim_start_matches("pointer<").trim_end_matches('>');
+            let actual_inner = strip_wrapper(actual, "pointer<");
             return self.types_are_compatible(expected, actual_inner);
         }
 
@@ -1826,4 +1911,14 @@ impl SemanticAnalyzer {
             dependencies: vec![],
         }
     }
+}
+
+fn strip_wrapper<'a>(s: &'a str, prefix: &str) -> &'a str {
+    if let Some(rest) = s.strip_prefix(prefix) {
+        if let Some(inner) = rest.strip_suffix('>') {
+            return inner;
+        }
+        return rest;
+    }
+    s
 }

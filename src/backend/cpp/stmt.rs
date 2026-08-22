@@ -15,7 +15,7 @@ pub(crate) fn type_to_cpp(t: &BaseType) -> String {
         BaseType::Void => "void".to_string(),
         BaseType::Custom { name, generics, .. } | BaseType::Class { name, generics, .. } => {
             if generics.is_empty() {
-                "".to_string()
+                name.clone()
             } else {
                 let gen_strs: Vec<String> = generics.iter().map(type_to_cpp).collect();
                 format!("{}<{}>", name, gen_strs.join(", "))
@@ -316,7 +316,7 @@ impl CodeGenerator {
                 self.indent_level -= 1;
                 self.emit("}");
             }
-            Stmt::EnableStmt(_) | Stmt::DisableStmt(_) => {}
+            Stmt::EnableStmt(_) => {} //todo : V2 we will remove it as will
             _ => {
                 self.emit(
                     &format!("// TODO: unimplemented statement {:?} or something gone wrong", stmt)
@@ -360,6 +360,9 @@ impl CodeGenerator {
                 self.emit("}");
             }
             Decl::VarDecl { name, type_node, value, editability, assign_op, place, .. } => {
+                if matches!(type_node, BaseType::Custom { .. } | BaseType::Class { .. }) {
+                    self.custom_scopes.insert(name.clone());
+                }
                 let val_code = self.visit_expression(value);
                 let is_param = val_code == "__param__";
                 let cpp_type = type_to_cpp(type_node);
@@ -387,6 +390,41 @@ impl CodeGenerator {
                     );
                 }
             }
+            Decl::DestructureDecl {
+                visibility: _,
+                editability,
+                type_node,
+                assignments,
+                assign_op,
+                ..
+            } => {
+                let cpp_type = type_to_cpp(type_node);
+                let is_const = editability == &Editability::NotEditable;
+                let const_prefix = if is_const { "const " } else { "" };
+
+                for (name, val) in assignments {
+                    let val_code = self.visit_expression(val);
+                    if val_code == "__default__" {
+                        self.emit(&format!("{}{} {};", const_prefix, cpp_type, name));
+                    } else if assign_op == "->" {
+                        self.emit(&format!("{}{} {};", const_prefix, cpp_type, name));
+                        self.emit(&format!("{}.arrow_assign({});", name, val_code));
+                    } else if assign_op == "=" {
+                        self.emit(&format!("{}{} {} = {};", const_prefix, cpp_type, name, val_code));
+                    } else {
+                        self.emit(
+                            &format!(
+                                "{}{} {} {} {};",
+                                const_prefix,
+                                cpp_type,
+                                name,
+                                assign_op,
+                                val_code
+                            )
+                        );
+                    }
+                }
+            }
             Decl::ArrayDecl {
                 visibility: _,
                 editability,
@@ -403,8 +441,14 @@ impl CodeGenerator {
                 let is_const = editability == &Editability::NotEditable;
                 let const_prefix = if is_const { "const " } else { "" };
 
+                let len_str = if len_code == "0" && val_code != "__default__" {
+                    "".to_string()
+                } else {
+                    len_code
+                };
+
                 if val_code == "__param__" {
-                    self.emit(&format!("{}{} {}[{}];", const_prefix, cpp_type, name, len_code));
+                    self.emit(&format!("{}{} {}[{}];", const_prefix, cpp_type, name, len_str));
                 } else {
                     self.emit(
                         &format!(
@@ -412,7 +456,7 @@ impl CodeGenerator {
                             const_prefix,
                             cpp_type,
                             name,
-                            len_code,
+                            len_str,
                             val_code
                         )
                     );

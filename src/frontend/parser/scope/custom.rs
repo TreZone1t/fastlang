@@ -298,6 +298,15 @@ impl Parser {
                                 });
                                 meta.params.push(Param { name, type_node });
                             }
+                            Ok(Decl::DestructureDecl { assignments, type_node, .. }) => {
+                                for (name, _) in assignments {
+                                    params.push(Param {
+                                        name: name.clone(),
+                                        type_node: type_node.clone(),
+                                    });
+                                    meta.params.push(Param { name, type_node: type_node.clone() });
+                                }
+                            }
                             Ok(_) => {
                                 return Err(
                                     "Syntax Error: Expected variable declaration".to_string()
@@ -485,6 +494,26 @@ impl Parser {
                 scope: ScopeType::Custom,
                 is_array: false,
             });
+        }
+        for decl in public_block.iter().chain(private_block.iter()).chain(static_block.iter()) {
+            match decl {
+                Decl::VarDecl { name, type_node, .. } => {
+                    meta.fields.insert(name.clone(), type_node.clone());
+                }
+                Decl::DestructureDecl { assignments, type_node, .. } => {
+                    for (name, _) in assignments {
+                        meta.fields.insert(name.clone(), type_node.clone());
+                    }
+                }
+                Decl::FnDecl { name, params, return_type, .. } => {
+                    meta.methods.insert(name.clone(), FnType {
+                        name: name.clone(),
+                        params: params.clone(),
+                        return_type: return_type.clone(),
+                    });
+                }
+                _ => {}
+            }
         }
         for hdl in &handle_block {
             if let Decl::FnDecl { name, params, return_type, .. } = hdl {

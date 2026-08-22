@@ -93,6 +93,8 @@ fn main() {
     let mut backend = "cpp".to_string();
     let mut emit_ir = false;
     let mut use_aot = false;
+    let mut emit_cpp = false;
+    let mut custom_output: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -114,6 +116,12 @@ fn main() {
         } else if args[i] == "--print-ir" || args[i] == "--emit-ir" {
             emit_ir = true;
             i += 1;
+        } else if args[i] == "--emit-cpp" || args[i] == "--cpp-only" {
+            emit_cpp = true;
+            i += 1;
+        } else if (args[i] == "-o" || args[i] == "--output") && i + 1 < args.len() {
+            custom_output = Some(args[i + 1].clone());
+            i += 2;
         } else if args[i] == "--aot" {
             use_aot = true;
             i += 1;
@@ -262,18 +270,43 @@ fn main() {
     let main_cpp = main_codegen.generate(&program.main_ast, false, true);
     final_cpp.push_str(&main_cpp);
 
-    let source_path = std::path::Path::new(&path);
-    let parent_dir = source_path.parent().unwrap_or(std::path::Path::new(""));
-    let build_dir = parent_dir.join("build");
-    if !build_dir.exists() {
-        std::fs::create_dir_all(&build_dir).unwrap();
+    let (out_path, exe_path) = if let Some(ref out) = custom_output {
+        if out.ends_with(".cpp") {
+            let exe = out.trim_end_matches(".cpp").to_string() + if cfg!(windows) { ".exe" } else { "" };
+            (out.clone(), exe)
+        } else if out.ends_with(".exe") || out.ends_with(".out") {
+            let cpp = out.to_string() + ".cpp";
+            (cpp, out.clone())
+        } else {
+            let out_p = std::path::Path::new(out);
+            if out_p.is_dir() || !out.contains('.') {
+                let _ = std::fs::create_dir_all(out_p);
+                (out_p.join("output.cpp").to_string_lossy().into_owned(), out_p.join("app.exe").to_string_lossy().into_owned())
+            } else {
+                (out.clone() + ".cpp", out.clone())
+            }
+        }
+    } else {
+        let source_path = std::path::Path::new(&path);
+        let parent_dir = source_path.parent().unwrap_or(std::path::Path::new(""));
+        let build_dir = parent_dir.join("build");
+        if !build_dir.exists() {
+            std::fs::create_dir_all(&build_dir).unwrap();
+        }
+        (
+            build_dir.join("output.cpp").to_string_lossy().into_owned(),
+            build_dir.join("app.exe").to_string_lossy().into_owned(),
+        )
+    };
+
+    fs::write(&out_path, &final_cpp).expect("Failed to write output.cpp");
+    println!("Successfully generated C++ code to {}", out_path);
+
+    if emit_cpp {
+        println!("C++ emission complete (--emit-cpp specified, skipped g++ compilation).");
+        return;
     }
 
-    let out_path = build_dir.join("output.cpp").to_string_lossy().into_owned();
-    let exe_path = build_dir.join("app.exe").to_string_lossy().into_owned();
-    fs::write(&out_path, &final_cpp).expect("Failed to write output.cpp");
-
-    println!("Successfully generated C++ code to {}", out_path);
     println!("Compiling to {}...", exe_path);
 
     let status = std::process::Command::new("g++")

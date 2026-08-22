@@ -1,9 +1,6 @@
 custom NoIndex -> {
     enable [ handle];
 handle -> {
-    fn index_access(index : int(32)) -> int(32) {
-        return 0;
-    }
 }
 }
 fn main() -> int(32) {
