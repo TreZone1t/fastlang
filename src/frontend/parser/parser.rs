@@ -38,11 +38,6 @@ impl Parser {
         // Should not happen in practice since is_at_end() gates the main loops.
         self.tokens.get(self.current).unwrap_or(&EOF_TOKEN)
     }
-    pub(crate) fn peek_at(&self, offset: usize) -> &Token {
-        // NOTE: EOF placeholder for out-of-range access carries dummy position 0,0.
-        // Should not happen in practice since is_at_end() gates the main loops.
-        self.tokens.get(self.current + offset).unwrap_or(&EOF_TOKEN)
-    }
     pub(crate) fn previous(&self, n: Option<usize>) -> &Token {
         let n = n.unwrap_or(1);
         &self.tokens[self.current - n]

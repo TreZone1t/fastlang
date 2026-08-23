@@ -1,4 +1,4 @@
-use crate::{ backend::cpp::stmt, frontend::parser::ast::* };
+use crate::frontend::parser::ast::*;
 
 pub struct CodeGenerator {
     pub(crate) output: String,
@@ -28,6 +28,17 @@ impl CodeGenerator {
                         "mul" => Some("*"),
                         "div" => Some("/"),
                         "mod" => Some("%"),
+                        "equal" | "partial_equal" => Some("=="),
+                        "not_equal" => Some("!="),
+                        "greater_than" => Some(">"),
+                        "less_than" => Some("<"),
+                        "greater_than_equal" => Some(">="),
+                        "less_than_equal" => Some("<="),
+                        "index_add" => Some("+="),
+                        "index_sub" => Some("-="),
+                        "index_mul" => Some("*="),
+                        "index_div" => Some("/="),
+                        "index_mod" => Some("%="),
                         _ => None,
                     };
 
@@ -80,13 +91,10 @@ impl CodeGenerator {
 
     pub(crate) fn emit_headers(&mut self) {
         self.output.push_str("#include <iostream>\n");
-        self.output.push_str("#include <vector>\n");
-        self.output.push_str("#include <memory>\n");
-        self.output.push_str("#include <optional>\n");
-        self.output.push_str("#include <stdexcept>\n\n");
         self.output.push_str("#include <cstdint>\n");
+        self.output.push_str("#include <stdexcept>\n");
         self.output.push_str("#include <type_traits>\n");
-        self.emit("using namespace std;");
+        self.output.push_str("#include <initializer_list>\n\n");
         self.emit("");
         self.emit("std::ostream& operator<<(std::ostream& os, const std::exception& e) {");
         self.emit("    return os << e.what();");
@@ -95,6 +103,25 @@ impl CodeGenerator {
         self.emit("template <typename T> class fastlang_name;");
         self.emit("template <typename T> class fastlang_modify;");
         self.emit("template <typename T> class fastlang_copy;");
+        self.emit("template <typename T> class fastlang_slice;");
+        self.emit("");
+        self.emit("template <typename T>");
+        self.emit("class fastlang_slice {");
+        self.emit("public:");
+        self.emit("    const T* _data = nullptr;");
+        self.emit("    size_t _size = 0;");
+        self.emit("    fastlang_slice() : _data(nullptr), _size(0) {}");
+        self.emit("    fastlang_slice(const T* data, size_t size) : _data(data), _size(size) {}");
+        self.emit("    template <size_t N>");
+        self.emit("    fastlang_slice(const T (&arr)[N]) : _data(arr), _size((N > 0 && std::is_same<T, char>::value && arr[N - 1] == '\\0') ? N - 1 : N) {}");
+        self.emit("    fastlang_slice(std::initializer_list<T> list) : _data(list.begin()), _size(list.size()) {}");
+        self.emit("    const T& operator[](size_t idx) const { return _data[idx]; }");
+        self.emit("    size_t size() const { return _size; }");
+        self.emit("    const T* data() const { return _data; }");
+        self.emit("    const T* begin() const { return _data; }");
+        self.emit("    const T* end() const { return _data + _size; }");
+        self.emit("};");
+        self.emit("");
         self.emit("");
         self.emit("template<typename T, typename = void>");
         self.emit("struct has_drop : std::false_type {};");
@@ -235,11 +262,23 @@ impl CodeGenerator {
         self.emit("        target.arrow_assign(val);");
         self.emit("    }");
         self.emit("    template <typename T, typename U>");
-        self.emit("    auto arrow_assign_impl(T& target, std::initializer_list<U> val, int) -> decltype(target.arrow_assign(std::vector<U>(val)), void()) {");
-        self.emit("        target.arrow_assign(std::vector<U>(val));");
+        self.emit("    auto arrow_assign_impl(T& target, std::initializer_list<U> val, int) -> decltype(target.arrow_assign(fastlang_slice<U>(val)), void()) {");
+        self.emit("        target.arrow_assign(fastlang_slice<U>(val));");
         self.emit("    }");
         self.emit("    template <typename T, typename U>");
         self.emit("    void arrow_assign_impl(T& target, const U& val, ...) {");
+        self.emit("        target = val;");
+        self.emit("    }");
+        self.emit("    template <typename T, typename U>");
+        self.emit("    auto arrow_impl(T& target, const U& val, int) -> decltype(target.arrow(val), void()) {");
+        self.emit("        target.arrow(val);");
+        self.emit("    }");
+        self.emit("    template <typename T, typename U>");
+        self.emit("    auto arrow_impl(T& target, std::initializer_list<U> val, int) -> decltype(target.arrow(fastlang_slice<U>(val)), void()) {");
+        self.emit("        target.arrow(fastlang_slice<U>(val));");
+        self.emit("    }");
+        self.emit("    template <typename T, typename U>");
+        self.emit("    void arrow_impl(T& target, const U& val, ...) {");
         self.emit("        target = val;");
         self.emit("    }");
         self.emit("}");
@@ -250,6 +289,14 @@ impl CodeGenerator {
         self.emit("template <typename T, typename U>");
         self.emit("void fastlang_arrow_assign(T& target, std::initializer_list<U> val) {");
         self.emit("    fastlang_detail::arrow_assign_impl(target, val, 0);");
+        self.emit("}");
+        self.emit("template <typename T, typename U>");
+        self.emit("void fastlang_arrow(T& target, const U& val) {");
+        self.emit("    fastlang_detail::arrow_impl(target, val, 0);");
+        self.emit("}");
+        self.emit("template <typename T, typename U>");
+        self.emit("void fastlang_arrow(T& target, std::initializer_list<U> val) {");
+        self.emit("    fastlang_detail::arrow_impl(target, val, 0);");
         self.emit("}");
         self.emit("");
     }
@@ -278,23 +325,7 @@ impl CodeGenerator {
                     self.indent_level += 1;
 
                     for field in fields {
-                        let type_str = match &field.type_node {
-                            t =>
-                                match t {
-                                    BaseType::Int8 => "int8_t".to_string(),
-                                    BaseType::Int16 => "int16_t".to_string(),
-                                    BaseType::Int32 => "int32_t".to_string(),
-                                    BaseType::Int64 => "int64_t".to_string(),
-                                    BaseType::Float32 => "float".to_string(),
-                                    BaseType::Float64 => "double".to_string(),
-                                    BaseType::Char => "char".to_string(),
-                                    BaseType::Bool => "bool".to_string(),
-                                    BaseType::Array { base_type, .. } => base_type.as_str(),
-                                    BaseType::Pointer(p) => format!("{}*", p.as_str()),
-                                    _ => "auto".to_string(),
-                                }
-                            _ => "auto".to_string(),
-                        };
+                        let type_str = crate::backend::cpp::stmt::type_to_cpp(&field.type_node);
                         self.emit(&format!("{} {};", type_str, field.name));
                     }
 
@@ -328,8 +359,11 @@ impl CodeGenerator {
                     self.visit_statement(stmt);
                 }
                 Stmt::Declaration(Decl::Import { module_path, imports }) => {
-                    let raw_ns = module_path.join("_");
-                    let cpp_namespace = if raw_ns == "std" { "fast_std".to_string() } else { raw_ns };
+                    let cpp_namespace = if module_path.first().map(|s| s.as_str()) == Some("std") {
+                        "fast_std".to_string()
+                    } else {
+                        module_path.join("_")
+                    };
                     if let Some(selected) = imports {
                         for sym in selected {
                             self.emit(&format!("using {}::{};", cpp_namespace, sym));

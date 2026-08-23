@@ -1,7 +1,7 @@
 use crate::middle_end::ir::instruction::*;
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{default_libcall_names, Linkage, Module};
+use cranelift_module::Module;
 use std::collections::HashMap;
 //pub mod aot;
 pub struct CraneliftBackend {
@@ -24,7 +24,7 @@ impl CraneliftBackend {
             .unwrap();
 
         let builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
-        let mut module = JITModule::new(builder);
+        let module = JITModule::new(builder);
         let ctx = module.make_context();
 
         Self {
@@ -70,7 +70,7 @@ impl CraneliftBackend {
             cranelift_frontend::FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
         let mut translator = FunctionTranslator {
             builder,
-            module: &mut self.module,
+            _module: &mut self.module,
             values: HashMap::new(),
             variables: HashMap::new(),
             blocks: HashMap::new(),
@@ -85,7 +85,7 @@ impl CraneliftBackend {
         );
     }
 
-    pub fn finalize(mut self) {
+    pub fn finalize(self) {
         // self.module.finalize_definitions().unwrap();
         println!("CRANELIFT: Module Finalized. Ready for JIT Execution.");
     }
@@ -108,7 +108,7 @@ use cranelift_frontend::{FunctionBuilder, Variable};
 
 struct FunctionTranslator<'a> {
     builder: FunctionBuilder<'a>,
-    module: &'a mut JITModule,
+    _module: &'a mut JITModule,
     values: HashMap<IRValue, Value>,
     variables: HashMap<IRValue, Variable>,
     blocks: HashMap<BlockID, Block>,
@@ -130,7 +130,7 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.seal_block(entry_block); // Seal if it has no predecessors (entry block usually has none)
 
         for (i, (_name, _ty)) in ir_func.params.iter().enumerate() {
-            let val = self.builder.block_params(entry_block)[i];
+            let _val = self.builder.block_params(entry_block)[i];
             // If the parameter is treated as a local variable, we need an alloc for it.
             // But right now we'll just handle basic IR operations.
         }
@@ -185,7 +185,7 @@ impl<'a> FunctionTranslator<'a> {
                 self.builder.ins().return_(&[]);
                 None
             }
-            IROp::Call { func, args } => {
+            IROp::Call { func, args: _ } => {
                 // Ignore Call for a moment since it requires declaring functions in the module first
                 println!("CRANELIFT: Skipping call to {} for now", func);
                 None

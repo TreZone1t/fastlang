@@ -33,7 +33,10 @@ impl ProjectLoader {
 
     pub fn resolve_path(&self, mod_name: &str) -> Option<String> {
         if mod_name.starts_with("std/") {
-            return Some(format!("src/{}.fs", mod_name));
+            let test = format!("src/{}.fs", mod_name);
+            if Path::new(&test).exists() {
+                return Some(test);
+            }
         } else if mod_name == "std" {
             return Some("src/std/std.fs".to_string());
         }
@@ -61,7 +64,7 @@ impl ProjectLoader {
             }) = stmt
             {
                 let mut path_clone = module_path.clone();
-                let mut mod_name = path_clone.join("/");
+                let mod_name = path_clone.join("/");
 
                 if let Some(selected) = imports {
                     let mut found_submodule = false;
@@ -94,7 +97,10 @@ impl ProjectLoader {
 
     fn resolve_path_static(mod_name: &str) -> Option<String> {
         if mod_name.starts_with("std/") {
-            return Some(format!("src/{}.fs", mod_name));
+            let test = format!("src/{}.fs", mod_name);
+            if Path::new(&test).exists() {
+                return Some(test);
+            }
         } else if mod_name == "std" {
             return Some("src/std/std.fs".to_string());
         }
@@ -227,7 +233,7 @@ impl ProjectLoader {
             Err(e) => return Err(e),
         };
 
-        let mut deps = Self::collect_deps_from_ast(&main_ast);
+        let deps = Self::collect_deps_from_ast(&main_ast);
 
         let mut loaded_modules = Vec::new();
         let mut loaded_names = HashSet::new();

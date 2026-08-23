@@ -30,8 +30,8 @@ custom MathScope -> {
         fn index_access(index: int(32)) -> int(32) {
             return this.data + index;
         }
-        fn display() -> string {
-            return to_string(this.data);
+        fn display() -> int(32) {
+            return this.data;
         }
     }
 }

@@ -426,7 +426,7 @@ impl Parser {
                 // @label -> { ... }
                 //====================================================================
                 // todo : improve the settings management to insure that the label is only used once
-                if let TokenKind::LabelName(name) = t.clone() {
+                if let TokenKind::LabelName(_name) = t.clone() {
                     let label_block = self.parse_label_decl(ScopeType::Custom)?;
                     label_blocks.push(label_block);
                     continue;

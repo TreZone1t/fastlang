@@ -70,13 +70,17 @@ export custom list<T> -> {
           this.push(arr[i]);
         }
       }
-      fn size() -> int(32) {
-        return this.length + 1; // +1 for the head
-      }
+
     }
     handle -> {
+      fn arrow(arr: T[]) -> void {
+        this.extend_from_array(arr);
+      }
       fn arrow_assign(arr: T[]) -> void {
         this.extend_from_array(arr);
+      }
+      fn size() -> int(32) {
+        return this.length ; 
       }
     }
 

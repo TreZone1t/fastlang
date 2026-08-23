@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fmt::format;
 
 use crate::frontend::lexer::token::TokenKind;
 use crate::frontend::parser::ast::*;
@@ -16,7 +15,7 @@ impl Parser {
         let mut private_block_ast: Vec<Decl> = Vec::new();
         let mut static_block_ast: Vec<Decl> = Vec::new();
         self.advance(); // consume 'struct'
-        let mut name = self.get_identifier("Expected struct name")?;
+        let name = self.get_identifier("Expected struct name")?;
 
         let mut meta = TypeMetadata {
             name: name.clone(), //[*]

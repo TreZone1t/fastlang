@@ -598,13 +598,30 @@ impl SemanticAnalyzer {
     // ----------------------------------------------------------
     fn visit_declaration(&mut self, decl: &Decl) -> Result<(), String> {
         match decl {
-            Decl::VarDecl { visibility, editability, type_node, place, name, value, assign_op } => {
+            Decl::VarDecl { visibility, editability, type_node, place: _, name, value, assign_op } => {
                 self.analyze_var_decl(visibility, editability, type_node, name, value, assign_op)?;
             }
 
             Decl::DestructureDecl { visibility, editability, type_node, assignments, assign_op, .. } => {
                 for (name, val) in assignments {
                     self.analyze_var_decl(visibility, editability, type_node, name, val, assign_op)?;
+                }
+            }
+
+            Decl::ObjectDestructureDecl { visibility, editability, fields, rhs, .. } => {
+                let _rhs_type = self.visit_expression(rhs)?;
+                for (type_node, name) in fields {
+                    let info = SymbolInfo {
+                        name: name.clone(),
+                        kind: SymbolKind::Variable {
+                            type_node: type_node.clone(),
+                            editability: editability.clone(),
+                            is_array: false,
+                        },
+                        visibility: visibility.clone(),
+                        dependencies: vec![],
+                    };
+                    self.current_env.borrow_mut().define(name.clone(), info)?;
                 }
             }
 
@@ -1029,9 +1046,10 @@ impl SemanticAnalyzer {
                         );
                     } else {
                         // operator overloading via handle
-                        match resolve_handle_for_op(&self.current_env, &bp_name, assign_op) {
+                        let effective_op = if assign_op == "->" { "arrow_assign" } else { assign_op };
+                        match resolve_handle_for_op(&self.current_env, &bp_name, effective_op) {
                             HandleLookupResult::Found(bp) => {
-                                let handle = op_to_handle(assign_op);
+                                let handle = op_to_handle(effective_op);
                                 if !bp.handle_accepts_type(handle, &expr_type) {
                                     return Err(
                                         format!(
@@ -1070,9 +1088,10 @@ impl SemanticAnalyzer {
                 name_key if self.current_env.borrow().lookup_blueprint(name_key).is_some() => {
                     // It is a known blueprint type used without "custom<>" prefix
                     if assign_op != "=" {
-                        match resolve_handle_for_op(&self.current_env, name_key, assign_op) {
+                        let effective_op = if assign_op == "->" { "arrow_assign" } else { assign_op };
+                        match resolve_handle_for_op(&self.current_env, name_key, effective_op) {
                             HandleLookupResult::Found(bp) => {
-                                let handle = op_to_handle(assign_op);
+                                let handle = op_to_handle(effective_op);
                                 if !bp.handle_accepts_type(handle, &expr_type) {
                                     return Err(
                                         format!(
@@ -1490,11 +1509,24 @@ impl SemanticAnalyzer {
             }
 
             Expr::ObjectLiteral(stmts) => {
+                let prev_in_struct = self.in_struct;
+                self.in_struct = true;
                 self.enter_scope();
                 for s in stmts {
-                    self.visit_statement(s)?;
+                    match s {
+                        Stmt::ReassignStmt { value, .. } => {
+                            self.visit_expression(value)?;
+                        }
+                        Stmt::Declaration(Decl::VarDecl { value, .. }) => {
+                            self.visit_expression(value)?;
+                        }
+                        _ => {
+                            self.visit_statement(s)?;
+                        }
+                    }
                 }
                 self.leave_scope();
+                self.in_struct = prev_in_struct;
                 Ok("object".to_string())
             }
 

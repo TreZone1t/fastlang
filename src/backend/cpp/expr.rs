@@ -55,7 +55,7 @@ impl CodeGenerator {
                 let l = self.visit_expression(left);
                 let r = self.visit_expression(right);
                 if operator == "->" {
-                    format!("([&]() {{ fastlang_arrow_assign({}, {}); return {}; }}())", l, r, l)
+                    format!("([&]() {{ fastlang_arrow({}, {}); return {}; }}())", l, r, l)
                 } else {
                     format!("({} {} {})", l, operator, r)
                 }
@@ -155,7 +155,7 @@ impl CodeGenerator {
                             }
                         }
                         struct_code.push_str(&temp_gen.output);
-                        struct_code.push_str(&format!("{}return __obj;\n{}())", "    ".repeat(self.indent_level + 1), "    ".repeat(self.indent_level)));
+                        struct_code.push_str(&format!("{}return __obj;\n{}}}())", "    ".repeat(self.indent_level + 1), "    ".repeat(self.indent_level)));
                         return struct_code;
                     }
                 }

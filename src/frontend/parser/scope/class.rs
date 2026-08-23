@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use cranelift_codegen::isa::x64::args::CC::S;
 
 use crate::frontend::lexer::token::TokenKind;
 use crate::frontend::parser::ast::*;

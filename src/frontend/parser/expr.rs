@@ -1,25 +1,9 @@
-use std::fs::metadata;
 
 use crate::frontend::lexer::token::TokenKind;
 use crate::frontend::parser::ast::*;
 use crate::frontend::parser::parser::Parser;
+
 impl Parser {
-    pub(crate) fn is_type_token(&self, kind: &TokenKind) -> bool {
-        match kind {
-            // Primitives — always valid as types
-            | TokenKind::TypeInt
-            | TokenKind::TypeFloat
-            | TokenKind::TypeBool
-            | TokenKind::TypeChar
-            | TokenKind::TypeType
-            | TokenKind::TypeData
-            | TokenKind::TypeVoid => true,
-            // `scope` is the general type for any scope value
-            TokenKind::Scope | TokenKind::TypeName => true,
-            // Custom keywords registered dynamically via `keyword -> "...";` in scope bodies
-            t => matches!(t, TokenKind::Identifier(n) if self.metadata.contains_key(n) || true), // todo: remove true
-        }
-    }
     pub(crate) fn parse_generic_list(
         &mut self,
         generics: &mut Vec<BaseType>
@@ -600,15 +584,15 @@ impl Parser {
             TokenKind::Dot => {
                 self.advance();
 
-                let mut prop = String::new();
-                if let TokenKind::Identifier(name) = &self.peek().kind.clone() {
-                    prop = name.to_string();
+                let prop = if let TokenKind::Identifier(name) = &self.peek().kind.clone() {
+                    let p = name.to_string();
                     self.advance();
+                    p
                 } else {
                     let kw_name = self.peek().kind.clone().as_str().to_string();
-                    prop = kw_name.to_string();
                     self.advance();
-                }
+                    kw_name
+                };
                 Ok(Expr::PropertyAccess {
                     object: Box::new(lhs),
                     property: prop,

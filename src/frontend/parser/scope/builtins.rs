@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 
 use crate::frontend::lexer::token::TokenKind;
 use crate::frontend::parser::ast::*;
@@ -8,8 +7,8 @@ impl Parser {
     pub(crate) fn parse_fn_decl(&mut self) -> Result<Decl, String> {
         let mut settings: Vec<Setting> = Vec::new();
         //todo: handle methods for future updates
-        let mut handles: Vec<HandleMethods> = Vec::new();
-        let mut handle_block: Vec<Stmt> = Vec::new();
+        let _handles: Vec<HandleMethods> = Vec::new();
+        let _handle_block: Vec<Stmt> = Vec::new();
 
         let mut statement_block: Vec<Stmt> = Vec::new();
         let mut params: Vec<Param> = Vec::new();
@@ -78,35 +77,6 @@ impl Parser {
             params,
             return_type,
             body: statement_block,
-        })
-    }
-
-    pub(crate) fn parse_switch(&mut self, name: String) -> Result<Stmt, String> {
-        Err(format!("Switch scope '{}' is not implemented yet", name))
-    }
-    pub(crate) fn parse_block_decl(&mut self) -> Result<Decl, String> {
-        // block have statements only
-        let mut statements: Vec<Stmt> = Vec::new();
-        self.advance(); // consume 'block'
-        let name = self.get_identifier("Expected block name")?;
-        self.consume(TokenKind::Arrow, "Expected '->' to open block body")?;
-        self.consume(TokenKind::LBrace, "Expected '{' to open block body")?;
-        while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-            match self.parse_statement(ScopeType::Block) {
-                Ok(Some(stmt)) => statements.push(stmt),
-                Ok(None) => {
-                    if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                        self.advance();
-                    }
-                }
-                Err(err) => return Err(err),
-            }
-        }
-        self.consume(TokenKind::RBrace, "Expected '}' to close block body")?;
-        Ok(Decl::BlockDecl {
-            is_exported: false,
-            name,
-            statements,
         })
     }
 }

@@ -17,6 +17,8 @@ pub(crate) fn type_to_cpp(t: &BaseType) -> String {
         BaseType::Custom { name, generics, .. } | BaseType::Class { name, generics, .. } | BaseType::Struct { name, generics, .. } => {
             if name == "error" {
                 "const std::exception&".to_string()
+            } else if name == "str" {
+                "const char*".to_string()
             } else if generics.is_empty() {
                 name.clone()
             } else {
@@ -62,7 +64,7 @@ pub(crate) fn type_to_cpp(t: &BaseType) -> String {
                 }
             }
         }
-        BaseType::Array { base_type, .. } => format!("std::vector<{}>", type_to_cpp(base_type)), // TODO: fix this
+        BaseType::Array { base_type, .. } => format!("fastlang_slice<{}>", type_to_cpp(base_type)),
         BaseType::Unknown => "auto".to_string(),
         _ => t.as_str(),
     }
@@ -83,9 +85,9 @@ impl CodeGenerator {
                 let val_code = self.visit_expression(value);
                 if op == "->" {
                     if val_code.starts_with('{') && val_code.ends_with('}') {
-                        self.emit(&format!("{}.arrow_assign({});", target_code, val_code));
+                        self.emit(&format!("{}.arrow({});", target_code, val_code));
                     } else {
-                        self.emit(&format!("fastlang_arrow_assign({}, {});", target_code, val_code));
+                        self.emit(&format!("fastlang_arrow({}, {});", target_code, val_code));
                     }
                 } else if op == "=" {
                     self.emit(&format!("{} = {};", target_code, val_code));
@@ -377,7 +379,7 @@ impl CodeGenerator {
                 self.indent_level -= 1;
                 self.emit("}");
             }
-            Decl::VarDecl { name, type_node, value, editability, assign_op, place, .. } => {
+            Decl::VarDecl { name, type_node, value, editability, assign_op, place: _, .. } => {
                 if matches!(type_node, BaseType::Custom { .. } | BaseType::Class { .. }) {
                     self.custom_scopes.insert(name.clone());
                 }
@@ -468,6 +470,13 @@ impl CodeGenerator {
                         );
                     }
                 }
+            }
+            Decl::ObjectDestructureDecl { editability, fields, rhs, .. } => {
+                let rhs_code = self.visit_expression(rhs);
+                let is_const = editability == &Editability::NotEditable;
+                let const_prefix = if is_const { "const " } else { "" };
+                let names: Vec<String> = fields.iter().map(|(_, name)| name.clone()).collect();
+                self.emit(&format!("{}auto [{}] = {};", const_prefix, names.join(", "), rhs_code));
             }
             Decl::ArrayDecl {
                 visibility: _,
@@ -617,7 +626,7 @@ impl CodeGenerator {
                 self.emit("};");
             }
             Decl::FnDecl { name, params, return_type, body, is_exported: _ } => {
-                let mut ret_type_str = if name == "main" {
+                let ret_type_str = if name == "main" {
                     "int".to_string()
                 } else {
                     type_to_cpp(return_type)
@@ -654,7 +663,7 @@ impl CodeGenerator {
                 public_block,
                 private_block,
                 flags,
-                labels,
+                labels: _,
                 data,
                 handle_block,
                 label_blocks,
@@ -774,21 +783,10 @@ impl CodeGenerator {
                     self.emit(&format!("bool {} = true;", flag));
                 }
 
-                let mut unified_return_type = "void".to_string();
-                if let Some(handles) = handle_block {
-                    for h in handles {
-                        if let Decl::FnDecl { name, return_type: rt, .. } = h {
-                            if name == "call" || name == "leave" || name == "yield" {
-                                unified_return_type = type_to_cpp(rt);
-                                break;
-                            }
-                        }
-                    }
-                }
 
                 if let Some(handles) = handle_block {
                     for h in handles {
-                        if let Decl::FnDecl { name, params, return_type, body, is_exported } = h {
+                        if let Decl::FnDecl { name, params: _, return_type, body, is_exported: _ } = h {
                             if name == "call" {
                                 let ret_type_str = type_to_cpp(return_type);
                                 self.emit(&format!("{} call() {{", ret_type_str));

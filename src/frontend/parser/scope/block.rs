@@ -76,7 +76,7 @@ impl Parser {
         Ok(())
     }
 
-    pub(crate) fn parse_label_decl(&mut self, scope: ScopeType) -> Result<Decl, String> {
+    pub(crate) fn parse_label_decl(&mut self, _scope: ScopeType) -> Result<Decl, String> {
         let label_name = if let TokenKind::LabelName(name) = self.peek().kind.clone() {
             self.advance();
             name
@@ -112,8 +112,8 @@ impl Parser {
 
     pub(crate) fn parse_field_block(
         &mut self,
-        metadata: &mut TypeMetadata,
-        field_type: Visibility //todo : fix it
+        _metadata: &mut TypeMetadata,
+        _field_type: Visibility //todo : fix it
     ) -> Result<Vec<Decl>, String> {
         self.advance(); // 'public' , 'private' or 'static'
         self.consume(TokenKind::Arrow, "Expected '->' after 'public'")?;
@@ -257,9 +257,7 @@ impl Parser {
         let mut constructor_list = Vec::new();
 
         let mut con_meta: Vec<ConstructorType> = Vec::new();
-        let mut params_size = 0;
         let mut init_num = 0;
-        let mut unique_name = String::new();
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
             if self.peek().kind == TokenKind::Init {
                 self.advance(); // consume 'init'
@@ -276,7 +274,6 @@ impl Parser {
                             name,
                             type_node: type_node,
                         });
-                        params_size += 1;
                         if self.peek().kind == TokenKind::Comma {
                             self.advance();
                         } else {
@@ -324,11 +321,10 @@ impl Parser {
                     params: param.clone(),
                     body,
                 });
-                params_size = 0;
                 init_num += 1;
-                unique_name = format!("__init__{}__{}", init_num, params_size);
+                let unique_name = format!("__init__{}__{}", init_num, param.len());
                 con_meta.push(ConstructorType {
-                    name: unique_name.clone(),
+                    name: unique_name,
                     params: param,
                 });
             } else {
@@ -346,7 +342,7 @@ impl Parser {
         meta.constructor = Some(con_meta);
         return Ok(Some(constructor_list));
     }
-    pub(crate) fn parse_block(&mut self, scope: String) -> Result<Vec<Stmt>, String> {
+    pub(crate) fn parse_block(&mut self, _scope: String) -> Result<Vec<Stmt>, String> {
         let mut stmts: Vec<Stmt> = Vec::new();
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
             match self.parse_statement(ScopeType::Block) {
@@ -362,95 +358,5 @@ impl Parser {
             }
         }
         Ok(stmts)
-    }
-
-    /// يقرأ constructor بالصيغة  `_(params) -> { ... }`
-    /*
-       pub(crate) fn parse_constructor_decl(&mut self) -> Result<ConstructorDecl, String> {
-           self.advance(); // consume '_'
-           self.consume(TokenKind::LParen, "Expected '(' after constructor '_'")?;
-
-           let mut params: Vec<Param> = Vec::new();
-           if self.peek().kind != TokenKind::RParen {
-               loop {
-                   let (name, type_node) = if matches!(self.peek().kind, TokenKind::Identifier(_))
-                       && self.tokens.get(self.current + 1).map(|token| &token.kind)
-                           == Some(&TokenKind::Colon)
-                   {
-                       let name = self.get_identifier("Expected parameter name")?;
-                       self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
-                       (name, self.parse_type()?)
-                   } else {
-                       let type_node = self.parse_type()?;
-                       let name = self.get_identifier("Expected parameter name")?;
-                       (name, type_node)
-                   };
-                   params.push(Param {
-                       name,
-                       type_node: type_node,
-                   });
-                   if self.peek().kind == TokenKind::Comma {
-                       self.advance();
-                   } else {
-                       break;
-                   }
-               }
-           }
-
-           self.consume(TokenKind::RParen, "Expected ')' after constructor params")?;
-           self.consume(
-               TokenKind::Arrow,
-               "Expected '->' after constructor signature '_(...)'",
-           )?;
-           self.consume(TokenKind::LBrace, "Expected '{' for constructor body")?;
-           let body = self.parse_block()?;
-
-           Ok(ConstructorDecl {
-               params,
-               expected_types: vec![],
-               body,
-           })
-       }
-    */
-    pub(crate) fn parse_case_decl(&mut self) -> Result<(), String> {
-        Err("Standalone case declarations are only valid inside switch blocks".to_string())
-        /*
-        self.advance();
-        let option = self.peek().kind.clone();
-        let mut set = Expr::Identifier("void".to_string());
-        if option == TokenKind::Underscore {
-            self.advance();
-            self.consume(TokenKind::FatArrow, "Expected '=>' after default case")?;
-            if (self.peek().kind == TokenKind::LBrace) {
-                self.advance();
-                let mut body = Vec::new();
-                while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                    if self.peek().kind == TokenKind::Identifier(String::new()) {
-                        set = self.parse_expression()?;
-                        if self.peek().kind == TokenKind::SemiColon {
-                            self.advance();
-                        continue;
-                    }
-                    }
-                    match self.parse_statement() {
-                            Ok(Some(stmt)) => body.push(stmt),
-                            Ok(None) => {
-                                if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                                    self.advance();
-                                }
-                            }
-                            Err(err) => return Err(err),
-                        }
-                    if(self.peek().kind == TokenKind::Break){
-                        self.advance();
-                        self.consume(TokenKind::SemiColon, "Expected ';' after break")?;
-                        break;
-                    }
-                    }
-                }
-            }else if option == TokenKind::Identifier(String::new()) {
-
-        }
-        */
     }
 }

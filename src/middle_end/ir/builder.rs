@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use crate::frontend::parser::ast::{Stmt, Decl, Expr, TypeMetadata, BaseType};
+use crate::frontend::parser::ast::{Stmt, Decl, Expr, TypeMetadata};
 use crate::middle_end::ir::instruction::*;
 
 pub struct IRBuilder<'a> {
     module_name: String,
-    metadata: &'a HashMap<String, TypeMetadata>,
+    _metadata: &'a HashMap<String, TypeMetadata>,
     current_func: Option<IRFunction>,
     current_block: BlockID,
     // Maps variable names in the current scope to their allocated Pointer IRValue
@@ -15,7 +15,7 @@ impl<'a> IRBuilder<'a> {
     pub fn new(module_name: String, metadata: &'a HashMap<String, TypeMetadata>) -> Self {
         Self {
             module_name,
-            metadata,
+            _metadata: metadata,
             current_func: None,
             current_block: 0,
             env: vec![HashMap::new()],
@@ -58,7 +58,7 @@ impl<'a> IRBuilder<'a> {
                         ir_params.push((param.name.clone(), ty));
                     }
 
-                    let mut func = IRFunction::new(name.clone(), ir_params.clone(), ir_ret);
+                    let func = IRFunction::new(name.clone(), ir_params.clone(), ir_ret);
                     self.current_func = Some(func);
                     self.current_block = 0;
                     self.push_scope();

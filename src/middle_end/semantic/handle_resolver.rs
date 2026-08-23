@@ -8,7 +8,8 @@ use std::rc::Rc;
 // ─────────────────────────────────────────────────────────────────────────────
 pub fn op_to_handle(op: &str) -> HandleMethods {
     match op {
-        "->"  => HandleMethods::ArrowAssign,
+        "->"  => HandleMethods::Arrow,
+        "arrow_assign" => HandleMethods::ArrowAssign,
         "=>"  => HandleMethods::FatArrow,
         "="   => HandleMethods::Equal,
         "+="  => HandleMethods::IndexAdd,

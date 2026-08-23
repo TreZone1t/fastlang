@@ -1,4 +1,3 @@
-use crate::backend::cpp::stmt;
 use crate::frontend::lexer::token::TokenKind;
 use crate::frontend::parser::ast::*;
 use crate::frontend::parser::parser::Parser;
@@ -27,7 +26,14 @@ impl Parser {
                     _ => unreachable!(),
                 }
             }
-            TokenKind::Const => self.parse_const(scope).map(Stmt::Declaration),
+            TokenKind::Const => {
+                if self.tokens.get(self.current + 1).map(|t| &t.kind) == Some(&TokenKind::LBrace) {
+                    self.advance(); // consume 'const'
+                    self.parse_object_destructure_decl(Editability::NotEditable, scope)
+                } else {
+                    self.parse_const(scope).map(Stmt::Declaration)
+                }
+            }
             | TokenKind::TypeInt
             | TokenKind::TypeFloat
             | TokenKind::TypeChar
@@ -276,6 +282,9 @@ impl Parser {
                 }
                 self.parse_goto_stmt()
             }
+            TokenKind::LBrace if self.is_object_destructure_start() => {
+                self.parse_object_destructure_decl(Editability::Editable, scope)
+            }
             _ => self.parse_expression_stmt(),
         };
 
@@ -478,6 +487,68 @@ impl Parser {
         }
     }
 
+    pub(crate) fn is_object_destructure_start(&self) -> bool {
+        if self.peek().kind != TokenKind::LBrace {
+            return false;
+        }
+        let mut depth = 0;
+        let mut idx = self.current;
+        while idx < self.tokens.len() {
+            match &self.tokens[idx].kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let next = self.tokens.get(idx + 1).map(|t| &t.kind);
+                        return matches!(next, Some(TokenKind::Assign) | Some(TokenKind::Arrow));
+                    }
+                }
+                TokenKind::EOF => break,
+                _ => {}
+            }
+            idx += 1;
+        }
+        false
+    }
+
+    pub(crate) fn parse_object_destructure_decl(
+        &mut self,
+        editability: Editability,
+        scope: ScopeType
+    ) -> Result<Stmt, String> {
+        self.consume(TokenKind::LBrace, "Expected '{' to start object destructure")?;
+        let mut fields = Vec::new();
+        while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+            let type_node = self.parse_type()?;
+            let name = self.get_identifier("Expected variable name in destructure")?;
+            if self.peek().kind == TokenKind::SemiColon {
+                self.advance();
+            }
+            let var_meta = VarMetadata {
+                name: name.clone(),
+                type_node: type_node.clone(),
+                visibility: Visibility::Private,
+                editability: editability.clone(),
+                scope: scope.clone(),
+                is_array: false,
+            };
+            self.var_metadata.insert(name.clone(), var_meta);
+            fields.push((type_node, name));
+        }
+        self.consume(TokenKind::RBrace, "Expected '}' after object destructure fields")?;
+        self.consume(TokenKind::Assign, "Expected '=' after object destructure pattern")?;
+        let rhs = self.parse_expression()?;
+        if self.peek().kind == TokenKind::SemiColon {
+            self.advance();
+        }
+        Ok(Stmt::Declaration(Decl::ObjectDestructureDecl {
+            visibility: Visibility::Private,
+            editability,
+            fields,
+            rhs,
+        }))
+    }
+
     pub(crate) fn parse_for_init_stmt(&mut self) -> Result<Stmt, String> {
         self.consume_optional_let();
         if self.is_var_decl_start() {
@@ -597,7 +668,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_var_decl(&mut self, scope: ScopeType) -> Result<Decl, String> {
-        let mut type_name = self.parse_type()?;
+        let type_name = self.parse_type()?;
         let pattern = self.parse_destructuring_pattern()?;
 
         let mut is_arr = false;
@@ -1324,7 +1395,13 @@ impl Parser {
             } else {
                 op.as_str().to_string()
             };
-            self.consume(TokenKind::SemiColon, "Expected ';' after reassignment")?;
+            if self.peek().kind == TokenKind::Comma {
+                self.advance();
+            } else if self.peek().kind == TokenKind::SemiColon {
+                self.advance();
+            } else if self.peek().kind != TokenKind::RBrace {
+                self.consume(TokenKind::SemiColon, "Expected ';' or ',' after reassignment")?;
+            }
             return Ok(Stmt::ReassignStmt {
                 target: expr,
                 value,

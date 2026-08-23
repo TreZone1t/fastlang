@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::frontend::lexer::token::TokenKind::{ self, For };
+use crate::frontend::lexer::token::TokenKind::{ self };
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Visibility {
@@ -610,12 +610,12 @@ impl Expr {
                 }
                 format!("[{}]", elems_code.join(", "))
             }
-            Expr::ObjectLiteral(stmts) => "unimplemented".to_string(),
+            Expr::ObjectLiteral(_stmts) => "unimplemented".to_string(),
             Expr::Identifier(name) => format!("{}", name),
             Expr::This => "this".to_string(),
             Expr::Super => "super".to_string(), // will be handled in PropertyAccess
             Expr::Global => "global".to_string(),
-            Expr::BinaryOp { left, operator, right } => "unimplemented".to_string(),
+            Expr::BinaryOp { left: _, operator: _, right: _ } => "unimplemented".to_string(),
             Expr::PostfixUpdate { left, operator } => format!("{}{}", left.as_str(), operator),
             Expr::PrefixUpdate { right, operator } => format!("{}{}", operator, right.as_str()),
             Expr::UnaryOp { operator, operand } => format!("{}{}", operator, operand.as_str()),
@@ -649,7 +649,7 @@ impl Expr {
             }
             Expr::NamespaceAccess { namespace, property } =>
                 format!("{}::{}", namespace, property.as_str()),
-            Expr::ArrayAllocate { type_node, size, length } =>
+            Expr::ArrayAllocate { type_node, size, length: _ } =>
                 format!("new {}[{}]", type_node.as_str(), size.as_str()),
             Expr::New { type_node, target } => {
                 format!("new {}[{}]", type_node.as_str(), target.as_str())
@@ -690,6 +690,12 @@ pub enum Decl {
         pattern: Pattern,
         assignments: Vec<(String, Expr)>,
         assign_op: String,
+    },
+    ObjectDestructureDecl {
+        visibility: Visibility,
+        editability: Editability,
+        fields: Vec<(BaseType, String)>,
+        rhs: Expr,
     },
     ArrayDecl {
         visibility: Visibility,
