@@ -134,16 +134,14 @@ impl Parser {
     }
     // <T, U, V, W, X, Y, Z>
     pub(crate) fn parse_generics(&mut self, generics: &mut Vec<BaseType>) -> Result<(), String> {
-        if generics.is_empty() {
-            generics.clear();
-        }
+        generics.clear();
 
         self.advance(); // '<'
         while !self.is_at_end() && self.peek().kind != TokenKind::Greater {
             let token = self.peek().kind.clone();
             if matches!(token, TokenKind::Identifier(_)) {
                 let type_name = self.get_identifier("Unexpected error happen")?;
-                generics.push(BaseType::from_str(&type_name));
+                generics.push(BaseType::GenericParam(type_name));
                 continue;
             } else if token == TokenKind::Comma {
                 self.advance();

@@ -28,6 +28,11 @@ impl Parser {
         //====================================================================
         if self.peek().kind == TokenKind::Less {
             self.parse_generics(&mut generics)?;
+            for g in &generics {
+                if let BaseType::GenericParam(gen_name) = g {
+                    self.current_generics.insert(gen_name.clone());
+                }
+            }
         }
         let mut meta = TypeMetadata {
             name: name.clone(),
@@ -155,6 +160,11 @@ impl Parser {
             }
         }
         self.metadata.insert(name.clone(), meta);
+        for g in &generics {
+            if let BaseType::GenericParam(gen_name) = g {
+                self.current_generics.remove(gen_name);
+            }
+        }
         Ok(Decl::ClassDecl {
             is_exported: false,
             name,

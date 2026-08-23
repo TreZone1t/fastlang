@@ -5,5 +5,6 @@ fn main() -> int(32) {
         sum = sum + item;
         log(item);
     }
-    return sum;
+    log(sum);
+    return 0;
 }

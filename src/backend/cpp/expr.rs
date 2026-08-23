@@ -38,7 +38,7 @@ impl CodeGenerator {
                 struct_code
             }
             Expr::Identifier(name) => {
-                if name == "null" {
+                if name == "null" || name == "void" {
                     "nullptr".to_string()
                 } else if name == "None" {
                     "std::nullopt".to_string()
@@ -54,7 +54,11 @@ impl CodeGenerator {
             Expr::BinaryOp { left, operator, right } => {
                 let l = self.visit_expression(left);
                 let r = self.visit_expression(right);
-                format!("({} {} {})", l, operator, r)
+                if operator == "->" {
+                    format!("([&]() {{ fastlang_arrow_assign({}, {}); return {}; }}())", l, r, l)
+                } else {
+                    format!("({} {} {})", l, operator, r)
+                }
             }
             Expr::PostfixUpdate { left, operator } => {
                 let l = self.visit_expression(left);
@@ -164,22 +168,14 @@ impl CodeGenerator {
             }
             Expr::PropertyAccess { object, property } => {
                 let obj_code = self.visit_expression(object);
-                if
-                    property == "set_next" ||
-                    property == "get_next" ||
-                    property == "get_value" ||
-                    property == "set_value"
-                {
-                    return format!("((std_list::Node<T>*){})->{}", obj_code, property);
-                }
                 if obj_code == "::" {
                     format!("::{}", property)
-                } else if obj_code == "super" {
-                    format!("this->{}", property) // Quick map to this-> since C++ derived classes inherit fields directly
-                } else if obj_code == "this" {
+                } else if obj_code == "super" || obj_code == "this" {
                     format!("this->{}", property)
+                } else if self.pointer_vars.contains(&obj_code) {
+                    format!("{}->{}", obj_code, property)
                 } else {
-                    format!("{}.{}", obj_code, property) // we default to . since primitive objects might not be pointers, though shared_ptr requires ->
+                    format!("{}.{}", obj_code, property)
                 }
             }
             Expr::NamespaceAccess { namespace, property } => {
@@ -187,7 +183,7 @@ impl CodeGenerator {
                 format!("{}::{}", namespace, prop_code)
             }
             Expr::ArrayAllocate { type_node, size, length } => {
-                let cpp_type = type_to_cpp(type_node);
+                let cpp_type: String = type_to_cpp(type_node);
                 if let Some(init) = length {
                     let init_code = self.visit_expression(init);
                     format!("new {}[]{}", cpp_type, init_code)
@@ -199,10 +195,12 @@ impl CodeGenerator {
             Expr::New { type_node, target } => {
                 let cpp_type = type_to_cpp(type_node);
                 let target_code = self.visit_expression(target);
-                if target_code == "__default__" || target_code.is_empty() {
-                    format!("{}()", cpp_type)
+                if target_code == "__default__" || target_code == "{}" || target_code.is_empty() {
+                    format!("new {}()", cpp_type)
+                } else if target_code.starts_with('{') && target_code.ends_with('}') {
+                    format!("new {}[]{}", cpp_type, target_code)
                 } else {
-                    format!("{}({})", cpp_type, target_code)
+                    format!("new {}({})", cpp_type, target_code)
                 }
             }
             _ => "/* unimplemented expr */".to_string(),

@@ -1801,6 +1801,12 @@ impl SemanticAnalyzer {
         if expected == "str" && (actual == "string" || actual == "str") {
             return true;
         }  // todo: make a custom type for generics elements 
+        if expected.len() == 1 && expected.chars().next().unwrap().is_ascii_uppercase() {
+            return true;
+        }
+        if actual.len() == 1 && actual.chars().next().unwrap().is_ascii_uppercase() {
+            return true;
+        }
         if expected == "custom<T>" || expected == "T" || actual == "custom<T>" || actual == "T" {
             return true;
         }

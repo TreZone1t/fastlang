@@ -62,28 +62,30 @@ impl ProjectLoader {
             {
                 let mut path_clone = module_path.clone();
                 let mut mod_name = path_clone.join("/");
-                let mut actual_imports = imports.clone();
 
                 if let Some(selected) = imports {
+                    let mut found_submodule = false;
                     for sym in selected {
                         let sub_mod = format!("{}/{}", mod_name, sym);
                         if ProjectLoader::resolve_path_static(&sub_mod).is_some() {
                             deps.push((sub_mod, Some(vec![sym.clone()])));
+                            found_submodule = true;
                         }
                     }
-                }
 
-                if ProjectLoader::resolve_path_static(&mod_name).is_none() && path_clone.len() > 1 {
-                    let last = path_clone.pop().unwrap();
-                    let parent_mod = path_clone.join("/");
-                    if ProjectLoader::resolve_path_static(&parent_mod).is_some() {
-                        mod_name = parent_mod;
-                        actual_imports = Some(vec![last]);
+                    if !found_submodule {
+                        if ProjectLoader::resolve_path_static(&mod_name).is_some() {
+                            deps.push((mod_name, Some(selected.clone())));
+                        } else if path_clone.len() > 1 {
+                            let last = path_clone.pop().unwrap();
+                            let parent_mod = path_clone.join("/");
+                            if ProjectLoader::resolve_path_static(&parent_mod).is_some() {
+                                deps.push((parent_mod, Some(vec![last])));
+                            }
+                        }
                     }
-                }
-
-                if ProjectLoader::resolve_path_static(&mod_name).is_some() {
-                    deps.push((mod_name, actual_imports));
+                } else if ProjectLoader::resolve_path_static(&mod_name).is_some() {
+                    deps.push((mod_name, None));
                 }
             }
         }

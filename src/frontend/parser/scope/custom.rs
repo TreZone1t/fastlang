@@ -31,6 +31,11 @@ impl Parser {
         let name = self.get_identifier("Expected custom name")?;
         if self.peek().kind == TokenKind::Less {
             self.parse_generics(&mut generics)?;
+            for g in &generics {
+                if let BaseType::GenericParam(gen_name) = g {
+                    self.current_generics.insert(gen_name.clone());
+                }
+            }
         }
 
         let mut meta = TypeMetadata {
@@ -525,10 +530,21 @@ impl Parser {
             }
         }
         self.metadata.insert(name.clone(), meta);
+        for g in &generics {
+            if let BaseType::GenericParam(gen_name) = g {
+                self.current_generics.remove(gen_name);
+            }
+        }
+        let mut final_settings = enabled_settings.clone();
+        for s in used_settings {
+            if !final_settings.contains(&s) {
+                final_settings.push(s);
+            }
+        }
         Ok(Decl::CustomDecl {
             is_exported: false,
             name,
-            settings: Some(used_settings),
+            settings: Some(final_settings),
             handles: Some(used_handles),
             params: if params.is_empty() {
                 None

@@ -75,6 +75,7 @@ pub enum BaseType {
         return_type: Box<BaseType>,
     },
     Generic(Vec<BaseType>),
+    GenericParam(String),
 
     Unknown,
     Error,
@@ -111,6 +112,7 @@ impl BaseType {
             BaseType::Enum { name, .. } => format!("enum<{}>", name),
             BaseType::Blueprint { name, .. } => format!("blueprint<{}>", name),
             BaseType::Method { .. } => "method".to_string(),
+            BaseType::GenericParam(name) => name.clone(),
             BaseType::Generic(inner_vec) => {
                 let strs: Vec<String> = inner_vec
                     .iter()

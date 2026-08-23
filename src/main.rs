@@ -258,7 +258,8 @@ fn main() {
     final_cpp.push_str(&header_gen.generate(&vec![], true, false));
 
     for module in &program.modules {
-        let cpp_namespace = module.name.split('/').next().unwrap_or(&module.name).replace("-", "_");
+        let raw_ns = module.name.split('/').next().unwrap_or(&module.name).replace("-", "_");
+        let cpp_namespace = if raw_ns == "std" { "fast_std".to_string() } else { raw_ns };
         final_cpp.push_str(&format!("namespace {} {{\n", cpp_namespace));
         let mut codegen = cpp::generator::CodeGenerator::new();
         let module_cpp = codegen.generate(&module.ast, false, false);
@@ -322,6 +323,7 @@ fn main() {
         }
         _ => {
             eprintln!("C++ compilation failed! Check {} for errors.", out_path);
+            std::process::exit(1);
         }
     }
 }

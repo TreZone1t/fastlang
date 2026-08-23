@@ -4,6 +4,7 @@ pub struct CodeGenerator {
     pub(crate) output: String,
     pub(crate) indent_level: usize,
     pub(crate) custom_scopes: std::collections::HashSet<String>,
+    pub(crate) pointer_vars: std::collections::HashSet<String>,
     pub(crate) yield_counter: usize,
 }
 
@@ -13,6 +14,7 @@ impl CodeGenerator {
             output: String::new(),
             indent_level: 0,
             custom_scopes: std::collections::HashSet::new(),
+            pointer_vars: std::collections::HashSet::new(),
             yield_counter: 0,
         }
     }
@@ -76,143 +78,185 @@ impl CodeGenerator {
         self.output.push_str(&format!("{}{}\n", indent, s));
     }
 
+    pub(crate) fn emit_headers(&mut self) {
+        self.output.push_str("#include <iostream>\n");
+        self.output.push_str("#include <vector>\n");
+        self.output.push_str("#include <memory>\n");
+        self.output.push_str("#include <optional>\n");
+        self.output.push_str("#include <stdexcept>\n\n");
+        self.output.push_str("#include <cstdint>\n");
+        self.output.push_str("#include <type_traits>\n");
+        self.emit("using namespace std;");
+        self.emit("");
+        self.emit("std::ostream& operator<<(std::ostream& os, const std::exception& e) {");
+        self.emit("    return os << e.what();");
+        self.emit("}");
+        self.emit("");
+        self.emit("template <typename T> class fastlang_name;");
+        self.emit("template <typename T> class fastlang_modify;");
+        self.emit("template <typename T> class fastlang_copy;");
+        self.emit("");
+        self.emit("template<typename T, typename = void>");
+        self.emit("struct has_drop : std::false_type {};");
+        self.emit("template<typename T>");
+        self.emit("struct has_drop<T, std::void_t<decltype(std::declval<T>().drop())>> : std::true_type {};");
+        self.emit("template <typename T>");
+        self.emit("inline void _fastlang_del(T* ptr) {");
+        self.emit("    if (ptr) {");
+        self.emit("        if constexpr (has_drop<T>::value) { ptr->drop(); }");
+        self.emit("        delete ptr;");
+        self.emit("    }");
+        self.emit("}");
+        self.emit("");
+        self.emit("template <typename T>");
+        self.emit("inline void _fastlang_del_array(T* ptr) {");
+        self.emit("    if (ptr) { delete[] ptr; }");
+        self.emit("}");
+        self.emit("");
+        self.emit("template <typename T>");
+        self.emit("inline void _fastlang_del(fastlang_name<T>& obj) {");
+        self.emit("    if (obj.ptr) {");
+        self.emit("        if constexpr (has_drop<T>::value) { const_cast<T*>(obj.ptr)->drop(); }");
+        self.emit("        delete const_cast<T*>(obj.ptr);");
+        self.emit("        obj.ptr = nullptr;");
+        self.emit("    }");
+        self.emit("}");
+        self.emit("");
+        self.emit("template <typename T>");
+        self.emit("inline void _fastlang_del(fastlang_modify<T>& obj) {");
+        self.emit("    if (obj.ptr) {");
+        self.emit("        if constexpr (has_drop<T>::value) { obj.ptr->drop(); }");
+        self.emit("        delete obj.ptr;");
+        self.emit("        obj.ptr = nullptr;");
+        self.emit("    }");
+        self.emit("}");
+        self.emit("");
+        self.emit("template <typename T>");
+        self.emit("inline void _fastlang_del(fastlang_copy<T>& obj) {");
+        self.emit("    if (obj.ptr) {");
+        self.emit("        if constexpr (has_drop<T>::value) { obj.ptr->drop(); }");
+        self.emit("        delete obj.ptr;");
+        self.emit("        obj.ptr = nullptr;");
+        self.emit("    }");
+        self.emit("}");
+        self.emit("");
+        self.emit("template <typename T>");
+        self.emit("class fastlang_name {");
+        self.emit("public:");
+        self.emit("const T* ptr;");
+        self.emit("void drop() { ");
+        self.emit("delete const_cast<T*>(ptr);");
+        self.emit("ptr = nullptr;");
+        self.emit("}");
+        self.emit("const T& operator[](size_t index) const { return ptr[index]; }");
+        self.emit("fastlang_name(const T& ref) : ptr(&ref) {}");
+        self.emit("fastlang_name(const T* p = nullptr) : ptr(p) {}");
+        self.emit("fastlang_name(const fastlang_name& other) : ptr(other.ptr) {}");
+        self.emit("fastlang_name(const fastlang_modify<T>& m);");
+        self.emit("fastlang_name(const fastlang_copy<T>& c);");
+        self.emit("const T& operator*() const { return *ptr; }");
+        self.emit("const T* operator->() const { return ptr; }");
+        self.emit("bool operator==(std::nullptr_t) const { return ptr == nullptr; }");
+        self.emit("bool operator!=(std::nullptr_t) const { return ptr != nullptr; }");
+        self.emit("explicit operator bool() const { return ptr != nullptr; }");
+        self.emit("};");
+        self.emit("template <typename T> fastlang_name(const T&) -> fastlang_name<T>;");
+        self.emit("template <typename T> fastlang_name(T*) -> fastlang_name<T>;");
+        self.emit("");
+        self.emit("template <typename T>");
+        self.emit("class fastlang_modify {");
+        self.emit("public:");
+        self.emit("T* ptr;");
+        self.emit("void drop() { ");
+        self.emit("delete ptr;");
+        self.emit("ptr = nullptr;");
+        self.emit("}");
+        self.emit("T& operator[](size_t index) { return ptr[index]; }");
+        self.emit("fastlang_modify(T& ref) : ptr(&ref) {}");
+        self.emit("fastlang_modify(T* p = nullptr) : ptr(p) {}");
+        self.emit("fastlang_modify(const fastlang_modify& other) : ptr(other.ptr) {}");
+        self.emit("fastlang_modify(const fastlang_name<T>& n);");
+        self.emit("fastlang_modify(const fastlang_copy<T>& c);");
+        self.emit("T& operator*() const { return *ptr; }");
+        self.emit("T* operator->() const { return ptr; }");
+        self.emit("bool operator==(std::nullptr_t) const { return ptr == nullptr; }");
+        self.emit("bool operator!=(std::nullptr_t) const { return ptr != nullptr; }");
+        self.emit("explicit operator bool() const { return ptr != nullptr; }");
+        self.emit("};");
+        self.emit("template <typename T> fastlang_modify(T&) -> fastlang_modify<T>;");
+        self.emit("template <typename T> fastlang_modify(T*) -> fastlang_modify<T>;");
+        self.emit("");
+        self.emit("template <typename T>");
+        self.emit("class fastlang_copy {");
+        self.emit("public:");
+        self.emit("T* ptr;");
+        self.emit("void drop() { ");
+        self.emit("delete ptr;");
+        self.emit("ptr = nullptr;");
+        self.emit("}");
+        self.emit("T& operator[](size_t index) { return ptr[index]; }");
+        self.emit("fastlang_copy(T& ref) : ptr(&ref) {}");
+        self.emit("fastlang_copy(T* p = nullptr) : ptr(p) {}");
+        self.emit("fastlang_copy(const fastlang_copy& other) : ptr(other.ptr) {}");
+        self.emit("fastlang_copy(const fastlang_name<T>& n);");
+        self.emit("fastlang_copy(const fastlang_modify<T>& m);");
+        self.emit("T& operator*() const { return *ptr; }");
+        self.emit("T* operator->() const { return ptr; }");
+        self.emit("bool operator==(std::nullptr_t) const { return ptr == nullptr; }");
+        self.emit("bool operator!=(std::nullptr_t) const { return ptr != nullptr; }");
+        self.emit("explicit operator bool() const { return ptr != nullptr; }");
+        self.emit("};");
+        self.emit("template <typename T> fastlang_copy(T&) -> fastlang_copy<T>;");
+        self.emit("template <typename T> fastlang_copy(T*) -> fastlang_copy<T>;");
+        self.emit("");
+        self.emit("template <typename T>");
+        self.emit(
+            "fastlang_name<T>::fastlang_name(const fastlang_modify<T>& m) : ptr(m.ptr) {}"
+        );
+        self.emit("");
+        self.emit("template <typename T>");
+        self.emit("fastlang_name<T>::fastlang_name(const fastlang_copy<T>& c) : ptr(c.ptr) {}");
+        self.emit("");
+        self.emit("template <typename T>");
+        self.emit("fastlang_modify<T>::fastlang_modify(const fastlang_name<T>& n) : ptr(const_cast<T*>(n.ptr)) {}");
+        self.emit("");
+        self.emit("template <typename T>");
+        self.emit("fastlang_modify<T>::fastlang_modify(const fastlang_copy<T>& c) : ptr(c.ptr) {}");
+        self.emit("");
+        self.emit("template <typename T>");
+        self.emit("fastlang_copy<T>::fastlang_copy(const fastlang_name<T>& n) : ptr(const_cast<T*>(n.ptr)) {}");
+        self.emit("");
+        self.emit("template <typename T>");
+        self.emit("fastlang_copy<T>::fastlang_copy(const fastlang_modify<T>& m) : ptr(m.ptr) {}");
+        self.emit("");
+        self.emit("namespace fastlang_detail {");
+        self.emit("    template <typename T, typename U>");
+        self.emit("    auto arrow_assign_impl(T& target, const U& val, int) -> decltype(target.arrow_assign(val), void()) {");
+        self.emit("        target.arrow_assign(val);");
+        self.emit("    }");
+        self.emit("    template <typename T, typename U>");
+        self.emit("    auto arrow_assign_impl(T& target, std::initializer_list<U> val, int) -> decltype(target.arrow_assign(std::vector<U>(val)), void()) {");
+        self.emit("        target.arrow_assign(std::vector<U>(val));");
+        self.emit("    }");
+        self.emit("    template <typename T, typename U>");
+        self.emit("    void arrow_assign_impl(T& target, const U& val, ...) {");
+        self.emit("        target = val;");
+        self.emit("    }");
+        self.emit("}");
+        self.emit("template <typename T, typename U>");
+        self.emit("void fastlang_arrow_assign(T& target, const U& val) {");
+        self.emit("    fastlang_detail::arrow_assign_impl(target, val, 0);");
+        self.emit("}");
+        self.emit("template <typename T, typename U>");
+        self.emit("void fastlang_arrow_assign(T& target, std::initializer_list<U> val) {");
+        self.emit("    fastlang_detail::arrow_assign_impl(target, val, 0);");
+        self.emit("}");
+        self.emit("");
+    }
+
     pub fn generate(&mut self, ast: &Vec<Stmt>, emit_headers: bool, wrap_in_main: bool) -> String {
         if emit_headers {
-            self.output.push_str("#include <iostream>\n");
-            self.output.push_str("#include <vector>\n");
-            //  self.output.push_str("#include <array>\n");
-            self.output.push_str("#include <memory>\n");
-            self.output.push_str("#include <optional>\n");
-            self.output.push_str("#include <stdexcept>\n\n");
-            self.output.push_str("#include <cstdint>\n");
-            self.output.push_str("#include <type_traits>\n");
-            self.emit("using namespace std;");
-            self.emit("");
-            self.emit("std::ostream& operator<<(std::ostream& os, const std::exception& e) {");
-            self.emit("    return os << e.what();");
-            self.emit("}");
-            self.emit("");
-            self.emit("template <typename T> class fastlang_name;");
-            self.emit("template <typename T> class fastlang_modify;");
-            self.emit("template <typename T> class fastlang_copy;");
-            self.emit("");
-            self.emit("template<typename T, typename = void>");
-            self.emit("struct has_drop : std::false_type {};");
-            self.emit("template<typename T>");
-            self.emit(
-                "struct has_drop<T, std::void_t<decltype(std::declval<T>().drop())>> : std::true_type {};"
-            );
-            self.emit("template <typename T>");
-            self.emit("inline void _fastlang_del(T* ptr) {");
-            self.emit("    if (ptr) {");
-            self.emit("        if constexpr (has_drop<T>::value) { ptr->drop(); }");
-            self.emit("        delete ptr;");
-            self.emit("    }");
-            self.emit("}");
-            self.emit("");
-            self.emit("template <typename T>");
-            self.emit("inline void _fastlang_del_array(T* ptr) {");
-            self.emit("    if (ptr) { delete[] ptr; }");
-            self.emit("}");
-            self.emit("");
-            self.emit("template <typename T>");
-            self.emit("inline void _fastlang_del(fastlang_name<T>& obj) {");
-            self.emit("    if (obj.ptr) {");
-            self.emit(
-                "        if constexpr (has_drop<T>::value) { const_cast<T*>(obj.ptr)->drop(); }"
-            );
-            self.emit("        delete const_cast<T*>(obj.ptr);");
-            self.emit("        obj.ptr = nullptr;");
-            self.emit("    }");
-            self.emit("}");
-            self.emit("");
-
-            self.emit("template <typename T>");
-            self.emit("inline void _fastlang_del_array(fastlang_name<T>& obj) {");
-            self.emit("    if (obj.ptr) {");
-            self.emit("        delete[] const_cast<T*>(obj.ptr);");
-            self.emit("        obj.ptr = nullptr;");
-            self.emit("    }");
-            self.emit("}");
-            self.emit("");
-            self.emit("template <typename T>");
-            self.emit("inline void _fastlang_del(fastlang_modify<T>& obj) {");
-            self.emit("    if (obj.ptr) {");
-            self.emit("        if constexpr (has_drop<T>::value) { obj.ptr->drop(); }");
-            self.emit("        delete obj.ptr;");
-            self.emit("        obj.ptr = nullptr;");
-            self.emit("    }");
-            self.emit("}");
-            self.emit("");
-
-            self.emit("template <typename T>");
-            self.emit("inline void _fastlang_del(fastlang_copy<T>& obj) {");
-            self.emit("    if (obj.ptr) {");
-            self.emit("        if constexpr (has_drop<T>::value) { obj.ptr->drop(); }");
-            self.emit("        delete obj.ptr;");
-            self.emit("        obj.ptr = nullptr;");
-            self.emit("    }");
-            self.emit("}");
-            self.emit("");
-            self.emit("template <typename T>");
-            self.emit("class fastlang_name {");
-            self.emit("public:");
-            self.emit("const T* ptr;");
-            self.emit("void drop() { ");
-            self.emit("delete const_cast<T*>(ptr);");
-            self.emit("ptr = nullptr;");
-            self.emit("}");
-            self.emit("const T& operator[](size_t index) const { return ptr[index]; }");
-            self.emit("fastlang_name(const T* p = nullptr) : ptr(p) {}");
-            self.emit("fastlang_name(const fastlang_name& other) : ptr(other.ptr) {}");
-            self.emit("fastlang_name(const fastlang_modify<T>& m);");
-            self.emit("fastlang_name(const fastlang_copy<T>& c);");
-            self.emit("const T& operator*() const { return *ptr; }");
-            self.emit("const T* operator->() const { return ptr; }");
-            self.emit("};");
-            self.emit("");
-            self.emit("template <typename T>");
-            self.emit("class fastlang_modify {");
-            self.emit("public:");
-            self.emit("T* ptr;");
-            self.emit("void drop() { ");
-            self.emit("delete ptr;");
-            self.emit("ptr = nullptr;");
-            self.emit("}");
-            self.emit("T& operator[](size_t index) { return ptr[index]; }");
-            self.emit("fastlang_modify(T* p = nullptr) : ptr(p) {}");
-            self.emit("fastlang_modify(const fastlang_modify& other) : ptr(other.ptr) {}");
-            self.emit("fastlang_modify(const fastlang_name<T>& n);");
-            self.emit("fastlang_modify(const fastlang_copy<T>& c);");
-            self.emit("T& operator*() const { return *ptr; }");
-            self.emit("T* operator->() const { return ptr; }");
-            self.emit("};");
-            self.emit("");
-            self.emit("template <typename T>");
-            self.emit("class fastlang_copy {");
-            self.emit("public:");
-            self.emit("T* ptr;");
-            self.emit("void drop() { ");
-            self.emit("delete ptr;");
-            self.emit("ptr = nullptr;");
-            self.emit("}");
-            self.emit("T& operator[](size_t index) { return ptr[index]; }");
-            self.emit("fastlang_copy(T* p = nullptr) : ptr(p) {}");
-            self.emit("fastlang_copy(const fastlang_copy& other) : ptr(other.ptr) {}");
-            self.emit("fastlang_copy(const fastlang_name<T>& n);");
-            self.emit("fastlang_copy(const fastlang_modify<T>& m);");
-            self.emit("T& operator*() const { return *ptr; }");
-            self.emit("T* operator->() const { return ptr; }");
-            self.emit("};");
-            self.emit("");
-            self.emit("template <typename T>");
-            self.emit(
-                "fastlang_name<T>::fastlang_name(const fastlang_modify<T>& m) : ptr(m.ptr) {}"
-            );
-            self.emit("");
-            self.emit("template <typename T>");
-            self.emit("fastlang_name<T>::fastlang_name(const fastlang_copy<T>& c) : ptr(c.ptr) {}");
-            self.emit("");
+            self.emit_headers();
         }
 
         // Pre-pass for Blueprints and Impls
@@ -284,7 +328,8 @@ impl CodeGenerator {
                     self.visit_statement(stmt);
                 }
                 Stmt::Declaration(Decl::Import { module_path, imports }) => {
-                    let cpp_namespace = module_path.join("_");
+                    let raw_ns = module_path.join("_");
+                    let cpp_namespace = if raw_ns == "std" { "fast_std".to_string() } else { raw_ns };
                     if let Some(selected) = imports {
                         for sym in selected {
                             self.emit(&format!("using {}::{};", cpp_namespace, sym));

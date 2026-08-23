@@ -18,6 +18,7 @@ pub struct Parser {
     pub(crate) metadata: HashMap<String, TypeMetadata>,
     pub(crate) var_metadata: HashMap<String, VarMetadata>,
     pub(crate) fn_metadata: HashMap<String, FnType>,
+    pub(crate) current_generics: std::collections::HashSet<String>,
 }
 
 impl Parser {
@@ -28,6 +29,7 @@ impl Parser {
             metadata: HashMap::new(),
             var_metadata: HashMap::new(),
             fn_metadata: HashMap::new(),
+            current_generics: std::collections::HashSet::new(),
         }
     }
 

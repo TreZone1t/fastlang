@@ -76,18 +76,28 @@ fn run_all_fs_tests() {
                         }
                     }
 
-                    if !expected_lines.is_empty() {
-                        let exe_to_run = if build_exe.exists() {
-                            build_exe.clone()
-                        } else {
-                            root_exe.clone()
-                        };
+                    let exe_to_run = if build_exe.exists() {
+                        build_exe.clone()
+                    } else {
+                        root_exe.clone()
+                    };
 
-                        if exe_to_run.exists() {
-                            let app_output = Command::new(&exe_to_run)
-                                .output()
-                                .expect("failed to execute compiled app");
+                    if !exe_to_run.exists() {
+                        println!("❌ FAILED (Executable Not Found): {} was expected to compile to executable {:?} (or {:?}) but was not found. Stdout:\n{}", filename, build_exe, root_exe, String::from_utf8_lossy(&output.stdout));
+                        failed_tests += 1;
+                    } else {
+                        let app_output = Command::new(&exe_to_run)
+                            .output()
+                            .expect("failed to execute compiled app");
 
+                        if !app_output.status.success() {
+                            let app_stderr = String::from_utf8_lossy(&app_output.stderr);
+                            let app_stdout = String::from_utf8_lossy(&app_output.stdout);
+                            println!("❌ FAILED (Execution Error): {} exited with non-zero exit code: {:?}", filename, app_output.status.code());
+                            println!("Stdout:\n{}", app_stdout.trim());
+                            println!("Stderr:\n{}", app_stderr.trim());
+                            failed_tests += 1;
+                        } else if !expected_lines.is_empty() {
                             let app_stdout = String::from_utf8_lossy(&app_output.stdout);
                             let actual_lines: Vec<&str> = app_stdout
                                 .lines()
@@ -115,12 +125,9 @@ fn run_all_fs_tests() {
                                 passed_tests += 1;
                             }
                         } else {
-                            println!("⚠️ WARNING: Executable not found at {:?} (or root {:?}) for {} despite successful compilation. Stdout:\n{}", build_exe, root_exe, filename, String::from_utf8_lossy(&output.stdout));
+                            println!("✅ PASSED: {}", filename);
                             passed_tests += 1;
                         }
-                    } else {
-                        println!("✅ PASSED: {}", filename);
-                        passed_tests += 1;
                     }
                 }
             }

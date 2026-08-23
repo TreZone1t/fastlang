@@ -221,6 +221,9 @@ impl Parser {
             }
             TokenKind::Identifier(n) => {
                 self.advance();
+                if self.current_generics.contains(&n) {
+                    return Ok(BaseType::GenericParam(n));
+                }
                 let mut generics = Vec::new();
                 if self.peek().kind == TokenKind::Less {
                     self.advance(); // '<'
