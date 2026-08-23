@@ -38,6 +38,10 @@ impl Parser {
             | TokenKind::TypeFloat
             | TokenKind::TypeChar
             | TokenKind::TypeBool
+            | TokenKind::Flag
+            | TokenKind::Scope
+            | TokenKind::TypeMethod
+            | TokenKind::TypeFn
             /*//todo | TokenKind::TypeObject */
             | TokenKind::TypeType
             | TokenKind::TypeName
@@ -53,6 +57,7 @@ impl Parser {
             | TokenKind::TypeCustom
             | TokenKind::TypeStruct
             | TokenKind::TypeEnum
+            | TokenKind::TypeBlock
             | TokenKind::Del => {
                 if
                     !matches!(
@@ -83,6 +88,7 @@ impl Parser {
                     TokenKind::TypeCustom => self.parse_custom_decl().map(Stmt::Declaration),
                     TokenKind::TypeStruct => self.parse_struct_decl().map(Stmt::Declaration),
                     TokenKind::TypeEnum => self.parse_enum_decl().map(Stmt::Declaration),
+                    TokenKind::TypeBlock => self.parse_block_scope_decl().map(Stmt::Declaration),
                     TokenKind::Del => self.parse_del_stmt(),
                     _ => unreachable!(),
                 }
@@ -145,9 +151,16 @@ impl Parser {
             }
 
             TokenKind::Yield => {
-                if !matches!(scope, ScopeType::Custom | ScopeType::Label) {
+                if !matches!(
+                    scope,
+                    ScopeType::Custom |
+                        ScopeType::Label |
+                        ScopeType::Block |
+                        ScopeType::Fn |
+                        ScopeType::Loop
+                ) {
                     return Err(
-                        "Syntax Error: Yield statements are only allowed inside custom scope".to_string()
+                        "Syntax Error: Yield statements are not allowed in global scope".to_string()
                     );
                 }
                 self.parse_yield_stmt()
@@ -472,8 +485,12 @@ impl Parser {
             | TokenKind::TypeFloat
             | TokenKind::TypeChar
             | TokenKind::TypeBool
+            | TokenKind::Flag
+            | TokenKind::Scope
             | TokenKind::TypeName
-            | TokenKind::TypeType => true,
+            | TokenKind::TypeType
+            | TokenKind::TypeMethod
+            | TokenKind::TypeFn => true,
             TokenKind::Identifier(_) => {
                 let next = self.tokens.get(self.current + 1).map(|t| &t.kind);
                 matches!(
@@ -627,7 +644,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_rhs_item(&mut self) -> Result<RhsValue, String> {
-        if self.peek().kind == TokenKind::LParen {
+        if self.peek().kind == TokenKind::LParen && !self.is_lambda_ahead() {
             self.advance();
             let mut items = Vec::new();
             let mut has_comma = false;

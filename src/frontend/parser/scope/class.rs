@@ -57,6 +57,12 @@ impl Parser {
             extends = Some(self.get_identifier("Expected parent class name after 'extends'")?);
             has_extends = true;
         }
+
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance();
+        }
+        self.consume(TokenKind::LBrace, "Expected '{' to open class body")?;
+
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
             // we need to check if the token is valid for the setting
             let t = self.peek().kind.clone();
@@ -146,6 +152,10 @@ impl Parser {
                     )
                 );
             }
+        }
+        self.consume(TokenKind::RBrace, "Expected '}' to close class body")?;
+        if self.peek().kind == TokenKind::SemiColon {
+            self.advance();
         }
 
         meta.handles = used_handles.clone();

@@ -1,5 +1,4 @@
-custom ComplexNumber -> {
-    enable [oop, handle, length, custom_constructor];
+class ComplexNumber -> {
     public -> {
         int(32) r = 0;
         int(32) i = 0;

@@ -3,78 +3,6 @@ use crate::frontend::parser::ast::*;
 use crate::frontend::parser::parser::Parser;
 
 impl Parser {
-    pub(crate) fn parse_enable(&mut self, setting: &mut Vec<Setting>) -> Result<(), String> {
-        self.advance(); // enable
-        self.consume(TokenKind::LBracket, "Expected '[' or all after enable")?;
-        while !self.is_at_end() {
-            let current_kind = self.peek().kind.clone();
-            if current_kind == TokenKind::RBracket {
-                break;
-            }
-            if self.is_valid_setting(current_kind.clone()) {
-                let current_setting = Setting::from_token(current_kind.clone());
-                setting.push(current_setting);
-            }
-            self.advance();
-            let next_kind = self.peek().kind.clone();
-            if next_kind == TokenKind::Comma {
-                self.advance();
-            } else if next_kind != TokenKind::RBracket {
-                return Err(
-                    format!(
-                        "Syntax Error: Expected ',' or ']' after setting, found '{}'",
-                        next_kind.as_str()
-                    )
-                );
-            }
-        }
-        // we need now to filter the settings and enable the handles
-        if setting.contains(&Setting::All) {
-            self.enable_all(setting)?;
-            setting.retain(|s| s != &Setting::All);
-        } else if setting.contains(&Setting::OOP) {
-            self.enable_oop(setting)?;
-            setting.retain(|s| s != &Setting::OOP);
-        } else if setting.contains(&Setting::Function) {
-            self.enable_function(setting)?;
-            setting.retain(|s| s != &Setting::Function);
-        }
-        self.consume(TokenKind::RBracket, "Expected ']' after enable list")?;
-        self.consume(TokenKind::SemiColon, "Expected ';' after enable statement")?;
-        Ok(())
-    }
-    pub(crate) fn enable_all(&mut self, setting: &mut Vec<Setting>) -> Result<(), String> {
-        setting.push(Setting::Constructor); //1
-        setting.push(Setting::Private); //2
-        setting.push(Setting::Public); //3
-        setting.push(Setting::Static); //4
-        setting.push(Setting::Extends); //5
-        setting.push(Setting::Param); //6
-        setting.push(Setting::Statement); //7
-        setting.push(Setting::Return); //8
-        setting.push(Setting::Break); //9
-        setting.push(Setting::Case); //10
-        setting.push(Setting::Error); //16
-        setting.push(Setting::Handle); //17
-        setting.push(Setting::Variants); //18
-        setting.push(Setting::Data); //20
-        Ok(())
-    }
-
-    pub(crate) fn enable_oop(&mut self, setting: &mut Vec<Setting>) -> Result<(), String> {
-        setting.push(Setting::Constructor);
-        setting.push(Setting::Private);
-        setting.push(Setting::Public);
-        setting.push(Setting::Static);
-        setting.push(Setting::Extends);
-        Ok(())
-    }
-    pub(crate) fn enable_function(&mut self, setting: &mut Vec<Setting>) -> Result<(), String> {
-        setting.push(Setting::Param);
-        setting.push(Setting::Statement);
-        setting.push(Setting::Return);
-        Ok(())
-    }
 
     pub(crate) fn parse_label_decl(&mut self, _scope: ScopeType) -> Result<Decl, String> {
         let label_name = if let TokenKind::LabelName(name) = self.peek().kind.clone() {
@@ -178,10 +106,7 @@ impl Parser {
                 let mut method_params: Vec<Param> = Vec::new();
                 let return_type: BaseType;
                 let method_name = self.peek().kind.clone().as_str().to_string();
-                if
-                    HandleMethods::from_str(&method_name) != HandleMethods::NotFound &&
-                    !used_methods.contains(&self.get_handle_type(self.peek().kind.clone()))
-                {
+                if HandleMethods::from_str(&method_name) != HandleMethods::NotFound {
                     used_methods.push(self.get_handle_type(self.peek().kind.clone()));
                     self.advance();
                     if self.peek().kind == TokenKind::LParen {
@@ -218,6 +143,7 @@ impl Parser {
                         return_type = self.parse_type()?;
                         self.consume(TokenKind::LBrace, "Expected '{' to open handle method body")?;
                         let body = self.parse_block(method_name.clone())?;
+                        self.consume(TokenKind::RBrace, "Expected '}' to close handle method body")?;
 
                         handle_fn.push(Decl::FnDecl {
                             is_exported: false,
@@ -228,10 +154,6 @@ impl Parser {
                         });
                     }
                 }
-                //debug
-                print!("DEBUG: handle_fn: {:?}", method_name);
-                println!("DEBUG: token: {:?}", self.peek().kind);
-                self.consume(TokenKind::RBrace, "Expected '}' to close handle block")?;
             } else {
                 return Err(
                     format!(

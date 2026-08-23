@@ -67,7 +67,6 @@ impl Scanner {
             "const" => Some(TokenKind::Const),
             "set" => Some(TokenKind::Set),
             "del" => Some(TokenKind::Del),
-            "add" => Some(TokenKind::Add),
 
             // built-in fn
             "log" => Some(TokenKind::Log),
@@ -97,6 +96,8 @@ impl Scanner {
             "struct" => Some(TokenKind::TypeStruct),
             "enum" => Some(TokenKind::TypeEnum),
             "custom" => Some(TokenKind::TypeCustom),
+            "method" => Some(TokenKind::TypeMethod),
+            "Fn" => Some(TokenKind::TypeFn),
 
             "extends" => Some(TokenKind::Extends),
             "super" => Some(TokenKind::Super),
@@ -113,7 +114,7 @@ impl Scanner {
             "bool" => Some(TokenKind::TypeBool),
 
             // Context Types
-            //          "scope" => Some(TokenKind::Scope),
+            "scope" => Some(TokenKind::Scope),
             "param" => Some(TokenKind::Param),
             "init" => Some(TokenKind::Init),
             "blueprint" => Some(TokenKind::TypeBluePrint),
@@ -158,7 +159,6 @@ impl Scanner {
             "catch" => Some(TokenKind::Catch),
             "throw" => Some(TokenKind::Throw),
             "error" => Some(TokenKind::TypeError),
-            "enable" => Some(TokenKind::Enable),
             "import" => Some(TokenKind::Import),
             "use" => Some(TokenKind::Use),
             "export" => Some(TokenKind::Export),

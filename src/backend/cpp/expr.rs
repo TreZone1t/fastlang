@@ -120,13 +120,7 @@ impl CodeGenerator {
                     args_code.push(self.visit_expression(arg));
                 }
 
-                if callee_code == "Some" {
-                    format!("std::optional{{{}}}", args_code.join(", "))
-                } else if self.custom_scopes.contains(&callee_code) {
-                    format!("{}({}).call()", callee_code, args_code.join(", "))
-                } else {
                     format!("{}({})", callee_code, args_code.join(", "))
-                }
             }
             Expr::Instantiate { target, args } => {
                 let target_code = self.visit_expression(target);
@@ -202,6 +196,37 @@ impl CodeGenerator {
                 } else {
                     format!("new {}({})", cpp_type, target_code)
                 }
+            }
+            Expr::Lambda { params, return_type, body } => {
+                let p_list: Vec<String> = params
+                    .iter()
+                    .map(|p| {
+                        if p.type_node == BaseType::Unknown {
+                            format!("auto {}", p.name)
+                        } else {
+                            format!("{} {}", type_to_cpp(&p.type_node), p.name)
+                        }
+                    })
+                    .collect();
+                let ret_str = if let Some(rt) = return_type {
+                    format!(" -> {}", type_to_cpp(rt))
+                } else {
+                    "".to_string()
+                };
+
+                let mut temp_gen = CodeGenerator::new();
+                temp_gen.indent_level = self.indent_level + 1;
+                for s in body {
+                    temp_gen.visit_statement(s);
+                }
+
+                format!(
+                    "([&]({}){} {{\n{}{}}})",
+                    p_list.join(", "),
+                    ret_str,
+                    temp_gen.output,
+                    "    ".repeat(self.indent_level)
+                )
             }
             _ => "/* unimplemented expr */".to_string(),
         }

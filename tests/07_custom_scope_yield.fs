@@ -1,8 +1,5 @@
 // Valid: complete custom scope with label , goto , yield , call , data
 custom recursion_chaos_yield -> {
-    enable [label,goto , data];
-    add label -> @start;
-    add label -> @process;
     data -> 0;
     @start -> {
       goto -> @process;

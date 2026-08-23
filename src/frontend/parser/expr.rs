@@ -203,6 +203,69 @@ impl Parser {
                 self.advance();
                 Ok(BaseType::Type(Box::new(BaseType::Unknown)))
             }
+            TokenKind::Flag => {
+                self.advance();
+                Ok(BaseType::Flag)
+            }
+            TokenKind::Scope => {
+                self.advance();
+                let inner = if self.peek().kind == TokenKind::Less {
+                    self.advance(); // consume '<'
+                    let t = self.parse_type()?;
+                    self.consume(TokenKind::Greater, "Expected '>' after scope type parameter")?;
+                    t
+                } else {
+                    BaseType::Unknown
+                };
+                Ok(BaseType::Scope(Box::new(inner)))
+            }
+            TokenKind::TypeMethod => {
+                self.advance();
+                let ret_type = if self.peek().kind == TokenKind::Less {
+                    self.advance(); // consume '<'
+                    let t = self.parse_type()?;
+                    self.consume(TokenKind::Greater, "Expected '>' after method return type")?;
+                    t
+                } else {
+                    BaseType::Unknown
+                };
+                Ok(BaseType::Method {
+                    params: Vec::new(),
+                    return_type: Box::new(ret_type),
+                })
+            }
+            TokenKind::TypeFn | TokenKind::Fn => {
+                self.advance();
+                let mut params = Vec::new();
+                let mut return_type = Box::new(BaseType::Void);
+                if self.peek().kind == TokenKind::Less {
+                    self.advance(); // consume '<'
+                    if self.peek().kind == TokenKind::LParen {
+                        self.advance(); // consume '('
+                        while !self.is_at_end() && self.peek().kind != TokenKind::RParen {
+                            params.push(self.parse_type()?);
+                            if self.peek().kind == TokenKind::Comma {
+                                self.advance();
+                            } else if self.peek().kind != TokenKind::RParen {
+                                return Err("Expected ',' or ')' in Fn parameter types".to_string());
+                            }
+                        }
+                        self.consume(TokenKind::RParen, "Expected ')' after Fn parameter types")?;
+                    } else if self.peek().kind != TokenKind::Greater {
+                        let t = self.parse_type()?;
+                        params.push(t);
+                    }
+                    if self.peek().kind == TokenKind::Comma {
+                        self.advance();
+                        return_type = Box::new(self.parse_type()?);
+                    }
+                    self.consume(TokenKind::Greater, "Expected '>' after Fn type")?;
+                }
+                Ok(BaseType::Fn {
+                    params,
+                    return_type,
+                })
+            }
             TokenKind::Identifier(n) => {
                 self.advance();
                 if self.current_generics.contains(&n) {
@@ -540,12 +603,16 @@ impl Parser {
                 })
             }
 
-            // --- Grouped: (expr) ---
+            // --- Grouped: (expr) or Lambda: (params) -> { ... } or () -> expr ---
             TokenKind::LParen => {
-                self.advance(); // (
-                let inner = self.parse_expr(0)?;
-                self.consume(TokenKind::RParen, "Expected ')' to close grouped expression")?;
-                Ok(inner)
+                if self.is_lambda_ahead() {
+                    self.parse_lambda_expr()
+                } else {
+                    self.advance(); // (
+                    let inner = self.parse_expr(0)?;
+                    self.consume(TokenKind::RParen, "Expected ')' to close grouped expression")?;
+                    Ok(inner)
+                }
             }
 
             // --- Object Literals: { stmt; stmt; } ---
@@ -559,8 +626,8 @@ impl Parser {
             // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             other => {
                 //debug
-                print!("DEBUG: Unexpected token '{:?}' in expression", other);
-                return Err(format!("Syntax Error: Unexpected token '{:?}' in expression", other));
+                println!("DEBUG: Unexpected token '{:?}' in expression at line {}, col {}", other, self.peek().line, self.peek().column);
+                return Err(format!("Syntax Error: Unexpected token '{:?}' in expression at line {}, col {}", other, self.peek().line, self.peek().column));
             }
         }
     }
@@ -744,6 +811,72 @@ impl Parser {
             TokenKind::And => "&&".to_string(),
             TokenKind::Or => "||".to_string(),
             other => format!("{:?}", other),
+        }
+    }
+
+    pub(crate) fn is_lambda_ahead(&self) -> bool {
+        let mut offset = 0;
+        let mut depth = 0;
+        while let Some(tok) = self.tokens.get(self.current + offset) {
+            match &tok.kind {
+                TokenKind::LParen => depth += 1,
+                TokenKind::RParen => {
+                    depth -= 1;
+                    if depth == 0 {
+                        if let Some(next_tok) = self.tokens.get(self.current + offset + 1) {
+                            return next_tok.kind == TokenKind::Arrow;
+                        }
+                        return false;
+                    }
+                }
+                TokenKind::SemiColon if depth == 0 => return false,
+                _ => {}
+            }
+            offset += 1;
+        }
+        false
+    }
+
+    fn parse_lambda_expr(&mut self) -> Result<Expr, String> {
+        self.consume(TokenKind::LParen, "Expected '(' at start of lambda")?;
+        let mut params = Vec::new();
+        while !self.is_at_end() && self.peek().kind != TokenKind::RParen {
+            let p_name = self.get_identifier("Expected parameter name in lambda")?;
+            let p_type = if self.peek().kind == TokenKind::Colon {
+                self.advance();
+                self.parse_type()?
+            } else {
+                BaseType::Unknown
+            };
+            params.push(Param {
+                name: p_name,
+                type_node: p_type,
+            });
+            if self.peek().kind == TokenKind::Comma {
+                self.advance();
+            } else if self.peek().kind != TokenKind::RParen {
+                return Err("Expected ',' or ')' in lambda parameters".to_string());
+            }
+        }
+        self.consume(TokenKind::RParen, "Expected ')' after lambda parameters")?;
+        self.consume(TokenKind::Arrow, "Expected '->' after lambda parameters")?;
+
+        if self.peek().kind == TokenKind::LBrace {
+            self.advance();
+            let body = self.parse_block("lambda".to_string())?;
+            self.consume(TokenKind::RBrace, "Expected '}' to close lambda body")?;
+            Ok(Expr::Lambda {
+                params,
+                return_type: None,
+                body,
+            })
+        } else {
+            let expr = self.parse_expression()?;
+            Ok(Expr::Lambda {
+                params,
+                return_type: None,
+                body: vec![Stmt::ExpressionStmt(expr)],
+            })
         }
     }
 }

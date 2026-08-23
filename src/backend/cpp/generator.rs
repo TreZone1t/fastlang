@@ -78,6 +78,33 @@ impl CodeGenerator {
                             self.indent_level -= 1;
                             self.emit("}");
                         }
+                    } else if name == "call" {
+                        let param_list: Vec<String> = params
+                            .iter()
+                            .map(|p| {
+                                let p_type = crate::backend::cpp::stmt::type_to_cpp(&p.type_node);
+                                format!("{} {}", p_type, p.name)
+                            })
+                            .collect();
+                        let arg_names: Vec<String> = params
+                            .iter()
+                            .map(|p| p.name.clone())
+                            .collect();
+                        self.emit(
+                            &format!(
+                                "{} operator()({}) {{",
+                                ret_str,
+                                param_list.join(", ")
+                            )
+                        );
+                        self.indent_level += 1;
+                        if return_type == &BaseType::Void {
+                            self.emit(&format!("this->call({});", arg_names.join(", ")));
+                        } else {
+                            self.emit(&format!("return this->call({});", arg_names.join(", ")));
+                        }
+                        self.indent_level -= 1;
+                        self.emit("}");
                     }
                 }
             }
@@ -94,6 +121,7 @@ impl CodeGenerator {
         self.output.push_str("#include <cstdint>\n");
         self.output.push_str("#include <stdexcept>\n");
         self.output.push_str("#include <type_traits>\n");
+        self.output.push_str("#include <functional>\n");
         self.output.push_str("#include <initializer_list>\n\n");
         self.emit("");
         self.emit("std::ostream& operator<<(std::ostream& os, const std::exception& e) {");
@@ -127,6 +155,21 @@ impl CodeGenerator {
         self.emit("struct has_drop : std::false_type {};");
         self.emit("template<typename T>");
         self.emit("struct has_drop<T, std::void_t<decltype(std::declval<T>().drop())>> : std::true_type {};");
+        self.emit("");
+        self.emit("template<typename T, typename = void>");
+        self.emit("struct has_custom_yield : std::false_type {};");
+        self.emit("template<typename T>");
+        self.emit("struct has_custom_yield<T, std::void_t<decltype(std::declval<T>().yield())>> : std::true_type {};");
+        self.emit("");
+        self.emit("template <typename Self>");
+        self.emit("inline auto _fastlang_do_yield(Self* self) {");
+        self.emit("    if constexpr (has_custom_yield<Self>::value) {");
+        self.emit("        return self->yield();");
+        self.emit("    } else {");
+        self.emit("        return;");
+        self.emit("    }");
+        self.emit("}");
+        self.emit("");
         self.emit("template <typename T>");
         self.emit("inline void _fastlang_del(T* ptr) {");
         self.emit("    if (ptr) {");
@@ -256,6 +299,50 @@ impl CodeGenerator {
         self.emit("template <typename T>");
         self.emit("fastlang_copy<T>::fastlang_copy(const fastlang_modify<T>& m) : ptr(m.ptr) {}");
         self.emit("");
+        self.emit("template <typename T = std::function<void()>>");
+        self.emit("class fastlang_scope {");
+        self.emit("public:");
+        self.emit("    T callable{};");
+        self.emit("    bool _has_yield = false;");
+        self.emit("    bool _has_leave = false;");
+        self.emit("    bool _has_return = false;");
+        self.emit("    bool _is_done = false;");
+        self.emit("    int32_t yield_value = 0;");
+        self.emit("    int32_t leave_value = 0;");
+        self.emit("    int32_t return_value = 0;");
+        self.emit("");
+        self.emit("    fastlang_scope() : callable{} {}");
+        self.emit("    template <typename F, typename = std::enable_if_t<!std::is_same_v<std::decay_t<F>, fastlang_scope>>>");
+        self.emit("    fastlang_scope(F&& fn) : callable(std::forward<F>(fn)) {}");
+        self.emit("");
+        self.emit("    bool has_yield() const { return _has_yield; }");
+        self.emit("    bool has_leave() const { return _has_leave; }");
+        self.emit("    bool has_return() const { return _has_return; }");
+        self.emit("    bool is_done() const { return _is_done; }");
+        self.emit("");
+        self.emit("    template <typename... Args>");
+        self.emit("    auto operator()(Args&&... args) {");
+        self.emit("        _has_yield = false;");
+        self.emit("        _has_leave = false;");
+        self.emit("        if constexpr (std::is_invocable_v<T, Args...>) {");
+        self.emit("            using Ret = std::invoke_result_t<T, Args...>;");
+        self.emit("            if constexpr (std::is_void_v<Ret>) {");
+        self.emit("                callable(std::forward<Args>(args)...);");
+        self.emit("                _is_done = true;");
+        self.emit("            } else {");
+        self.emit("                auto res = callable(std::forward<Args>(args)...);");
+        self.emit("                if constexpr (std::is_convertible_v<Ret, int32_t>) {");
+        self.emit("                    return_value = static_cast<int32_t>(res);");
+        self.emit("                }");
+        self.emit("                _has_return = true;");
+        self.emit("                _is_done = true;");
+        self.emit("                return res;");
+        self.emit("            }");
+        self.emit("        }");
+        self.emit("    }");
+        self.emit("};");
+        self.emit("template <typename T> fastlang_scope(T) -> fastlang_scope<T>;");
+        self.emit("");
         self.emit("namespace fastlang_detail {");
         self.emit("    template <typename T, typename U>");
         self.emit("    auto arrow_assign_impl(T& target, const U& val, int) -> decltype(target.arrow_assign(val), void()) {");
@@ -354,6 +441,7 @@ impl CodeGenerator {
                 | Stmt::Declaration(Decl::CustomDecl { .. })
                 | Stmt::Declaration(Decl::EnumDecl { .. })
                 | Stmt::Declaration(Decl::FnDecl { .. })
+                | Stmt::Declaration(Decl::BlockDecl { .. })
                 | Stmt::Declaration(Decl::DestructureDecl { .. })
                 | Stmt::Declaration(Decl::VarDecl { .. }) => {
                     self.visit_statement(stmt);

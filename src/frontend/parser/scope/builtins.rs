@@ -5,7 +5,6 @@ use crate::frontend::parser::parser::Parser;
 
 impl Parser {
     pub(crate) fn parse_fn_decl(&mut self) -> Result<Decl, String> {
-        let mut settings: Vec<Setting> = Vec::new();
         //todo: handle methods for future updates
         let _handles: Vec<HandleMethods> = Vec::new();
         let _handle_block: Vec<Stmt> = Vec::new();
@@ -20,11 +19,7 @@ impl Parser {
             params: Vec::new(),
             return_type: return_type.clone(),
         };
-        //adding the default settings to the struct scope
-        settings.push(Setting::Statement);
-        settings.push(Setting::Return);
-        settings.push(Setting::Param);
-        settings.push(Setting::Handle);
+
 
         self.consume(TokenKind::LParen, "Expected '(' after function name")?;
         if self.peek().kind != TokenKind::RParen {
@@ -77,6 +72,36 @@ impl Parser {
             params,
             return_type,
             body: statement_block,
+        })
+    }
+
+    pub(crate) fn parse_block_scope_decl(&mut self) -> Result<Decl, String> {
+        self.advance(); // consume 'block'
+        let name = self.get_identifier("Expected block name")?;
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance();
+        }
+        self.consume(TokenKind::LBrace, "Expected '{' to open block body")?;
+        let mut statements = Vec::new();
+        while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+            match self.parse_statement(ScopeType::Block) {
+                Ok(Some(stmt)) => statements.push(stmt),
+                Ok(None) => {
+                    if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                        self.advance();
+                    }
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        self.consume(TokenKind::RBrace, "Expected '}' to close block body")?;
+        if self.peek().kind == TokenKind::SemiColon {
+            self.advance();
+        }
+        Ok(Decl::BlockDecl {
+            is_exported: false,
+            name,
+            statements,
         })
     }
 }

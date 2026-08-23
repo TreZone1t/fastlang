@@ -25,7 +25,6 @@ pub enum TokenKind {
     Return, // return
     Fn, // fn
     Del, // del
-    Add, // add
 
     Constructor, // constructor
     Extends, // extends
@@ -42,7 +41,6 @@ pub enum TokenKind {
     Try, // try
     Catch, // catch
     Throw, // throw
-    Enable, // enable
 
     //new meta
     Leave, // leave
@@ -94,6 +92,8 @@ pub enum TokenKind {
     TypeBlock, // block
     TypeClass, // class
     TypeEnum, // enum
+    TypeMethod, // method
+    TypeFn, // Fn
     //scopes fields
     Param, // param    //*  with  scope and fn and custom and init
     Init, // init for getting constructor   //* with  oop scopes and custom
@@ -188,7 +188,6 @@ impl TokenKind {
             TokenKind::Return => "return",
             TokenKind::Fn => "fn",
             TokenKind::Del => "del",
-            TokenKind::Add => "add",
             TokenKind::Extends => "extends",
             TokenKind::Super => "super",
             TokenKind::Import => "import",
@@ -202,7 +201,6 @@ impl TokenKind {
             TokenKind::Try => "try",
             TokenKind::Catch => "catch",
             TokenKind::Throw => "throw",
-            TokenKind::Enable => "enable",
             TokenKind::Leave => "leave",
             TokenKind::Yield => "yield",
             TokenKind::Goto => "goto",
@@ -224,6 +222,7 @@ impl TokenKind {
             TokenKind::Param => "param",
             TokenKind::Init => "init",
             TokenKind::TypeBluePrint => "blueprint",
+            TokenKind::Constructor => "constructor",
             TokenKind::Flag => "flag",
             TokenKind::TypeType => "type",
             TokenKind::Assign => "=",
@@ -272,6 +271,9 @@ impl TokenKind {
             TokenKind::TypeBool => Some("bool"),
             TokenKind::TypeChar => Some("char"),
             TokenKind::TypeVoid => Some("void"),
+            TokenKind::TypeMethod => Some("method"),
+            TokenKind::TypeFn => Some("Fn"),
+            TokenKind::Flag => Some("flag"),
             TokenKind::Scope => Some("scope"),
             TokenKind::TypeName => Some("name"),
             _ => None,

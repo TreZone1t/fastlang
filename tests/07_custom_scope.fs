@@ -1,5 +1,4 @@
 custom MathScope -> {
-    enable [operators, index_access, data, handle, display];
     data -> 10;  
     handle -> {
         fn add(other: MathScope) -> MathScope {
@@ -31,7 +30,7 @@ custom MathScope -> {
             return this.data + index;
         }
         fn display() -> int(32) {
-            return this.data;
+            return this.data; 
         }
     }
 }

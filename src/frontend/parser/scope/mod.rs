@@ -38,22 +38,15 @@ impl Parser {
             return true;
         }
         let mut all_settings: Vec<Setting> = Vec::new();
-        all_settings.push(Setting::Param);
-        all_settings.push(Setting::Private);
+        all_settings.push(Setting::Constructor);
         all_settings.push(Setting::Public);
+        all_settings.push(Setting::Private);
         all_settings.push(Setting::Static);
         all_settings.push(Setting::Extends);
         all_settings.push(Setting::Variants);
-        all_settings.push(Setting::Leave);
-        all_settings.push(Setting::Yield);
-        all_settings.push(Setting::Label);
-        all_settings.push(Setting::Data);
-        all_settings.push(Setting::Call);
-        all_settings.push(Setting::Error);
-        all_settings.push(Setting::Statement);
-        all_settings.push(Setting::Constructor);
         all_settings.push(Setting::Handle);
-        all_settings.push(Setting::Return);
+        all_settings.push(Setting::Data);
+        all_settings.push(Setting::Label);
         let t_s = Setting::from_token(t);
         for s in all_settings {
             if s == t_s {

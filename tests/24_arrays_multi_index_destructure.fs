@@ -1,5 +1,4 @@
 custom Matrix -> {
-    enable [ handle, data ];
     data -> 42;
     handle -> {
         fn index_access(r: int(32), c: int(32)) -> int(32) {

@@ -1,17 +1,17 @@
-
-//1. using handle to throw an error
+// 21_throw.fs
+// 1. using handle to throw an error
 custom IHaveThrow -> {
-    enable [handle , statement , call, error];
-    statement -> {
-        throw new error("this is an error");
-    }
     handle -> {
         fn has_error(e : error) -> void {
             log("caught error : ", e);
         }
+        fn call() -> void {
+            throw new error("this is an error");
+        }
     }
-};
-//2. using throw without handle in try catch
+}
+
+// 2. using throw without handle in try catch
 fn IHaveThrow2() -> void {
     try -> {
         throw new error("this is an error");
@@ -19,8 +19,9 @@ fn IHaveThrow2() -> void {
         log("caught error : ", e);
     }
 }
+
 fn main() -> int(32) {
-    IHaveThrow ();
-    IHaveThrow2 ();
+    IHaveThrow();
+    IHaveThrow2();
     return 0;
 }

@@ -74,6 +74,12 @@ pub enum BaseType {
         params: Vec<BaseType>,
         return_type: Box<BaseType>,
     },
+    Fn {
+        params: Vec<BaseType>,
+        return_type: Box<BaseType>,
+    },
+    Flag,
+    Scope(Box<BaseType>),
     Generic(Vec<BaseType>),
     GenericParam(String),
 
@@ -93,6 +99,8 @@ impl BaseType {
             BaseType::Float64 => "float64".to_string(),
             BaseType::Char => "char".to_string(),
             BaseType::Bool => "bool".to_string(),
+            BaseType::Flag => "flag".to_string(),
+            BaseType::Scope(t) => format!("scope<{}>", t.as_str()),
             BaseType::Void => "void".to_string(),
             BaseType::Modify(t) => format!("modify<{}>", t.as_str()),
             BaseType::Copy(t) => format!("copy<{}>", t.as_str()),
@@ -112,6 +120,10 @@ impl BaseType {
             BaseType::Enum { name, .. } => format!("enum<{}>", name),
             BaseType::Blueprint { name, .. } => format!("blueprint<{}>", name),
             BaseType::Method { .. } => "method".to_string(),
+            BaseType::Fn { params, return_type } => {
+                let p_strs: Vec<String> = params.iter().map(|p| p.as_str()).collect();
+                format!("Fn<({}), {}>", p_strs.join(", "), return_type.as_str())
+            }
             BaseType::GenericParam(name) => name.clone(),
             BaseType::Generic(inner_vec) => {
                 let strs: Vec<String> = inner_vec
@@ -243,38 +255,17 @@ impl Flag {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Setting {
-    //global to add a list of settings
-    All, // all of the settings
-    OOP, // private , public , static , extends , constructor
-    Function, // param , statement , return
-    Debug, // error , break , throw , exit , return
-    State, // leave , yield , goto , label , call
-    Call,
-    //fn
-    Param,
-    Statement,
-    Return,
-    //switch
-    Case,
-    Break,
-    //oop
+    All,
+    OOP,
+    Function,
+    Constructor,
     Private,
     Public,
     Static,
     Extends,
-    Constructor,
-    // enum
     Variants,
-    // scope settings
-    Label, //goto will be only supported in label and the call handle method
-    Yield,
-    Leave,
-    // array and str
+    Label,
     Data,
-    //all
-    Throw,
-    Error,
-    Exit,
     Handle,
     NotFound,
 }
@@ -282,33 +273,17 @@ pub enum Setting {
 impl Setting {
     pub fn from_str(s: &str) -> Self {
         match s {
-            //global -------
             "all" => Setting::All,
             "oop" => Setting::OOP,
             "function" => Setting::Function,
-            "debug" => Setting::Debug,
-            "state" => Setting::State,
-            //fn ---
-            "param" => Setting::Param,
-            "statement" => Setting::Statement,
-            "return" => Setting::Return,
-            //switch -------
-            "case" => Setting::Case,
-            "break" => Setting::Break,
-            //oop -------
-            "init" => Setting::Constructor,
+            "constructor" | "init" => Setting::Constructor,
             "private" => Setting::Private,
             "public" => Setting::Public,
             "static" => Setting::Static,
             "extends" => Setting::Extends,
             "label" => Setting::Label,
-            "yield" => Setting::Yield,
-            "leave" => Setting::Leave,
-            "call" => Setting::Call,
-            //enum --
             "variants" => Setting::Variants,
             "data" => Setting::Data,
-            "error" => Setting::Error,
             "handle" => Setting::Handle,
             _ => Setting::NotFound,
         }
@@ -316,43 +291,24 @@ impl Setting {
 
     pub fn as_str(&self) -> String {
         match self {
-            //global -----
             Setting::All => "all".to_string(),
             Setting::OOP => "oop".to_string(),
             Setting::Function => "function".to_string(),
-            Setting::Debug => "debug".to_string(),
-            Setting::State => "state".to_string(),
-            //fn -------
-            Setting::Param => "param".to_string(),
-            Setting::Statement => "statement".to_string(),
-            Setting::Return => "return".to_string(),
-            //switch -------
-            Setting::Case => "case".to_string(),
-            Setting::Break => "break".to_string(),
-            //oop -------
             Setting::Private => "private".to_string(),
             Setting::Public => "public".to_string(),
             Setting::Static => "static".to_string(),
             Setting::Extends => "extends".to_string(),
             Setting::Constructor => "constructor".to_string(),
-            Setting::Leave => "leave".to_string(),
-            Setting::Yield => "yield".to_string(),
             Setting::Label => "label".to_string(),
-            Setting::Call => "call".to_string(),
-            //enum -------
             Setting::Variants => "variants".to_string(),
             Setting::Data => "data".to_string(),
-            //all ------
-            Setting::Error => "error".to_string(),
-            Setting::Exit => "exit".to_string(),
-            Self::Throw => "throw".to_string(),
             Setting::Handle => "handle".to_string(),
             Setting::NotFound => "not_found".to_string(),
         }
     }
     pub fn from_token(t: TokenKind) -> Self {
         let s = TokenKind::as_str(&t);
-        return Setting::from_str(s);
+        Setting::from_str(s)
     }
 }
 #[derive(Debug, Clone, PartialEq, Copy, Eq, Hash)]
@@ -592,6 +548,11 @@ pub enum Expr {
         left: Box<Expr>,
         operator: String,
     },
+    Lambda {
+        params: Vec<Param>,
+        return_type: Option<BaseType>,
+        body: Vec<Stmt>,
+    },
 }
 impl Expr {
     pub fn as_str(&self) -> String {
@@ -618,6 +579,7 @@ impl Expr {
             Expr::BinaryOp { left: _, operator: _, right: _ } => "unimplemented".to_string(),
             Expr::PostfixUpdate { left, operator } => format!("{}{}", left.as_str(), operator),
             Expr::PrefixUpdate { right, operator } => format!("{}{}", operator, right.as_str()),
+            Expr::Lambda { .. } => "lambda".to_string(),
             Expr::UnaryOp { operator, operand } => format!("{}{}", operator, operand.as_str()),
             Expr::IndexAccess { object, indices } => {
                 let idxs: Vec<String> = indices.iter().map(|i| i.as_str()).collect();
@@ -721,19 +683,11 @@ pub enum Decl {
         name: String,
         settings: Option<Vec<Setting>>,
         handles: Option<Vec<HandleMethods>>,
-        params: Option<Vec<Param>>,
-        flags: Option<Vec<Flag>>,
-        labels: Option<Vec<String>>,
         data: Option<Expr>,
-        extends: String,
-        return_type: Option<BaseType>,
         public_block: Option<Vec<Decl>>,
         private_block: Option<Vec<Decl>>,
         static_block: Option<Vec<Decl>>,
-        statements: Option<Vec<Stmt>>,
-        label_blocks: Option<Vec<Decl>>,
-        variant_block: Option<Vec<EnumVariant>>,
-        generics: Option<Vec<BaseType>>,
+        labels: Option<HashMap<String, Decl>>,
         handle_block: Option<Vec<Decl>>,
         constructor: Option<Vec<ConstructorDecl>>,
     },

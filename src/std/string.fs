@@ -1,6 +1,5 @@
 // FastLang Standard Library: string
-export custom string -> {
-    enable [oop, handle, length, custom_constructor];
+export class string -> {
     private -> {
         char[] buffer = [];
         int(32) length = 0;

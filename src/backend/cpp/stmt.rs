@@ -34,7 +34,14 @@ pub(crate) fn type_to_cpp(t: &BaseType) -> String {
         }
         BaseType::Pointer(inner) => format!("{}*", type_to_cpp(inner)),
         BaseType::Name(inner) => {
-            if inner.as_str() == BaseType::Unknown.as_str() {
+            if let BaseType::Generic(ref vec) = &**inner {
+                if vec.len() == 1 && matches!(vec[0], BaseType::Fn { .. } | BaseType::Method { .. }) {
+                    return type_to_cpp(&vec[0]);
+                }
+            }
+            if matches!(&**inner, BaseType::Fn { .. } | BaseType::Method { .. }) {
+                type_to_cpp(inner)
+            } else if inner.as_str() == BaseType::Unknown.as_str() {
                 "fastlang_name".to_string()
             } else {
                 format!("fastlang_name<{}>", type_to_cpp(inner))
@@ -64,7 +71,20 @@ pub(crate) fn type_to_cpp(t: &BaseType) -> String {
                 }
             }
         }
+        BaseType::Flag => "bool".to_string(),
+        BaseType::Scope(inner) => {
+            if inner.as_str() == BaseType::Unknown.as_str() {
+                "fastlang_scope<std::function<void()>>".to_string()
+            } else {
+                format!("fastlang_scope<{}>", type_to_cpp(inner))
+            }
+        }
         BaseType::Array { base_type, .. } => format!("fastlang_slice<{}>", type_to_cpp(base_type)),
+        BaseType::Method { return_type, params } | BaseType::Fn { return_type, params } => {
+            let ret = type_to_cpp(return_type);
+            let p_types: Vec<String> = params.iter().map(type_to_cpp).collect();
+            format!("std::function<{}({})>", ret, p_types.join(", "))
+        }
         BaseType::Unknown => "auto".to_string(),
         _ => t.as_str(),
     }
@@ -274,12 +294,13 @@ impl CodeGenerator {
             Stmt::YieldStmt(expr) => {
                 self.yield_counter += 1;
                 let yid = self.yield_counter;
+                self.emit("this->has_yielded = true;");
                 self.emit(&format!("this->__state = {};", yid));
                 if let Some(e) = expr {
                     let expr_code = self.visit_expression(e);
                     self.emit(&format!("return {};", expr_code));
                 } else {
-                    self.emit("return yield();");
+                    self.emit("return _fastlang_do_yield(this);");
                 }
                 self.emit(&format!("case {}:;", yid));
             }
@@ -392,7 +413,17 @@ impl CodeGenerator {
                 };
                 let is_const = editability == &Editability::NotEditable;
                 let const_prefix = if is_const { "const " } else { "" };
-                let cpp_type = type_to_cpp(type_node);
+                let cpp_type = if matches!(type_node, BaseType::Method { .. } | BaseType::Fn { .. }) {
+                    "auto".to_string()
+                } else if let BaseType::Name(inner) = type_node {
+                    if matches!(&**inner, BaseType::Fn { .. } | BaseType::Method { .. }) {
+                        "auto".to_string()
+                    } else {
+                        type_to_cpp(type_node)
+                    }
+                } else {
+                    type_to_cpp(type_node)
+                };
 
                 let is_value_type = !matches!(type_node, BaseType::Pointer(_) | BaseType::Name(_) | BaseType::Modify(_) | BaseType::Copy(_));
                 let val_code = if is_value_type {
@@ -521,6 +552,7 @@ impl CodeGenerator {
                 public_block,
                 private_block,
                 static_block,
+                handle_block,
                 constructor,
                 generics,
                 is_exported: _,
@@ -541,13 +573,37 @@ impl CodeGenerator {
                 self.emit(&format!("class {} {} {{", name, ext_code));
                 self.emit("public:");
                 self.indent_level += 1;
+
+                let has_display = handle_block.iter().any(|h| {
+                    if let Decl::FnDecl { name: fn_name, .. } = h {
+                        fn_name == "display"
+                    } else {
+                        false
+                    }
+                });
+
+                if has_display {
+                    self.emit(
+                        &format!("friend std::ostream& operator<<(std::ostream& os, {}& obj) {{", name)
+                    );
+                    self.emit("    os << obj.display();");
+                    self.emit("    return os;");
+                    self.emit("}");
+                }
+
+                self.emit_operator_overloads(&Some(handle_block.clone()));
+
                 for s in public_block {
                     self.visit_declaration(s);
+                }
+                for h in handle_block {
+                    self.visit_declaration(h);
                 }
                 for s in static_block {
                     self.emit("static ");
                     self.visit_declaration(s);
                 }
+                self.emit(&format!("{}() {{}}", name));
                 if let Some(constructors) = constructor {
                     for c in constructors {
                         let param_list: Vec<String> = c.params
@@ -655,34 +711,39 @@ impl CodeGenerator {
             }
             Decl::CustomDecl {
                 name,
-                generics,
                 settings,
-                params: _,
                 constructor,
-                statements,
                 public_block,
                 private_block,
-                flags,
-                labels: _,
+                static_block,
+                labels,
                 data,
                 handle_block,
-                label_blocks,
                 ..
             } => {
-                if let Some(ref gens) = generics {
-                    if !gens.is_empty() {
-                        let gen_params: Vec<String> = gens
-                            .iter()
-                            .map(|g| format!("typename {}", g.as_str()))
-                            .collect();
-                        self.emit(&format!("template <{}>", gen_params.join(", ")));
-                    }
-                }
                 self.custom_scopes.insert(name.clone());
                 self.emit(&format!("class {} {{", name));
                 self.emit("public:");
                 self.indent_level += 1;
                 self.emit("int __state = 0;");
+                self.emit("bool has_yielded = false;");
+                self.emit("bool is_done = false;");
+
+                let has_custom_has_error = if let Some(handles) = handle_block {
+                    handles.iter().any(|h| {
+                        if let Decl::FnDecl { name: fn_name, .. } = h {
+                            fn_name == "has_error" || fn_name == "_throw"
+                        } else {
+                            false
+                        }
+                    })
+                } else {
+                    false
+                };
+
+                if !has_custom_has_error {
+                    self.emit("bool has_error = false;");
+                }
 
                 let has_display = if let Some(handles) = handle_block {
                     handles.iter().any(|h| {
@@ -714,8 +775,7 @@ impl CodeGenerator {
 
                 self.emit_operator_overloads(handle_block);
 
-                let has_data_setting = settings.as_ref().map_or(false, |s| s.iter().any(|setting| matches!(setting, Setting::Data | Setting::All)))
-                    || flags.as_ref().map_or(false, |f| f.iter().any(|flag| flag.as_str() == "data"));
+                let has_data_setting = settings.as_ref().map_or(false, |s| s.iter().any(|setting| matches!(setting, Setting::Data | Setting::All)));
 
                 if let Some(d) = data {
                     let d_code = self.visit_expression(d);
@@ -732,31 +792,6 @@ impl CodeGenerator {
                     self.emit("int32_t data[1024] = {0};");
                 }
 
-                let mut default_flags = std::collections::HashSet::from([
-                    "has_return",
-                    "has_break",
-                    "has_throw",
-                    "has_switch",
-                    "has_exit",
-                ]);
-                let mut enabled_flags = std::collections::HashSet::new();
-
-                if let Some(flags_vec) = flags {
-                    for flag in flags_vec {
-                        let flag_name = match flag {
-                            Flag::HasReturn => "has_return",
-                            Flag::HasBreak => "has_break",
-                            Flag::HasThrow => "has_throw",
-                            Flag::HasError => "has_error",
-                            Flag::HasSwitch => "has_switch",
-                            Flag::HasExit => "has_exit",
-                            Flag::Custom(s) => s.as_str(),
-                        };
-                        enabled_flags.insert(flag_name.to_string());
-                        default_flags.remove(flag_name);
-                    }
-                }
-
                 let mut has_throw_handle = false;
                 let mut error_handle_method: Option<String> = None;
                 if let Some(handles) = handle_block {
@@ -770,19 +805,6 @@ impl CodeGenerator {
                         }
                     }
                 }
-
-                if has_throw_handle {
-                    enabled_flags.insert("has_throw".to_string());
-                    default_flags.remove("has_throw");
-                }
-
-                for flag in &default_flags {
-                    self.emit(&format!("bool {} = false;", flag));
-                }
-                for flag in &enabled_flags {
-                    self.emit(&format!("bool {} = true;", flag));
-                }
-
 
                 if let Some(handles) = handle_block {
                     for h in handles {
@@ -802,9 +824,9 @@ impl CodeGenerator {
                                 for s in body {
                                     self.visit_statement(s);
                                 }
-                                if let Some(ref l_blocks) = label_blocks {
-                                    for lb in l_blocks {
-                                        if let Decl::LabelDecl { name: l_name, body: l_body } = lb {
+                                if let Some(ref lbl_map) = labels {
+                                    for (l_name, lb) in lbl_map {
+                                        if let Decl::LabelDecl { body: l_body, .. } = lb {
                                             let clean_name = l_name.replace("@", "");
                                             self.emit(&format!("{}:", clean_name));
                                             for stmt in l_body {
@@ -813,14 +835,11 @@ impl CodeGenerator {
                                         }
                                     }
                                 }
+                                self.indent_level -= 1;
+                                self.emit("}");
                                 if ret_type_str != "void" {
                                     self.emit("return {};");
                                 }
-
-                                self.indent_level -= 1;
-                                self.emit("}");
-                                self.indent_level -= 1;
-                                self.emit("}");
                                 if has_throw_handle {
                                     self.indent_level -= 1;
                                     self.emit("} catch (const std::exception& __e) {");
@@ -830,48 +849,13 @@ impl CodeGenerator {
                                     self.indent_level -= 1;
                                     self.emit("}");
                                 }
+                                self.indent_level -= 1;
+                                self.emit("}");
                                 continue;
                             }
                         }
                         self.visit_declaration(h);
                     }
-                }
-
-                let has_call_handle = handle_block.as_ref().map_or(false, |handles: &Vec<Decl>| {
-                    handles.iter().any(|h| {
-                        if let Decl::FnDecl { name, .. } = h { name == "call" } else { false }
-                    })
-                });
-
-                let has_statements = statements.as_ref().map_or(false, |b: &Vec<Stmt>| !b.is_empty());
-                let has_zero_arg_init = constructor.as_ref().map_or(true, |vec| vec.iter().any(|c| c.params.is_empty()));
-                let should_generate_call = !has_call_handle && has_statements && has_zero_arg_init;
-                if should_generate_call {
-                    self.emit("void call() {");
-                    self.indent_level += 1;
-                    if has_throw_handle {
-                        self.emit("try {");
-                        self.indent_level += 1;
-                    }
-                    self.emit("switch(this->__state) {");
-                    self.emit("case 0:");
-                    self.indent_level += 1;
-
-                    self.emit("init();");
-
-                    self.indent_level -= 1;
-                    self.emit("}");
-                    if has_throw_handle {
-                        self.indent_level -= 1;
-                        self.emit("} catch (const std::exception& __e) {");
-                        self.indent_level += 1;
-                        let m_name = error_handle_method.as_deref().unwrap_or("_throw");
-                        self.emit(&format!("this->{}(__e);", m_name));
-                        self.indent_level -= 1;
-                        self.emit("}");
-                    }
-                    self.indent_level -= 1;
-                    self.emit("}");
                 }
 
                 self.emit(&format!("{}() {{}}", name));
@@ -896,19 +880,16 @@ impl CodeGenerator {
                         self.emit("}");
                     }
                 } else {
-                    self.emit("void init() {");
-                    self.indent_level += 1;
-                    if let Some(stmts) = statements {
-                        for s in stmts {
-                            self.visit_statement(s);
-                        }
-                    }
-                    self.indent_level -= 1;
-                    self.emit("}");
+                    self.emit("void init() {}");
                 }
 
                 if let Some(pub_stmts) = public_block {
                     for s in pub_stmts {
+                        self.visit_declaration(s);
+                    }
+                }
+                if let Some(stat_stmts) = static_block {
+                    for s in stat_stmts {
                         self.visit_declaration(s);
                     }
                 }
@@ -934,6 +915,55 @@ impl CodeGenerator {
                 }
                 self.indent_level -= 1;
                 self.emit("}");
+            }
+            Decl::BlockDecl { name, statements, .. } => {
+                let has_yield = statements.iter().any(|s| matches!(s, Stmt::YieldStmt(_)));
+                self.emit(&format!("struct __block_type_{} {{", name));
+                self.indent_level += 1;
+                self.emit("int32_t __state = 0;");
+                self.emit("bool has_yielded = false;");
+                self.emit("bool is_done = false;");
+                self.emit("bool has_error = false;");
+                for s in statements {
+                    if let Stmt::Declaration(Decl::VarDecl { name: f_name, type_node, .. }) = s {
+                        let cpp_t = type_to_cpp(type_node);
+                        self.emit(&format!("{} {};", cpp_t, f_name));
+                    }
+                }
+                self.emit("void operator()() {");
+                self.indent_level += 1;
+                if has_yield {
+                    self.emit("switch(this->__state) {");
+                    self.emit("case 0:");
+                    self.indent_level += 1;
+                }
+                for s in statements {
+                    match s {
+                        Stmt::Declaration(Decl::VarDecl { name: f_name, value, assign_op, .. }) => {
+                            let val_code = self.visit_expression(value);
+                            if val_code != "__default__" {
+                                if assign_op == "->" {
+                                    self.emit(&format!("fastlang_arrow_assign(this->{}, {});", f_name, val_code));
+                                } else {
+                                    self.emit(&format!("this->{} = {};", f_name, val_code));
+                                }
+                            }
+                        }
+                        _ => {
+                            self.visit_statement(s);
+                        }
+                    }
+                }
+                if has_yield {
+                    self.indent_level -= 1;
+                    self.emit("}");
+                    self.emit("this->has_yielded = false;");
+                    self.emit("this->is_done = true;");
+                }
+                self.indent_level -= 1;
+                self.emit("}");
+                self.indent_level -= 1;
+                self.emit(&format!("}} {};", name));
             }
             _ => {
                 self.emit(&format!("// TODO: unimplemented declaration {:?}", decl));

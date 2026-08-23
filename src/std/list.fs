@@ -1,8 +1,7 @@
 // Standard Library: List utilities
 // using the scope system to define behavior
 
-export custom node<T> -> {
-    enable [oop, custom_generic];
+export class node<T> -> {
     private -> {
         T value;
         name<node<T>> next = null;
@@ -29,8 +28,7 @@ export custom node<T> -> {
     }
 }
 
-export custom list<T> -> {
-    enable [oop, handle, custom_generic, length, custom_constructor];
+export class list<T> -> {
     private -> {
         name<node<T>> head = null;
         int(32) length = 0;

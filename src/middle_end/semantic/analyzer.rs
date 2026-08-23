@@ -126,7 +126,11 @@ impl SemanticAnalyzer {
             expr_type.starts_with("name<") ||
             expr_type.starts_with("modify<") ||
             expr_type.starts_with("copy<") ||
-            expr_type.starts_with("pointer<")
+            expr_type.starts_with("pointer<") ||
+            expr_type.starts_with("scope") ||
+            expr_type.starts_with("Fn<") ||
+            expr_type.starts_with("method") ||
+            expr_type == "fn"
         {
             return true;
         }
@@ -670,29 +674,24 @@ impl SemanticAnalyzer {
                 name,
                 settings,
                 handles,
-                params,
-                flags,
                 data,
                 public_block,
                 private_block,
                 static_block,
-                statements,
+                labels,
                 handle_block,
                 constructor,
-                ..
             } => {
                 self.analyze_custom_decl(
                     *is_exported,
                     name,
                     settings,
                     handles,
-                    params,
-                    flags,
                     data,
                     public_block,
                     private_block,
                     static_block,
-                    statements,
+                    labels,
                     handle_block,
                     constructor
                 )?;
@@ -757,12 +756,36 @@ impl SemanticAnalyzer {
                 self.in_custom_scope = prev;
             }
 
-            Decl::BlockDecl { statements, .. } => {
+            Decl::BlockDecl { is_exported, name, statements } => {
+                let mut bp = BlueprintData::new(name);
                 self.enter_scope();
                 for s in statements {
+                    if let Stmt::Declaration(Decl::VarDecl { name: f_name, type_node, .. }) = s {
+                        bp.fields.insert(f_name.clone(), type_node.clone());
+                    }
                     self.visit_statement(s)?;
                 }
                 self.leave_scope();
+
+                self.current_env.borrow_mut().define_blueprint(name.to_string(), bp);
+
+                let info = SymbolInfo {
+                    name: name.clone(),
+                    kind: SymbolKind::Variable {
+                        type_node: BaseType::Custom {
+                            name: name.clone(),
+                            fields: Box::new(std::collections::HashMap::new()),
+                            methods: Box::new(std::collections::HashMap::new()),
+                            generics: vec![],
+                            params: vec![],
+                        },
+                        editability: Editability::Editable,
+                        is_array: false,
+                    },
+                    visibility: if *is_exported { Visibility::Public } else { Visibility::Private },
+                    dependencies: vec![],
+                };
+                self.current_env.borrow_mut().define(name.to_string(), info)?;
             }
 
             Decl::FnDecl { is_exported, name, params, return_type, body } => {
@@ -1168,46 +1191,22 @@ impl SemanticAnalyzer {
         &mut self,
         is_exported: bool,
         name: &str,
-        settings: &Option<Vec<Setting>>,
+        _settings: &Option<Vec<Setting>>,
         handles: &Option<Vec<HandleMethods>>,
-        params: &Option<Vec<Param>>,
-        flags: &Option<Vec<Flag>>,
         data: &Option<Expr>,
         public_block: &Option<Vec<Decl>>,
         private_block: &Option<Vec<Decl>>,
         static_block: &Option<Vec<Decl>>,
-        statements: &Option<Vec<Stmt>>,
+        labels: &Option<std::collections::HashMap<String, Decl>>,
         handle_block: &Option<Vec<Decl>>,
         constructor: &Option<Vec<ConstructorDecl>>
     ) -> Result<(), String> {
-        // Validate settings combinations
-        if let Some(s) = settings {
-            let has_public = s.contains(&Setting::Public);
-            let has_private = s.contains(&Setting::Private);
-            let has_stmt = s.contains(&Setting::Statement);
-            let has_label = s.contains(&Setting::Label);
-
-            if has_label && (has_public || has_private || has_stmt) {
-                return Err(
-                    format!("Semantic Error: Custom block '{}' is marked as 'label' and cannot be combined with other modifiers.", name)
-                );
-            }
-            if has_stmt && (has_public || has_private) {
-                return Err(
-                    format!("Semantic Error: Custom block '{}' is marked as 'statement' and cannot have 'public' or 'private' modifiers.", name)
-                );
-            }
-        }
-
         // Build BlueprintData for this custom scope
         let mut bp = BlueprintData::new(name);
         if let Some(h_vec) = handles {
             for h in h_vec {
                 bp.handles.insert(*h);
             }
-        }
-        if let Some(p_vec) = params {
-            bp.params = p_vec.clone();
         }
         if let Some(pb) = public_block {
             for d in pb {
@@ -1257,11 +1256,6 @@ impl SemanticAnalyzer {
 
         self.active_return_type = None;
 
-        if let Some(f_vec) = flags {
-            for flg in f_vec {
-                self.active_flags.push(format!("+{}", flg.as_str()));
-            }
-        }
         if let Some(h_vec) = handles {
             if h_vec.contains(&HandleMethods::Error) {
                 self.active_flags.push("+has_throw".to_string());
@@ -1287,22 +1281,6 @@ impl SemanticAnalyzer {
             self.current_env.borrow_mut().define("data".to_string(), data_info)?;
         }
 
-        if let Some(p_vec) = params {
-            for p in p_vec {
-                let param_info = SymbolInfo {
-                    name: p.name.clone(),
-                    kind: SymbolKind::Variable {
-                        type_node: p.type_node.clone(),
-                        editability: Editability::Editable,
-                        is_array: false,
-                    },
-                    visibility: Visibility::Private,
-                    dependencies: vec![],
-                };
-                self.current_env.borrow_mut().define(p.name.clone(), param_info)?;
-            }
-        }
-
         if let Some(pb) = private_block {
             for d in pb {
                 self.visit_declaration(d)?;
@@ -1319,13 +1297,10 @@ impl SemanticAnalyzer {
             }
         }
 
-        if let Some(stmts) = statements {
-            let prev = self.in_statement_scope;
-            self.in_statement_scope = true;
-            for s in stmts {
-                self.visit_statement(s)?;
+        if let Some(lbl_map) = labels {
+            for (_, d) in lbl_map {
+                self.visit_declaration(d)?;
             }
-            self.in_statement_scope = prev;
         }
 
         if let Some(constructors) = constructor {
@@ -1734,6 +1709,14 @@ impl SemanticAnalyzer {
             Expr::PropertyAccess { object, property } => {
                 let obj_type = self.visit_expression(object)?;
 
+                if obj_type.starts_with("scope") {
+                    match property.as_str() {
+                        "has_yield" | "has_leave" | "has_return" | "is_done" => return Ok("bool".to_string()),
+                        "yield_value" | "leave_value" | "return_value" | "result" => return Ok("any".to_string()),
+                        _ => {}
+                    }
+                }
+
                 // Try to find in blueprint
                 let bp_name_opt = extract_blueprint_name_from_type(&obj_type).or_else(|| Some(obj_type.clone()));
                 if let Some(bp_name) = bp_name_opt {
@@ -1788,6 +1771,28 @@ impl SemanticAnalyzer {
                 Ok("str".to_string())
             }
 
+            Expr::Lambda { params, body, .. } => {
+                self.enter_scope();
+                for p in params {
+                    let p_info = SymbolInfo {
+                        name: p.name.clone(),
+                        kind: SymbolKind::Variable {
+                            type_node: p.type_node.clone(),
+                            editability: Editability::Editable,
+                            is_array: false,
+                        },
+                        visibility: Visibility::Private,
+                        dependencies: vec![],
+                    };
+                    self.current_env.borrow_mut().define(p.name.clone(), p_info)?;
+                }
+                for s in body {
+                    self.visit_statement(s)?;
+                }
+                self.leave_scope();
+                Ok("method".to_string())
+            }
+
             _ => Ok("unknown".to_string()),
         }
     }
@@ -1797,6 +1802,16 @@ impl SemanticAnalyzer {
     // ----------------------------------------------------------
     fn types_are_compatible(&self, expected: &str, actual: &str) -> bool {
         if expected == actual || expected == "any" || actual == "unknown" || actual == "auto" {
+            return true;
+        }
+        if (expected == "flag" && actual == "bool") || (expected == "bool" && actual == "flag") {
+            return true;
+        }
+        if expected.starts_with("scope") || actual.starts_with("scope") {
+            return true;
+        }
+        if (expected.starts_with("method") || expected.starts_with("Fn") || expected.contains("<Fn<")) &&
+           (actual.starts_with("method") || actual.starts_with("Fn") || actual.contains("<Fn<") || actual == "fn") {
             return true;
         }
         // int family

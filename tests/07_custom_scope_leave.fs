@@ -1,8 +1,5 @@
 // Valid: complete custom scope with label , goto , leave , call , data
 custom recursion_chaos -> {
-    enable [label,goto , leave , call , data];
-    add label -> @start;
-    add label -> @process;
     data -> 0;
     @start -> {
       if (this.data <= 0) {

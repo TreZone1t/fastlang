@@ -117,7 +117,10 @@ impl SymbolInfo {
                     base
                 }
             }
-            SymbolKind::Function { return_type, .. } => return_type.as_str(),
+            SymbolKind::Function { params, return_type, .. } => {
+                let p_strs: Vec<String> = params.iter().map(|p| p.type_node.as_str()).collect();
+                format!("Fn<({}), {}>", p_strs.join(", "), return_type.as_str())
+            }
             SymbolKind::Blueprint => "blueprint".to_string(),
             SymbolKind::Label => "label".to_string(),
         }
