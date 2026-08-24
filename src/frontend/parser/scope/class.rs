@@ -88,7 +88,8 @@ impl Parser {
                 // handle -> { fn1 , fn2 , ... }
                 //====================================================================
                 if t == TokenKind::Handle && !used_settings.contains(&Setting::Handle) {
-                    handle_block = self.parse_handle_block(&mut used_handles)?;
+                    self.advance(); // consume 'handle'
+                    handle_block = self.parse_handle_body(&mut used_handles)?;
                     used_settings.push(Setting::Handle);
                     continue;
                 }
@@ -179,7 +180,6 @@ impl Parser {
             name,
             extends,
             handles: used_handles,
-            settings: used_settings,
             public_block,
             private_block,
             static_block,

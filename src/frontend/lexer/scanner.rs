@@ -81,12 +81,12 @@ impl Scanner {
             "else" => Some(TokenKind::Else),
             "for" => Some(TokenKind::For),
             "in" => Some(TokenKind::In),
-            "switch" => Some(TokenKind::Switch),
-            "case" => Some(TokenKind::Case),
+            "match" => Some(TokenKind::Match),
 
             // loops
             "loop" => Some(TokenKind::Loop),
             "while" => Some(TokenKind::While),
+            "do" => Some(TokenKind::Do),
             "continue" => Some(TokenKind::Continue),
             "break" => Some(TokenKind::Break),
 
@@ -123,7 +123,6 @@ impl Scanner {
 
             "type" => Some(TokenKind::TypeType),
             "handle" => Some(TokenKind::Handle),
-            "variants" => Some(TokenKind::Variants),
             "public" => Some(TokenKind::Public),
             "private" => Some(TokenKind::Private),
 
@@ -154,6 +153,7 @@ impl Scanner {
             "void" => Some(TokenKind::TypeVoid),
             "object" => Some(TokenKind::TypeObject),
             "block" => Some(TokenKind::TypeBlock),
+            "micro" => Some(TokenKind::TypeMicro),
 
             "try" => Some(TokenKind::Try),
             "catch" => Some(TokenKind::Catch),

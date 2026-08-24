@@ -1,7 +1,7 @@
 // FastLang Standard Library: string
 export class string -> {
     private -> {
-        char[] buffer = [];
+        char[] buffer = []; //we will use list in future not array.
         int(32) length = 0;
     }
 
@@ -9,19 +9,22 @@ export class string -> {
         fn get_buffer() -> char[] {
             return this.buffer;
         }
+        fn size() -> int(32) {
+            return this.length;
+        }
     }
 
     handle -> {
+        fn display() -> {
+            return this.buffer;
+        }
         fn arrow(arr: char[]) -> void {
             this.buffer = arr;
-            this.length = arr.size();
+            this.length = arr.length;
         }
         fn arrow_assign(arr: char[]) -> void {
             this.buffer = arr;
-            this.length = arr.size();
-        }
-        fn size() -> int(32) {
-            return this.length;
+            this.length = arr.length;
         }
         fn index_access(index: int(32)) -> char {
             return this.buffer[index];
@@ -29,9 +32,12 @@ export class string -> {
     }
 
     constructor -> {
+        init() -> {
+            this.length = 0;
+        }
         init(arr: char[]) -> {
             this.buffer = arr;
-            this.length = arr.size();
+            this.length = arr.length;
         }
     }
 }

@@ -77,10 +77,31 @@ impl Parser {
 
     pub(crate) fn parse_block_scope_decl(&mut self) -> Result<Decl, String> {
         self.advance(); // consume 'block'
+        let mut return_type = None;
+        if self.peek().kind == TokenKind::Less {
+            self.advance(); // consume '<'
+            return_type = Some(self.parse_type()?);
+            self.consume(TokenKind::Greater, "Expected '>' to close block return type")?;
+        }
+
         let name = self.get_identifier("Expected block name")?;
+
+        if self.peek().kind == TokenKind::Assign {
+            self.advance(); // consume '='
+        }
+
+        if self.peek().kind == TokenKind::LParen {
+            self.advance();
+            self.consume(TokenKind::RParen, "Expected ')' after block parameters")?;
+        }
+
         if self.peek().kind == TokenKind::Arrow {
             self.advance();
+            if self.peek().kind != TokenKind::LBrace {
+                return_type = Some(self.parse_type()?);
+            }
         }
+
         self.consume(TokenKind::LBrace, "Expected '{' to open block body")?;
         let mut statements = Vec::new();
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
@@ -101,7 +122,100 @@ impl Parser {
         Ok(Decl::BlockDecl {
             is_exported: false,
             name,
+            return_type,
             statements,
+        })
+    }
+
+    pub(crate) fn parse_micro_decl(&mut self) -> Result<Decl, String> {
+        self.advance(); // consume 'micro'
+        let name = self.get_identifier("Expected micro name")?;
+
+        let mut generics = None;
+        if self.peek().kind == TokenKind::Less {
+            self.advance(); // consume '<'
+            let mut g_list = Vec::new();
+            while !self.is_at_end() && self.peek().kind != TokenKind::Greater {
+                let g_name = self.get_identifier("Expected generic type parameter name")?;
+                g_list.push(g_name);
+                if self.peek().kind == TokenKind::Comma {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            self.consume(TokenKind::Greater, "Expected '>' to close micro generics")?;
+            generics = Some(g_list);
+        }
+
+        if self.peek().kind == TokenKind::Assign {
+            self.advance(); // consume '='
+        }
+
+        let mut params = Vec::new();
+        if self.peek().kind == TokenKind::LParen {
+            self.advance(); // consume '('
+            if self.peek().kind != TokenKind::RParen {
+                loop {
+                    let p_name = self.get_identifier("Expected parameter name in micro")?;
+                    self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
+                    let p_type = self.parse_type()?;
+                    params.push(Param {
+                        name: p_name,
+                        type_node: p_type,
+                    });
+                    if self.peek().kind == TokenKind::Comma {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            self.consume(TokenKind::RParen, "Expected ')' after micro parameters")?;
+        }
+
+        let mut return_type = None;
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance(); // consume '->'
+            if self.peek().kind != TokenKind::LBrace {
+                return_type = Some(self.parse_type()?);
+            }
+        }
+
+        let body = if self.peek().kind == TokenKind::LBrace {
+            self.advance(); // consume '{'
+            let mut stmts = Vec::new();
+            while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                match self.parse_statement(ScopeType::Block) {
+                    Ok(Some(stmt)) => stmts.push(stmt),
+                    Ok(None) => {
+                        if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                            self.advance();
+                        }
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
+            self.consume(TokenKind::RBrace, "Expected '}' to close micro body")?;
+            stmts
+        } else {
+            match self.parse_statement(ScopeType::Block)? {
+                Some(stmt) => vec![stmt],
+                None => vec![],
+            }
+        };
+
+        if self.peek().kind == TokenKind::SemiColon {
+            self.advance();
+        }
+
+        Ok(Decl::MicroDecl {
+            is_exported: false,
+            name,
+            generics,
+            params,
+            return_type,
+            body,
         })
     }
 }

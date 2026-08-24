@@ -4,8 +4,6 @@ use crate::frontend::parser::ast::*;
 
 impl CodeGenerator {
     pub(crate) fn visit_expression(&mut self, expr: &Expr) -> String {
-        //debug
-        println!("Visiting expression: {:?}", expr);
         match expr {
             Expr::LiteralInt(val) => val.to_string(),
             Expr::LiteralFloat(f) => format!("{:?}", f),
@@ -120,7 +118,11 @@ impl CodeGenerator {
                     args_code.push(self.visit_expression(arg));
                 }
 
+                if self.custom_scope_types.contains(&callee_code) {
+                    format!("{}({})()", callee_code, args_code.join(", "))
+                } else {
                     format!("{}({})", callee_code, args_code.join(", "))
+                }
             }
             Expr::Instantiate { target, args } => {
                 let target_code = self.visit_expression(target);
@@ -164,10 +166,14 @@ impl CodeGenerator {
                 let obj_code = self.visit_expression(object);
                 if obj_code == "::" {
                     format!("::{}", property)
+                } else if self.enum_types.contains(&obj_code) {
+                    format!("{}::{}", obj_code, property)
                 } else if obj_code == "super" || obj_code == "this" {
                     format!("this->{}", property)
                 } else if self.pointer_vars.contains(&obj_code) {
                     format!("{}->{}", obj_code, property)
+                } else if property == "length" {
+                    format!("((int32_t)fastlang_len({}))", obj_code)
                 } else {
                     format!("{}.{}", obj_code, property)
                 }

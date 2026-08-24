@@ -100,7 +100,13 @@ impl BaseType {
             BaseType::Char => "char".to_string(),
             BaseType::Bool => "bool".to_string(),
             BaseType::Flag => "flag".to_string(),
-            BaseType::Scope(t) => format!("scope<{}>", t.as_str()),
+            BaseType::Scope(t) => {
+                if matches!(**t, BaseType::Unknown) {
+                    "scope".to_string()
+                } else {
+                    format!("scope<{}>", t.as_str())
+                }
+            }
             BaseType::Void => "void".to_string(),
             BaseType::Modify(t) => format!("modify<{}>", t.as_str()),
             BaseType::Copy(t) => format!("copy<{}>", t.as_str()),
@@ -149,6 +155,7 @@ impl BaseType {
             "char" => BaseType::Char,
             "bool" => BaseType::Bool,
             "void" => BaseType::Void,
+            "scope" => BaseType::Scope(Box::new(BaseType::Unknown)),
             "name" => BaseType::Name(Box::new(BaseType::Generic(Vec::new()))), // name<T,T2,T3> //T , T2 , T3 are the expected types for the name but after
             "modify" => BaseType::Modify(Box::new(BaseType::Unknown)),
             "copy" => BaseType::Copy(Box::new(BaseType::Unknown)),
@@ -209,6 +216,9 @@ pub enum ScopeType {
     Global,
     Label,
     Handle,
+    Method,
+    Macro,
+    Coroutine,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
@@ -263,7 +273,6 @@ pub enum Setting {
     Public,
     Static,
     Extends,
-    Variants,
     Label,
     Data,
     Handle,
@@ -282,7 +291,6 @@ impl Setting {
             "static" => Setting::Static,
             "extends" => Setting::Extends,
             "label" => Setting::Label,
-            "variants" => Setting::Variants,
             "data" => Setting::Data,
             "handle" => Setting::Handle,
             _ => Setting::NotFound,
@@ -300,7 +308,6 @@ impl Setting {
             Setting::Extends => "extends".to_string(),
             Setting::Constructor => "constructor".to_string(),
             Setting::Label => "label".to_string(),
-            Setting::Variants => "variants".to_string(),
             Setting::Data => "data".to_string(),
             Setting::Handle => "handle".to_string(),
             Setting::NotFound => "not_found".to_string(),
@@ -313,54 +320,54 @@ impl Setting {
 }
 #[derive(Debug, Clone, PartialEq, Copy, Eq, Hash)]
 pub enum HandleMethods {
-    IndexAccess, // scope[i]
-    IndexAssign, // scope[i] = value;
-    IndexIncrement, //scope[i]++
-    IndexDecrement, //scope[i]--
-    IndexPreIncrement, //++scope[i]
-    IndexPreDecrement, //--scope[i]
-    IndexAdd, //scope[i] += value;
-    IndexSub, //scope[i] -= value;
-    IndexMul, //scope[i] *= value;
-    IndexDiv, //scope[i] /= value;
-    IndexMod, //scope[i] %= value;
-    Display, // log() or to_string()
-    Add, //+ operator
-    Increment, //++ operator
-    Decrement, //-- operator
-    PreIncrement, //++ operator
-    PreDecrement, //-- operator
-    Sub, //- operator
-    Mul, //* operator
-    Div,
-    /// operator
-    Mod, //% operator
-    Not, // ! operator
-    Negate, //- operator
-    Arrow, //-> operator
-    ArrowAssign, //-> operator
-    FatArrow, //=> operator
-    Equal, //= operator
-    PartialEqual, //== operator
-    NotEqual, // != operator
-    GreaterThan, //> operator
-    LessThan, //< operator
-    GreaterThanEqual, //>= operator
-    LessThanEqual, //<= operator
-    And, // && operator
-    Or, // || operator
-    Iterator, // for in loop
-    Next, // for in loop
-    Length, // length()
-    Size, // sizeof()
-    Call, // handle the call of the scope : scope();
-    Leave, // leave
-    Yield, // yield
-    Data, //todo : remove this
+    IndexAccess,
+    IndexAssign,
+    IndexIncrement,
+    IndexDecrement,
+    IndexPreIncrement,
+    IndexPreDecrement,
+    IndexAdd,
+    IndexSub,
+    IndexMul,
+    IndexDiv,
+    IndexMod,
+    Display, // display()
+    Add, // add
+    Increment,
+    Decrement,
+    PreIncrement,
+    PreDecrement,
+    Sub, // sub
+    Mul, // mul
+    Div, // div
+    Mod, // mod
+    Not,
+    Negate,
+    Arrow,
+    ArrowAssign,
+    FatArrow,
+    Equal,
+    PartialEqual,
+    NotEqual,
+    GreaterThan,
+    LessThan,
+    GreaterThanEqual,
+    LessThanEqual,
+    And,
+    Or,
+    Iterator, // iterator()
+    Next, // next()
+    Call,
+    Leave,
+    Yield,
+    Data,
     Break, // break
-    Error, // error
-    Exit, // exit
-    Drop, //todo:  make it essentially the same as exit and the user has to implement it specifically in custom scope
+    Continue, // continue
+    Return, // return
+    Error, // error / throw
+    Exit,
+    Drop,
+    IsDone,
     NotFound,
 }
 impl HandleMethods {
@@ -403,18 +410,18 @@ impl HandleMethods {
             "or" => HandleMethods::Or,
             "iterator" => HandleMethods::Iterator,
             "next" => HandleMethods::Next,
-            "length" => HandleMethods::Length,
-            "size" => HandleMethods::Size,
             "call" => HandleMethods::Call,
             "leave" => HandleMethods::Leave,
             "yield" => HandleMethods::Yield,
             "data" => HandleMethods::Data,
-            "has_error" => HandleMethods::Error,
+            "error" | "throw" => HandleMethods::Error,
+            "break" => HandleMethods::Break,
+            "continue" => HandleMethods::Continue,
+            "return" => HandleMethods::Return,
+            "drop" => HandleMethods::Drop,
+            "is_done" => HandleMethods::IsDone,
             "exit" => HandleMethods::Exit,
-            _ => {
-                println!("DEBUG: Handle method not found: {}", s);
-                HandleMethods::NotFound
-            }
+            _ => HandleMethods::NotFound,
         }
     }
     pub fn as_str(&self) -> &str {
@@ -433,8 +440,6 @@ impl HandleMethods {
             HandleMethods::Display => "display",
             HandleMethods::Iterator => "iterator",
             HandleMethods::Next => "next",
-            HandleMethods::Length => "length",
-            HandleMethods::Size => "size",
             HandleMethods::Add => "add",
             HandleMethods::Increment => "increment",
             HandleMethods::Decrement => "decrement",
@@ -460,8 +465,11 @@ impl HandleMethods {
             HandleMethods::And => "and",
             HandleMethods::Or => "or",
             HandleMethods::Drop => "drop",
+            HandleMethods::IsDone => "is_done",
             HandleMethods::Exit => "exit",
             HandleMethods::Break => "break",
+            HandleMethods::Continue => "continue",
+            HandleMethods::Return => "return",
             HandleMethods::Leave => "leave",
             HandleMethods::Error => "error",
             HandleMethods::Yield => "yield",
@@ -671,7 +679,16 @@ pub enum Decl {
     BlockDecl {
         is_exported: bool,
         name: String,
+        return_type: Option<BaseType>,
         statements: Vec<Stmt>,
+    },
+    MicroDecl {
+        is_exported: bool,
+        name: String,
+        generics: Option<Vec<String>>,
+        params: Vec<Param>,
+        return_type: Option<BaseType>,
+        body: Vec<Stmt>,
     },
     ObjectDecl {
         is_exported: bool,
@@ -697,7 +714,6 @@ pub enum Decl {
         name: String,
         extends: Option<String>,
         handles: Vec<HandleMethods>,
-        settings: Vec<Setting>,
         public_block: Vec<Decl>,
         private_block: Vec<Decl>,
         static_block: Vec<Decl>,
@@ -713,14 +729,15 @@ pub enum Decl {
     },
     ImplDecl {
         target: String,
+        is_handle_impl: bool,
         methods: Vec<Decl>,
+        handle_block: Vec<Decl>,
     },
 
     StructDecl {
         is_exported: bool,
         name: String,
         handles: Vec<HandleMethods>,
-        settings: Vec<Setting>,
         public_block: Vec<Decl>,
         private_block: Vec<Decl>,
         handle_block: Vec<Decl>,
@@ -733,7 +750,6 @@ pub enum Decl {
         name: String,
         generics: Vec<BaseType>,
         handles: Vec<HandleMethods>,
-        settings: Vec<Setting>,
         handle_block: Vec<Decl>,
         variants: Vec<EnumVariant>,
     },
@@ -825,6 +841,12 @@ pub enum Stmt {
         body: EitherBlock,
     },
 
+    /// `do -> { ... } while (cond);`
+    DoWhileStmt {
+        body: EitherBlock,
+        condition: Expr,
+    },
+
     /// `for (init; cond; inc) -> { ... }`
     ForStmt {
         init: Option<Box<Stmt>>,
@@ -871,9 +893,17 @@ pub struct HandleDecl {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum EnumVariantPayload {
+    None,
+    Tuple(Vec<BaseType>),
+    Struct(Vec<Param>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct EnumVariant {
     pub name: String,
-    pub data_type: Option<BaseType>, // e.g. Success(int) -> vec!["int"]
+    pub payload: EnumVariantPayload,
+    pub data_type: Option<BaseType>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

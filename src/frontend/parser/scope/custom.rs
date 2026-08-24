@@ -103,7 +103,8 @@ impl Parser {
                     used_settings.push(Setting::Static);
                 }
                 TokenKind::Handle => {
-                    handle_block = self.parse_handle_block(&mut used_handles)?;
+                    self.advance(); // consume 'handle'
+                    handle_block = self.parse_handle_body(&mut used_handles)?;
                     used_settings.push(Setting::Handle);
                 }
                 TokenKind::TypeData => {

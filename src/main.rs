@@ -24,24 +24,24 @@ pub fn report_visual_error(source: &str, line: usize, column: usize, err_msg: &s
     };
     let end_line = std::cmp::min(line + context_lines, lines.len());
 
-    println!("\n\x1b[31;1mError:\x1b[0m {}", err_msg);
-    println!("  \x1b[34m-->\x1b[0m line {}:{}", line, column);
-    println!("   \x1b[34m|\x1b[0m");
+    eprintln!("\n\x1b[31;1merror:\x1b[0m {}", err_msg);
+    eprintln!("  \x1b[34;1m-->\x1b[0m line {}:{}", line, column);
+    eprintln!("   \x1b[34;1m|\x1b[0m");
 
     for i in start_line..=end_line {
         let i_minus_1 = i - 1;
         if i_minus_1 < lines.len() {
             let l_text = lines[i_minus_1];
             if i == line {
-                println!("{:3}\x1b[34m |\x1b[0m {}", i, l_text);
-                let padding = " ".repeat(column);
-                println!("    \x1b[34m|\x1b[0m{}\x1b[31;1m^-- Here\x1b[0m", padding);
+                eprintln!("{:3}\x1b[34;1m |\x1b[0m {}", i, l_text);
+                let padding = " ".repeat(if column > 0 { column - 1 } else { 0 });
+                eprintln!("   \x1b[34;1m|\x1b[0m {}\x1b[31;1m^\x1b[0m", padding);
             } else {
-                println!("{:3}\x1b[34m |\x1b[0m {}", i, l_text);
+                eprintln!("{:3}\x1b[34;1m |\x1b[0m {}", i, l_text);
             }
         }
     }
-    println!("   \x1b[34m|\x1b[0m\n");
+    eprintln!("   \x1b[34;1m|\x1b[0m\n");
 }
 
 fn module_import_deps(ast: &[Stmt]) -> Vec<(String, Option<Vec<String>>)> {
@@ -65,6 +65,7 @@ fn inject_module_exports(
     dep_name: &str,
     imports: &Option<Vec<String>>,
     envs: &HashMap<String, Rc<RefCell<Environment>>>,
+    debug: bool,
 ) -> Result<(), String> {
     let env = envs
         .get(dep_name)
@@ -77,7 +78,9 @@ fn inject_module_exports(
                 None => true,
             };
             if should_inject {
-                println!("Module {} injected symbol: {}", dep_name, sym_name);
+                if debug {
+                    println!("Module {} injected symbol: {}", dep_name, sym_name);
+                }
                 analyzer.current_env.borrow_mut().define(sym_name, info).ok();
             }
         }
@@ -85,8 +88,45 @@ fn inject_module_exports(
     Ok(())
 }
 
+fn print_help() {
+    println!(r#"FastLang Compiler (fast_lang) v0.1.0
+High-performance compiled language with zero-cost custom scopes and Coroutine State Machines.
+
+USAGE:
+    fast_lang [OPTIONS] <SOURCE_FILE>
+
+ARGUMENTS:
+    <SOURCE_FILE>                  Path to the main entry source file (.fs)
+
+OPTIONS:
+    -h, --help, -help              Print this help information and exit
+    -d, --debug                    Enable verbose debug and compilation trace output
+    -o, --output <PATH>            Specify output binary or build directory path
+    -I, --include <DIR>            Add module search directory
+    -b, --backend <BACKEND>        Set code generator backend: 'cpp' (default) or 'cranelift'
+    --ast, --emit-ast [FILE]       Dump parsed AST as formatted JSON (to stdout or FILE)
+    --ast-file, --json-ast <FILE>  Export parsed AST as formatted JSON directly to FILE
+    --emit-cpp, --cpp-only         Generate and emit C++ source file without compiling binary
+    --emit-ir, --print-ir          Print intermediate representation (IR) output
+    --aot                          Enable Ahead-Of-Time (AOT) compilation
+    --target <TARGET>              Specify target architecture/platform
+
+EXAMPLES:
+    fast_lang app.fs
+    fast_lang app.fs -o build/app.exe
+    fast_lang app.fs --ast-file app_ast.json
+    fast_lang app.fs --emit-cpp
+    fast_lang app.fs -I ./std/ -d
+"#);
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.len() == 1 || args.contains(&"--help".to_string()) || args.contains(&"-h".to_string()) || args.contains(&"-help".to_string()) {
+        print_help();
+        return;
+    }
+
     let mut path = "fast.fs".to_string();
     let mut target = None;
     let mut custom_includes = Vec::new();
@@ -94,11 +134,17 @@ fn main() {
     let mut emit_ir = false;
     let mut use_aot = false;
     let mut emit_cpp = false;
+    let mut emit_ast = false;
+    let mut ast_output_file: Option<String> = None;
+    let mut debug = false;
     let mut custom_output: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
-        if args[i] == "--target" && i + 1 < args.len() {
+        if args[i] == "--help" || args[i] == "-h" || args[i] == "-help" {
+            print_help();
+            return;
+        } else if args[i] == "--target" && i + 1 < args.len() {
             target = Some(args[i + 1].clone());
             i += 2;
         } else if (args[i] == "-I" || args[i] == "--include") && i + 1 < args.len() {
@@ -118,6 +164,21 @@ fn main() {
             i += 1;
         } else if args[i] == "--emit-cpp" || args[i] == "--cpp-only" {
             emit_cpp = true;
+            i += 1;
+        } else if (args[i] == "--ast-out" || args[i] == "--ast-file" || args[i] == "--json-ast") && i + 1 < args.len() {
+            emit_ast = true;
+            ast_output_file = Some(args[i + 1].clone());
+            i += 2;
+        } else if args[i] == "--emit-ast" || args[i] == "--ast" {
+            emit_ast = true;
+            if i + 1 < args.len() && !args[i + 1].starts_with('-') && (args[i + 1].ends_with(".json") || args[i + 1].ends_with(".txt") || args[i + 1].ends_with(".ast")) {
+                ast_output_file = Some(args[i + 1].clone());
+                i += 2;
+            } else {
+                i += 1;
+            }
+        } else if args[i] == "--debug" || args[i] == "-d" {
+            debug = true;
             i += 1;
         } else if (args[i] == "-o" || args[i] == "--output") && i + 1 < args.len() {
             custom_output = Some(args[i + 1].clone());
@@ -144,8 +205,21 @@ fn main() {
         }
     };
 
-    println!("AST Length: {}", program.main_ast.len());
-    std::fs::write("ast_debug.txt", format!("{:#?}", program.main_ast)).unwrap();
+    if debug {
+        println!("AST Length: {}", program.main_ast.len());
+        std::fs::write("ast_debug.txt", format!("{:#?}", program.main_ast)).unwrap();
+    }
+
+    if emit_ast {
+        let json_str = crate::frontend::parser::ast_json::ast_to_json_string(&program.main_ast);
+        if let Some(out_f) = ast_output_file {
+            std::fs::write(&out_f, &json_str).expect("Failed to write AST JSON file");
+            println!("AST exported successfully to {}", out_f);
+        } else {
+            println!("{}", json_str);
+        }
+        return;
+    }
 
     let mut envs: HashMap<String, Rc<RefCell<Environment>>> = HashMap::new();
     let mut analyzed_modules = HashSet::new();
@@ -165,7 +239,7 @@ fn main() {
 
             let mut analyzer = SemanticAnalyzer::new(program.global_metadata.clone());
             for (dep_name, imports) in &deps {
-                if let Err(e) = inject_module_exports(&mut analyzer, dep_name, imports, &envs) {
+                if let Err(e) = inject_module_exports(&mut analyzer, dep_name, imports, &envs, debug) {
                     eprintln!("{}", e);
                     std::process::exit(1);
                 }
@@ -187,19 +261,25 @@ fn main() {
     }
 
     // Analyze main file
-    println!("\n=== Semantic Analysis ===");
+    if debug {
+        println!("\n=== Semantic Analysis ===");
+    }
     let mut main_analyzer = SemanticAnalyzer::new(program.global_metadata.clone());
 
     // Inject exported symbols from main's imports
     for (mod_name, imports) in &program.main_deps {
-        if let Err(e) = inject_module_exports(&mut main_analyzer, mod_name, imports, &envs) {
+        if let Err(e) = inject_module_exports(&mut main_analyzer, mod_name, imports, &envs, debug) {
             eprintln!("{}", e);
             std::process::exit(1);
         }
     }
 
     match main_analyzer.analyze(&program.main_ast) {
-        Ok(_) => println!("Semantic Analysis Passed successfully! ?"),
+        Ok(_) => {
+            if debug {
+                println!("Semantic Analysis Passed successfully!");
+            }
+        }
         Err(e) => {
             eprintln!("{}", e);
             std::process::exit(1);
@@ -251,7 +331,9 @@ fn main() {
         return;
     }
 
-    println!("\n=== Code Generation (C++) ===");
+    if debug {
+        println!("\n=== Code Generation (C++) ===");
+    }
     let mut final_cpp = String::new();
 
     let mut header_gen = cpp::generator::CodeGenerator::new();
@@ -301,14 +383,18 @@ fn main() {
     };
 
     fs::write(&out_path, &final_cpp).expect("Failed to write output.cpp");
-    println!("Successfully generated C++ code to {}", out_path);
+    if debug {
+        println!("Successfully generated C++ code to {}", out_path);
+    }
 
     if emit_cpp {
         println!("C++ emission complete (--emit-cpp specified, skipped g++ compilation).");
         return;
     }
 
-    println!("Compiling to {}...", exe_path);
+    if debug {
+        println!("Compiling to {}...", exe_path);
+    }
 
     let status = std::process::Command::new("g++")
         .arg(&out_path)

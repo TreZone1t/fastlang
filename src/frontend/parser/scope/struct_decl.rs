@@ -86,7 +86,8 @@ impl Parser {
                         );
                     } else {
                         used_settings.push(Setting::Handle);
-                        handle_block = self.parse_handle_block(&mut used_handles)?;
+                        self.advance(); // consume 'handle'
+                        handle_block = self.parse_handle_body(&mut used_handles)?;
                         continue;
                     }
                 }
@@ -201,7 +202,6 @@ impl Parser {
             is_exported: false,
             name,
             handles: used_handles,
-            settings: used_settings,
             public_block: public_block_ast,
             private_block: private_block_ast,
             handle_block,

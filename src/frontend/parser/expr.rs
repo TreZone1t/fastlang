@@ -469,7 +469,8 @@ impl Parser {
 
             // --- Unary: -expr ---
             TokenKind::Minus => {
-                let operand = self.parse_prefix()?;
+                self.advance();
+                let operand = self.parse_expr(7)?;
                 Ok(Expr::UnaryOp {
                     operator: "-".to_string(),
                     operand: Box::new(operand),

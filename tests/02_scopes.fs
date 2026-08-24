@@ -20,6 +20,9 @@ custom DataBuffer -> {
         fn get_size() -> int(32) {
             return this.size;
         }
+        fn length() -> int(32) {
+            return this.size;
+        }
     }
     handle -> {
         fn index_access(index : int(32)) -> int(32) {
@@ -28,9 +31,6 @@ custom DataBuffer -> {
             } else {
                 return 0;
             }
-        }
-        fn length() -> int(32) {
-            return this.size;
         }
         fn add(value : int(32)) -> int(32) {
             if (this.size < this.capacity) {

@@ -64,11 +64,13 @@ export class list<T> -> {
         return 0;
       }
       fn extend_from_array(arr: T[]) -> void {
-        for (int(32) i = 0; i < arr.size(); i = i + 1) -> {
+        for (int(32) i = 0; i < arr.length; i = i + 1) -> {
           this.push(arr[i]);
         }
       }
-
+      fn size() -> int(32) {
+        return this.length;
+      }
     }
     handle -> {
       fn arrow(arr: T[]) -> void {
@@ -76,9 +78,6 @@ export class list<T> -> {
       }
       fn arrow_assign(arr: T[]) -> void {
         this.extend_from_array(arr);
-      }
-      fn size() -> int(32) {
-        return this.length ; 
       }
     }
 

@@ -22,11 +22,9 @@ impl Parser {
         return name;
     }
     pub fn is_valid_handle(&mut self, handles: Vec<HandleMethods>, t: TokenKind) -> bool {
-        eprintln!("HANDLE CHECK: as_str={:?} kind={:?}", t.as_str(), self.peek().kind);
         let t_h = self.get_handle_type(t);
         for h in handles {
             if h == t_h {
-                eprintln!("HANDLE CHECK: FOUND");
                 return true;
             }
         }
@@ -43,7 +41,6 @@ impl Parser {
         all_settings.push(Setting::Private);
         all_settings.push(Setting::Static);
         all_settings.push(Setting::Extends);
-        all_settings.push(Setting::Variants);
         all_settings.push(Setting::Handle);
         all_settings.push(Setting::Data);
         all_settings.push(Setting::Label);

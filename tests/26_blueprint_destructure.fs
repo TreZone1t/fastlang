@@ -16,5 +16,13 @@ fn main() -> int(32) {
     log(a); // EXPECT: 10
     log(b); // EXPECT: 20
 
+    {c, d} = IreturnPoint();
+    log(c); // EXPECT: 10
+    log(d); // EXPECT: 20
+
+    const {e, f} = IreturnPoint();
+    log(e); // EXPECT: 10
+    log(f); // EXPECT: 20
+
     return 0;
 }

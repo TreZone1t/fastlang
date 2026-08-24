@@ -82,6 +82,8 @@ impl SemanticAnalyzer {
                 },
                 visibility: Visibility::Public,
                 dependencies: vec![],
+                is_used: true,
+                is_param: false,
             };
             self.current_env.borrow_mut().define_or_update(name.to_string(), info);
         }
@@ -96,6 +98,14 @@ impl SemanticAnalyzer {
     }
 
     fn leave_scope(&mut self) {
+        for (name, info) in &self.current_env.borrow().symbols {
+            if !info.is_used && !name.starts_with('_') && name != "this" && name != "data" && name != "__this__" {
+                if let SymbolKind::Variable { .. } = &info.kind {
+                    let kind_str = if info.is_param { "parameter" } else { "variable" };
+                    eprintln!("\x1b[33;1mwarning:\x1b[0m {} '{}' is declared but never used in scope", kind_str, name);
+                }
+            }
+        }
         let parent = self.current_env.borrow().parent.clone().expect("Cannot leave global scope");
         self.current_env = parent;
     }
@@ -154,8 +164,49 @@ impl SemanticAnalyzer {
                 self.visit_expression(expr)?;
             }
 
-            Stmt::CaseStmt { body, .. } => {
+            Stmt::CaseStmt { option, body, .. } => {
                 self.enter_scope();
+                if let Expr::Call { args, .. } = option {
+                    for arg in args {
+                        if let Expr::Identifier(var_name) = arg {
+                            let info = SymbolInfo {
+                                name: var_name.clone(),
+                                kind: SymbolKind::Variable {
+                                    type_node: BaseType::Unknown,
+                                    editability: Editability::Editable,
+                                    is_array: false,
+                                },
+                                visibility: Visibility::Private,
+                                dependencies: vec![],
+                                is_used: true,
+                                is_param: false,
+                            };
+                            let _ = self.current_env.borrow_mut().define_or_update(var_name.clone(), info);
+                        }
+                    }
+                } else if let Expr::Instantiate { args, .. } = option {
+                    if args.len() == 1 {
+                        if let Expr::ObjectLiteral(stmts) = &args[0] {
+                            for s in stmts {
+                                if let Stmt::Declaration(Decl::VarDecl { name, .. }) = s {
+                                    let info = SymbolInfo {
+                                        name: name.clone(),
+                                        kind: SymbolKind::Variable {
+                                            type_node: BaseType::Unknown,
+                                            editability: Editability::Editable,
+                                            is_array: false,
+                                        },
+                                        visibility: Visibility::Private,
+                                        dependencies: vec![],
+                                        is_used: true,
+                                        is_param: false,
+                                    };
+                                    let _ = self.current_env.borrow_mut().define_or_update(name.clone(), info);
+                                }
+                            }
+                        }
+                    }
+                }
                 for s in body {
                     self.visit_statement(s)?;
                 }
@@ -187,9 +238,17 @@ impl SemanticAnalyzer {
                     iterable_type.trim_start_matches("array<").trim_end_matches('>').to_string()
                 } else if iterable_type == "string" {
                     "char".to_string()
+                } else if let Some(meta) = self.global_metadata.get(&iterable_type) {
+                    if let Some(next_fn) = meta.methods.get("next") {
+                        next_fn.return_type.as_str()
+                    } else {
+                        return Err(
+                            format!("Semantic Error: Type '{}' does not implement 'next' handle for for-in iteration", iterable_type)
+                        );
+                    }
                 } else {
                     return Err(
-                        format!("Semantic Error: Expected array or string in for-in loop, got '{}'", iterable_type)
+                        format!("Semantic Error: Expected iterable, array, or string in for-in loop, got '{}'", iterable_type)
                     );
                 };
 
@@ -227,6 +286,27 @@ impl SemanticAnalyzer {
                 let cond_type = self.visit_expression(condition)?;
                 if cond_type != "bool" && cond_type != "unknown" {
                     return Err("Semantic Error: loop condition must be a boolean".to_string());
+                }
+                match body {
+                    EitherBlock::Inline(stmts) => {
+                        self.enter_scope();
+                        self.active_flags.push("+has_break".to_string());
+                        for s in stmts {
+                            self.visit_statement(s)?;
+                        }
+                        self.active_flags.retain(|f| f != "+has_break");
+                        self.leave_scope();
+                    }
+                    EitherBlock::External(expr) => {
+                        self.visit_expression(expr)?;
+                    }
+                }
+            }
+
+            Stmt::DoWhileStmt { body, condition } => {
+                let cond_type = self.visit_expression(condition)?;
+                if cond_type != "bool" && cond_type != "unknown" {
+                    return Err("Semantic Error: do-while condition must be a boolean".to_string());
                 }
                 match body {
                     EitherBlock::Inline(stmts) => {
@@ -364,6 +444,8 @@ impl SemanticAnalyzer {
                     },
                     visibility: Visibility::Private,
                     dependencies: vec![],
+                    is_used: false,
+                    is_param: true,
                 };
                 self.current_env.borrow_mut().define(catch_param.clone(), info)?;
                 for s in catch_block {
@@ -373,6 +455,26 @@ impl SemanticAnalyzer {
             }
 
             Stmt::GotoStmt(_) => {}
+
+            Stmt::YieldStmt(expr) => {
+                if !self.active_flags.contains(&"+has_yield".to_string()) {
+                    return Err(
+                        "Semantic Error: Yield statement is not allowed in this scope (forbidden in global scope).".to_string()
+                    );
+                }
+                if let Some(e) = expr {
+                    self.visit_expression(e)?;
+                }
+            }
+
+            Stmt::LeaveStmt => {
+                if !self.active_flags.contains(&"+has_leave".to_string()) {
+                    return Err(
+                        "Semantic Error: Leave statement is not allowed in this scope (forbidden in global scope).".to_string()
+                    );
+                }
+            }
+
             _ => {}
         }
         Ok(())
@@ -613,17 +715,29 @@ impl SemanticAnalyzer {
             }
 
             Decl::ObjectDestructureDecl { visibility, editability, fields, rhs, .. } => {
-                let _rhs_type = self.visit_expression(rhs)?;
+                let rhs_type = self.visit_expression(rhs)?;
+                let bp_meta = self.global_metadata.get(&rhs_type).cloned();
                 for (type_node, name) in fields {
+                    let actual_type = if matches!(type_node, BaseType::Unknown) {
+                        if let Some(ref meta) = bp_meta {
+                            meta.fields.get(name).cloned().unwrap_or(BaseType::Unknown)
+                        } else {
+                            BaseType::Unknown
+                        }
+                    } else {
+                        type_node.clone()
+                    };
                     let info = SymbolInfo {
                         name: name.clone(),
                         kind: SymbolKind::Variable {
-                            type_node: type_node.clone(),
+                            type_node: actual_type,
                             editability: editability.clone(),
                             is_array: false,
                         },
                         visibility: visibility.clone(),
                         dependencies: vec![],
+                        is_used: false,
+                        is_param: false,
                     };
                     self.current_env.borrow_mut().define(name.clone(), info)?;
                 }
@@ -665,6 +779,8 @@ impl SemanticAnalyzer {
                     },
                     visibility: visibility.clone(),
                     dependencies: vec![],
+                    is_used: false,
+                    is_param: false,
                 };
                 self.current_env.borrow_mut().define(name.clone(), info)?;
             }
@@ -743,9 +859,24 @@ impl SemanticAnalyzer {
                 )?;
             }
 
-            Decl::EnumDecl { is_exported, name, handle_block, .. } => {
+            Decl::EnumDecl { is_exported, name, handle_block, variants, .. } => {
                 let info = self.make_blueprint_symbol(name, *is_exported);
                 self.current_env.borrow_mut().define(name.clone(), info)?;
+                for v in variants {
+                    let var_symbol = SymbolInfo {
+                        name: v.name.clone(),
+                        kind: SymbolKind::Variable {
+                            type_node: BaseType::from_str(name),
+                            editability: Editability::NotEditable,
+                            is_array: false,
+                        },
+                        visibility: if *is_exported { Visibility::Public } else { Visibility::Private },
+                        dependencies: vec![],
+                        is_used: false,
+                        is_param: false,
+                    };
+                    let _ = self.current_env.borrow_mut().define(v.name.clone(), var_symbol);
+                }
                 self.enter_scope();
                 let prev = self.in_custom_scope;
                 self.in_custom_scope = true;
@@ -756,8 +887,18 @@ impl SemanticAnalyzer {
                 self.in_custom_scope = prev;
             }
 
-            Decl::BlockDecl { is_exported, name, statements } => {
+            Decl::BlockDecl { is_exported, name, return_type, statements } => {
                 let mut bp = BlueprintData::new(name);
+                let prev_flags = self.active_flags.clone();
+                let prev_return = self.active_return_type.clone();
+                self.active_flags.push("+has_yield".to_string());
+                self.active_flags.push("+has_leave".to_string());
+                self.active_flags.push("+has_return".to_string());
+                self.active_flags.push("+has_break".to_string());
+                self.active_flags.push("+has_continue".to_string());
+                self.active_flags.push("+has_throw".to_string());
+                self.active_return_type = return_type.clone();
+
                 self.enter_scope();
                 for s in statements {
                     if let Stmt::Declaration(Decl::VarDecl { name: f_name, type_node, .. }) = s {
@@ -766,6 +907,8 @@ impl SemanticAnalyzer {
                     self.visit_statement(s)?;
                 }
                 self.leave_scope();
+                self.active_flags = prev_flags;
+                self.active_return_type = prev_return;
 
                 self.current_env.borrow_mut().define_blueprint(name.to_string(), bp);
 
@@ -784,6 +927,8 @@ impl SemanticAnalyzer {
                     },
                     visibility: if *is_exported { Visibility::Public } else { Visibility::Private },
                     dependencies: vec![],
+                    is_used: false,
+                    is_param: false,
                 };
                 self.current_env.borrow_mut().define(name.to_string(), info)?;
             }
@@ -801,6 +946,8 @@ impl SemanticAnalyzer {
                         Visibility::Private
                     },
                     dependencies: vec![],
+                    is_used: false,
+                    is_param: false,
                 };
                 if self.in_custom_scope {
                     self.current_env.borrow_mut().define_or_update(name.clone(), fn_info);
@@ -812,6 +959,8 @@ impl SemanticAnalyzer {
                 let prev_return = self.active_return_type.clone();
                 self.active_flags.push("+has_return".to_string());
                 self.active_flags.push("+has_throw".to_string());
+                self.active_flags.push("+has_yield".to_string());
+                self.active_flags.push("+has_leave".to_string());
                 self.active_return_type = Some(return_type.clone());
 
                 self.enter_scope();
@@ -825,6 +974,66 @@ impl SemanticAnalyzer {
                         },
                         visibility: Visibility::Public,
                         dependencies: vec![],
+                        is_used: false,
+                        is_param: true,
+                    };
+                    self.current_env.borrow_mut().define(p.name.clone(), param_info)?;
+                }
+                for s in body {
+                    self.visit_statement(s)?;
+                }
+
+                if !self.in_custom_scope && *return_type != BaseType::Void && !self.block_always_terminates(body) {
+                    return Err(format!(
+                        "Semantic Error: Not all control paths return a value in function '{}' (declared return type '{}').",
+                        name,
+                        return_type.as_str()
+                    ));
+                }
+
+                self.leave_scope();
+
+                self.active_flags = prev_flags;
+                self.active_return_type = prev_return;
+            }
+
+            Decl::MicroDecl { is_exported, name, params, return_type, body, generics: _ } => {
+                let micro_info = SymbolInfo {
+                    name: name.clone(),
+                    kind: SymbolKind::Function {
+                        params: params.clone(),
+                        return_type: return_type.clone().unwrap_or(BaseType::Void),
+                    },
+                    visibility: if *is_exported { Visibility::Public } else { Visibility::Private },
+                    dependencies: vec![],
+                    is_used: false,
+                    is_param: false,
+                };
+                self.current_env.borrow_mut().define(name.clone(), micro_info)?;
+
+                let prev_flags = self.active_flags.clone();
+                let prev_return = self.active_return_type.clone();
+                self.active_flags.push("+has_break".to_string());
+                self.active_flags.push("+has_continue".to_string());
+                self.active_flags.push("+has_throw".to_string());
+                self.active_flags.push("+has_yield".to_string());
+                self.active_flags.push("+has_leave".to_string());
+                self.active_flags.push("+has_return".to_string());
+                self.active_return_type = return_type.clone();
+
+                self.enter_scope();
+                for p in params {
+                    let param_info = SymbolInfo {
+                        name: p.name.clone(),
+                        kind: SymbolKind::Variable {
+                            type_node: p.type_node.clone(),
+                            editability: Editability::Editable,
+                            is_array: false,
+                        },
+                        visibility: Visibility::Public,
+                        dependencies: vec![],
+                        is_used: false,
+                        is_param: true,
                     };
                     self.current_env.borrow_mut().define(p.name.clone(), param_info)?;
                 }
@@ -843,13 +1052,20 @@ impl SemanticAnalyzer {
                     kind: SymbolKind::Label,
                     visibility: Visibility::Private,
                     dependencies: vec![],
+                    is_used: false,
+                    is_param: false,
                 };
                 self.current_env.borrow_mut().define(name.clone(), info)?;
+                let prev_flags = self.active_flags.clone();
+                self.active_flags.push("+has_yield".to_string());
+                self.active_flags.push("+has_leave".to_string());
+                self.active_flags.push("+has_return".to_string());
                 self.enter_scope();
                 for s in body {
                     self.visit_statement(s)?;
                 }
                 self.leave_scope();
+                self.active_flags = prev_flags;
             }
 
             Decl::BlueprintDecl { name, .. } => {
@@ -857,20 +1073,82 @@ impl SemanticAnalyzer {
                 self.current_env.borrow_mut().define(name.clone(), info)?;
             }
 
-            Decl::ImplDecl { target, methods } => {
-                let exists = self.current_env.borrow().lookup(target).is_some();
-                if !exists {
+            Decl::ImplDecl { target, is_handle_impl: _, methods, handle_block } => {
+                let symbol_opt = self.current_env.borrow().lookup(target);
+                let meta_opt = self.global_metadata.get(target).cloned();
+                if symbol_opt.is_none() && meta_opt.is_none() {
                     return Err(
-                        format!("Semantic Error: Blueprint '{}' not found for impl block", target)
+                        format!("Semantic Error: Target '{}' not found for impl block", target)
                     );
                 }
+
+                let is_fn = symbol_opt.as_ref().map(|s| matches!(s.kind, SymbolKind::Function { .. })).unwrap_or(false);
+                let is_block = symbol_opt.as_ref().map(|s| matches!(s.kind, SymbolKind::Variable { ref type_node, .. } if matches!(type_node, BaseType::Custom { name, .. } if name == "block"))).unwrap_or(false);
+
+                let op_names = ["add", "sub", "mul", "div", "mod", "index_access", "index_add", "index_sub", "index_mul", "index_div", "index_mod", "arrow", "arrow_assign", "equal", "not_equal", "less_than", "greater_than", "less_than_equal", "greater_than_equal"];
+
+                for h in handle_block {
+                    if let Decl::FnDecl { name: h_name, params, .. } = h {
+                        if is_fn {
+                            if op_names.contains(&h_name.as_str()) || h_name == "call" {
+                                return Err(format!("Semantic Error: Operator overloading and 'call' handles are not allowed on function '{}'", target));
+                            }
+                        } else if is_block {
+                            if op_names.contains(&h_name.as_str()) {
+                                return Err(format!("Semantic Error: Operator overloading handles are not allowed on block '{}'", target));
+                            }
+                        }
+
+                        if matches!(h_name.as_str(), "display" | "iterator" | "next" | "break" | "continue") {
+                            if !params.is_empty() {
+                                return Err(format!("Semantic Error: Handle method '{}' cannot take any parameters on target '{}'", h_name, target));
+                            }
+                        }
+
+                        // Duplicate signature check
+                        if let Some(meta) = self.global_metadata.get(target) {
+                            if let Some(existing) = meta.methods.get(h_name) {
+                                let same_params = existing.params.len() == params.len()
+                                    && existing.params.iter().zip(params.iter()).all(|(p1, p2)| p1.type_node == p2.type_node);
+                                if same_params {
+                                    return Err(format!("Semantic Error: Duplicate handle '{}' with identical parameter signature on target '{}'", h_name, target));
+                                }
+                            }
+                        }
+                    }
+                }
+
                 self.enter_scope();
                 self.active_flags.push("+has_return".to_string());
                 let prev = self.in_struct;
                 self.in_struct = true;
+
                 for m in methods {
                     self.visit_declaration(m)?;
+                    if let Decl::FnDecl { name, params, return_type, .. } = m {
+                        if let Some(meta) = self.global_metadata.get_mut(target) {
+                            meta.methods.insert(name.clone(), FnType {
+                                name: name.clone(),
+                                params: params.clone(),
+                                return_type: return_type.clone(),
+                            });
+                        }
+                    }
                 }
+
+                for h in handle_block {
+                    self.visit_declaration(h)?;
+                    if let Decl::FnDecl { name, params, return_type, .. } = h {
+                        if let Some(meta) = self.global_metadata.get_mut(target) {
+                            meta.methods.insert(name.clone(), FnType {
+                                name: name.clone(),
+                                params: params.clone(),
+                                return_type: return_type.clone(),
+                            });
+                        }
+                    }
+                }
+
                 self.in_struct = prev;
                 self.active_flags.retain(|x| x != "+has_return");
                 self.leave_scope();
@@ -979,6 +1257,8 @@ impl SemanticAnalyzer {
                         },
                         visibility: visibility.clone(),
                         dependencies: deps,
+                        is_used: false,
+                        is_param: false,
                     };
                     self.current_env.borrow_mut().define(name.to_string(), info)?;
                     self.current_context = prev_context;
@@ -1036,6 +1316,8 @@ impl SemanticAnalyzer {
                         },
                         visibility: visibility.clone(),
                         dependencies: deps,
+                        is_used: false,
+                        is_param: false,
                     };
                     self.current_env.borrow_mut().define(name.to_string(), info)?;
                     self.current_context = prev_context;
@@ -1177,6 +1459,8 @@ impl SemanticAnalyzer {
             },
             visibility: visibility.clone(),
             dependencies: deps,
+            is_used: false,
+            is_param: false,
         };
         self.current_env.borrow_mut().define(name.to_string(), info)?;
         self.current_context = prev_context;
@@ -1256,6 +1540,8 @@ impl SemanticAnalyzer {
 
         self.active_return_type = None;
 
+        self.active_flags.push("+has_yield".to_string());
+        self.active_flags.push("+has_leave".to_string());
         if let Some(h_vec) = handles {
             if h_vec.contains(&HandleMethods::Error) {
                 self.active_flags.push("+has_throw".to_string());
@@ -1277,6 +1563,8 @@ impl SemanticAnalyzer {
                 },
                 visibility: Visibility::Public,
                 dependencies: vec![],
+                is_used: true,
+                is_param: false,
             };
             self.current_env.borrow_mut().define("data".to_string(), data_info)?;
         }
@@ -1316,6 +1604,8 @@ impl SemanticAnalyzer {
                         },
                         visibility: Visibility::Private,
                         dependencies: vec![],
+                        is_used: false,
+                        is_param: true,
                     };
                     self.current_env.borrow_mut().define(param.name.clone(), pi)?;
                 }
@@ -1427,6 +1717,8 @@ impl SemanticAnalyzer {
                         },
                         visibility: Visibility::Private,
                         dependencies: vec![],
+                        is_used: false,
+                        is_param: true,
                     };
                     self.current_env.borrow_mut().define(param.name.clone(), pi)?;
                 }
@@ -1510,6 +1802,7 @@ impl SemanticAnalyzer {
                     return Ok("unknown".to_string());
                 }
                 self.record_dependency(name.clone());
+                self.current_env.borrow_mut().mark_used(name);
                 match self.current_env.borrow().lookup(name) {
                     Some(info) => Ok(info.type_str()),
                     None => {
@@ -1709,6 +2002,12 @@ impl SemanticAnalyzer {
             Expr::PropertyAccess { object, property } => {
                 let obj_type = self.visit_expression(object)?;
 
+                if obj_type.starts_with("array<") || obj_type.ends_with("[]") {
+                    if property == "length" || property == "len" || property == "size" {
+                        return Ok("int32".to_string());
+                    }
+                }
+
                 if obj_type.starts_with("scope") {
                     match property.as_str() {
                         "has_yield" | "has_leave" | "has_return" | "is_done" => return Ok("bool".to_string()),
@@ -1783,6 +2082,8 @@ impl SemanticAnalyzer {
                         },
                         visibility: Visibility::Private,
                         dependencies: vec![],
+                        is_used: false,
+                        is_param: true,
                     };
                     self.current_env.borrow_mut().define(p.name.clone(), p_info)?;
                 }
@@ -1962,6 +2263,46 @@ impl SemanticAnalyzer {
                 Visibility::Private
             },
             dependencies: vec![],
+            is_used: false,
+            is_param: false,
+        }
+    }
+
+    fn block_always_terminates(&self, stmts: &[Stmt]) -> bool {
+        for s in stmts {
+            if self.stmt_always_terminates(s) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn stmt_always_terminates(&self, stmt: &Stmt) -> bool {
+        match stmt {
+            Stmt::ReturnStmt(_)
+            | Stmt::ThrowStmt(_)
+            | Stmt::LeaveStmt
+            | Stmt::YieldStmt(_)
+            | Stmt::GotoStmt(_)
+            | Stmt::SwitchStmt { .. }
+            | Stmt::CaseStmt { .. } => true,
+            Stmt::IfStmt { then_block, else_block, .. } => {
+                if let Some(eb) = else_block {
+                    self.block_always_terminates(then_block) && self.block_always_terminates(eb)
+                } else {
+                    false
+                }
+            }
+            Stmt::TryCatchStmt { try_block, catch_block, .. } => {
+                self.block_always_terminates(try_block) && self.block_always_terminates(catch_block)
+            }
+            Stmt::DoWhileStmt { body, .. } => {
+                match body {
+                    EitherBlock::Inline(stmts) => self.block_always_terminates(stmts),
+                    EitherBlock::External(_) => false,
+                }
+            }
+            _ => false,
         }
     }
 }

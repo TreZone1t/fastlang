@@ -89,75 +89,98 @@ impl Parser {
         Ok(())
     }
 
-    pub(crate) fn parse_handle_block(
+    pub(crate) fn parse_handle_body(
         &mut self,
         used_methods: &mut Vec<HandleMethods>
     ) -> Result<Vec<Decl>, String> {
         let mut handle_fn: Vec<Decl> = vec![];
-        self.advance(); // 'handle'
         self.consume(TokenKind::Arrow, "Expected '->' after 'handle'")?;
         self.consume(TokenKind::LBrace, "Expected '{' to open handle block")?;
 
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-            // first we need to check if the function is a valid handle function and there is no other function with the same name
-            // we need to check if it a fn in the first place no other thing is allowed
             if self.peek().kind == TokenKind::Fn {
                 self.advance();
+                let method_name = self.get_identifier("Expected handle method name")?;
+                let handle_kind = HandleMethods::from_str(&method_name);
+                if handle_kind == HandleMethods::NotFound {
+                    return Err(
+                        format!(
+                            "Syntax Error: '{}' is not a valid allowed handle method at line {}, column {}",
+                            method_name,
+                            self.peek().line,
+                            self.peek().column
+                        )
+                    );
+                }
+                used_methods.push(handle_kind);
+
                 let mut method_params: Vec<Param> = Vec::new();
-                let return_type: BaseType;
-                let method_name = self.peek().kind.clone().as_str().to_string();
-                if HandleMethods::from_str(&method_name) != HandleMethods::NotFound {
-                    used_methods.push(self.get_handle_type(self.peek().kind.clone()));
+                if self.peek().kind == TokenKind::LParen {
                     self.advance();
-                    if self.peek().kind == TokenKind::LParen {
-                        self.advance();
-                        if self.peek().kind != TokenKind::RParen {
-                            // we expect a list of params
-                            // (a : int(32), b : int(32)) -> void
-                            loop {
-                                let name: String = self.get_identifier("Expected parameter name")?;
-                                self.consume(
-                                    TokenKind::Colon,
-                                    "Expected ':' after parameter name"
-                                )?;
-                                let type_node = self.parse_type()?;
-                                method_params.push(Param {
-                                    name,
-                                    type_node: type_node,
-                                });
-                                if self.peek().kind == TokenKind::Comma {
-                                    self.advance();
-                                } else {
-                                    break;
-                                }
+                    if self.peek().kind != TokenKind::RParen {
+                        loop {
+                            let name: String = self.get_identifier("Expected parameter name")?;
+                            self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
+                            let type_node = self.parse_type()?;
+                            method_params.push(Param { name, type_node });
+                            if self.peek().kind == TokenKind::Comma {
+                                self.advance();
+                            } else {
+                                break;
                             }
                         }
-                        self.consume(
-                            TokenKind::RParen,
-                            "Expected ')' after handle method parameters"
-                        )?;
-                        self.consume(
-                            TokenKind::Arrow,
-                            "Expected '->' after handle method parameters"
-                        )?;
-                        return_type = self.parse_type()?;
-                        self.consume(TokenKind::LBrace, "Expected '{' to open handle method body")?;
-                        let body = self.parse_block(method_name.clone())?;
-                        self.consume(TokenKind::RBrace, "Expected '}' to close handle method body")?;
+                    }
+                    self.consume(TokenKind::RParen, "Expected ')' after handle method parameters")?;
+                }
 
-                        handle_fn.push(Decl::FnDecl {
-                            is_exported: false,
-                            name: method_name.as_str().to_string(),
-                            params: method_params,
-                            return_type: return_type,
-                            body,
-                        });
+                if matches!(handle_kind, HandleMethods::Display | HandleMethods::Iterator | HandleMethods::Next | HandleMethods::Break | HandleMethods::Continue) {
+                    if !method_params.is_empty() {
+                        return Err(
+                            format!(
+                                "Syntax Error: Handle method '{}' cannot take any parameters at line {}, column {}",
+                                method_name,
+                                self.peek().line,
+                                self.peek().column
+                            )
+                        );
                     }
                 }
+
+                let default_ret = if handle_kind == HandleMethods::Display {
+                    BaseType::Array {
+                        base_type: Box::new(BaseType::Char),
+                        size: Box::new(None),
+                    }
+                } else {
+                    BaseType::Void
+                };
+
+                let return_type = if self.peek().kind == TokenKind::Arrow {
+                    self.advance();
+                    if self.peek().kind == TokenKind::LBrace {
+                        default_ret
+                    } else {
+                        self.parse_type()?
+                    }
+                } else {
+                    default_ret
+                };
+
+                self.consume(TokenKind::LBrace, "Expected '{' to open handle method body")?;
+                let body = self.parse_block(method_name.clone())?;
+                self.consume(TokenKind::RBrace, "Expected '}' to close handle method body")?;
+
+                handle_fn.push(Decl::FnDecl {
+                    is_exported: false,
+                    name: method_name,
+                    params: method_params,
+                    return_type,
+                    body,
+                });
             } else {
                 return Err(
                     format!(
-                        "Syntax Error: this {} is not a valid allowed handle method in this scope at line {}, column {}",
+                        "Syntax Error: Unsupported token '{}' in handle block at line {}, column {}",
                         self.peek().kind.as_str(),
                         self.peek().line,
                         self.peek().column
@@ -166,7 +189,7 @@ impl Parser {
             }
         }
         self.consume(TokenKind::RBrace, "Expected '}' to close handle block")?;
-        return Ok(handle_fn);
+        Ok(handle_fn)
     }
 
     pub(crate) fn parse_constructor_decl(

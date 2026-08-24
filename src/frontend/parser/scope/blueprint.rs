@@ -84,28 +84,59 @@ impl Parser {
     }
 
     pub(crate) fn parse_impl_decl(&mut self) -> Result<Decl, String> {
-        self.consume(TokenKind::Impl, "Expected 'impl'")?; // Consume 'impl'
+        self.consume(TokenKind::Impl, "Expected 'impl'")?;
+
+        if self.peek().kind == TokenKind::Handle {
+            self.advance(); // consume 'handle'
+            self.consume(TokenKind::For, "Expected 'for' after 'handle' in 'impl handle for'")?;
+            let target = self.get_identifier("Expected target name")?;
+
+            let mut used_methods = Vec::new();
+            let handle_block = self.parse_handle_body(&mut used_methods)?;
+            if self.peek().kind == TokenKind::SemiColon {
+                self.consume(TokenKind::SemiColon, "Expected ';'")?;
+            }
+            return Ok(Decl::ImplDecl {
+                target,
+                is_handle_impl: true,
+                methods: Vec::new(),
+                handle_block,
+            });
+        }
+
         let target = self.get_identifier("Expected target name")?;
-        self.consume(TokenKind::Arrow, "Expected '->'")?; // Consume '->'
+        self.consume(TokenKind::Arrow, "Expected '->'")?;
         self.consume(TokenKind::LBrace, "Expected '{'")?;
 
         let mut methods: Vec<Decl> = Vec::new();
+        let mut handle_block: Vec<Decl> = Vec::new();
+
         while self.peek().kind != TokenKind::RBrace && !self.is_at_end() {
-            // Parse functions inside impl
-            let stmt = self.parse_statement(ScopeType::Impl)?;
-            if let Some(Stmt::Declaration(s)) = stmt {
-                methods.push(s);
-            } else if let Some(_) = stmt {
-                return Err("Expected declaration inside impl block".to_string());
+            if self.peek().kind == TokenKind::Handle {
+                self.advance(); // consume 'handle'
+                let mut used_handles = Vec::new();
+                let hdls = self.parse_handle_body(&mut used_handles)?;
+                handle_block.extend(hdls);
+            } else {
+                let stmt = self.parse_statement(ScopeType::Impl)?;
+                if let Some(Stmt::Declaration(s)) = stmt {
+                    methods.push(s);
+                } else if stmt.is_some() {
+                    return Err("Expected declaration inside impl block".to_string());
+                }
             }
         }
         self.consume(TokenKind::RBrace, "Expected '}'")?;
 
-        // Match optional semicolon after impl block
         if self.peek().kind == TokenKind::SemiColon {
             self.consume(TokenKind::SemiColon, "Expected ';'")?;
         }
 
-        Ok(Decl::ImplDecl { target, methods })
+        Ok(Decl::ImplDecl {
+            target,
+            is_handle_impl: false,
+            methods,
+            handle_block,
+        })
     }
 }

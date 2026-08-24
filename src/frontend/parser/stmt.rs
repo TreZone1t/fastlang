@@ -4,7 +4,6 @@ use crate::frontend::parser::parser::Parser;
 
 impl Parser {
     pub(crate) fn parse_statement(&mut self, scope: ScopeType) -> Result<Option<Stmt>, String> {
-        eprintln!("DISPATCH: {:?} at line {}", self.peek().kind, self.peek().line);
         let result: Result<crate::frontend::parser::ast::Stmt, String> = match &self.peek().kind {
             TokenKind::SemiColon => {
                 self.advance();
@@ -58,6 +57,7 @@ impl Parser {
             | TokenKind::TypeStruct
             | TokenKind::TypeEnum
             | TokenKind::TypeBlock
+            | TokenKind::TypeMicro
             | TokenKind::Del => {
                 if
                     !matches!(
@@ -89,6 +89,7 @@ impl Parser {
                     TokenKind::TypeStruct => self.parse_struct_decl().map(Stmt::Declaration),
                     TokenKind::TypeEnum => self.parse_enum_decl().map(Stmt::Declaration),
                     TokenKind::TypeBlock => self.parse_block_scope_decl().map(Stmt::Declaration),
+                    TokenKind::TypeMicro => self.parse_micro_decl().map(Stmt::Declaration),
                     TokenKind::Del => self.parse_del_stmt(),
                     _ => unreachable!(),
                 }
@@ -98,102 +99,37 @@ impl Parser {
             | TokenKind::For
             | TokenKind::Loop
             | TokenKind::While
-            | TokenKind::Switch => {
-                if
-                    !matches!(
-                        scope,
-                        ScopeType::Global |
-                            ScopeType::Block |
-                            ScopeType::Fn |
-                            ScopeType::Label |
-                            ScopeType::Loop
-                    )
-                {
-                    return Err(
-                        format!(
-                            "Syntax Error: {:?} statements are not allowed in this scope",
-                            self.peek().kind
-                        )
-                    );
+            | TokenKind::Do
+            | TokenKind::Match => {
+                if !matches!(scope, ScopeType::Global | ScopeType::Fn | ScopeType::Class | ScopeType::Custom | ScopeType::Block | ScopeType::Label | ScopeType::Handle) {
+                    return Err(format!("Syntax Error: {:?} is not allowed in this scope", self.peek().kind));
                 }
                 match self.peek().kind {
                     TokenKind::If => self.parse_if_stmt(),
                     TokenKind::For => self.parse_for_stmt(),
                     TokenKind::Loop => self.parse_loop_stmt(),
                     TokenKind::While => self.parse_while_stmt(),
-                    TokenKind::Switch => self.parse_switch_stmt(),
+                    TokenKind::Do => self.parse_do_while_stmt(),
+                    TokenKind::Match => self.parse_switch_stmt(),
                     _ => unreachable!(),
                 }
             }
 
             TokenKind::Leave => {
-                if
-                    !matches!(
-                        scope,
-                        ScopeType::Block |
-                            ScopeType::Fn |
-                            ScopeType::Label |
-                            ScopeType::Custom |
-                            ScopeType::Struct |
-                            ScopeType::Class |
-                            ScopeType::Enum |
-                            ScopeType::Case |
-                            ScopeType::Loop
-                    )
-                {
-                    return Err(
-                        "Syntax Error: Leave statements are not allowed in this scope".to_string()
-                    );
-                }
                 self.advance();
                 self.consume(TokenKind::SemiColon, "Expected ';' after leave")?;
                 Ok(Stmt::LeaveStmt)
             }
 
             TokenKind::Yield => {
-                if !matches!(
-                    scope,
-                    ScopeType::Custom |
-                        ScopeType::Label |
-                        ScopeType::Block |
-                        ScopeType::Fn |
-                        ScopeType::Loop
-                ) {
-                    return Err(
-                        "Syntax Error: Yield statements are not allowed in global scope".to_string()
-                    );
-                }
                 self.parse_yield_stmt()
             }
 
             TokenKind::Call => {
-                if
-                    !matches!(
-                        scope,
-                        ScopeType::Global |
-                            ScopeType::Block |
-                            ScopeType::Fn |
-                            ScopeType::Label |
-                            ScopeType::Loop |
-                            ScopeType::Handle
-                    )
-                {
-                    return Err(
-                        "Syntax Error: Call statements are not allowed in this scope".to_string()
-                    );
-                }
                 self.parse_call_stmt()
             }
 
             TokenKind::Break | TokenKind::Continue => {
-                if !matches!(scope, ScopeType::Block | ScopeType::Case | ScopeType::Loop) {
-                    return Err(
-                        format!(
-                            "Syntax Error: {:?} statements are not allowed in this scope",
-                            self.peek().kind
-                        )
-                    );
-                }
                 let kind = self.peek().kind.clone();
                 self.advance();
                 self.consume(
@@ -208,20 +144,6 @@ impl Parser {
             }
 
             TokenKind::Return => {
-                if
-                    !matches!(
-                        scope,
-                        ScopeType::Block |
-                            ScopeType::Fn |
-                            ScopeType::Label |
-                            ScopeType::Case |
-                            ScopeType::Loop
-                    )
-                {
-                    return Err(
-                        "Syntax Error: Return statements are not allowed in this scope".to_string()
-                    );
-                }
                 self.advance();
                 if self.peek().kind == TokenKind::SemiColon {
                     self.advance();
@@ -245,20 +167,6 @@ impl Parser {
             TokenKind::Identifier(_) => self.parse_expression_or_reassignment(),
 
             TokenKind::This => {
-                if
-                    !matches!(
-                        scope,
-                        ScopeType::Class |
-                            ScopeType::Struct |
-                            ScopeType::Custom |
-                            ScopeType::Handle |
-                            ScopeType::Label |
-                            ScopeType::Block |
-                            ScopeType::Fn
-                    )
-                {
-                    return Err("Syntax Error: 'this' is not allowed in this scope".to_string());
-                }
                 self.parse_expression_or_reassignment()
             }
 
@@ -536,9 +444,15 @@ impl Parser {
         self.consume(TokenKind::LBrace, "Expected '{' to start object destructure")?;
         let mut fields = Vec::new();
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-            let type_node = self.parse_type()?;
-            let name = self.get_identifier("Expected variable name in destructure")?;
-            if self.peek().kind == TokenKind::SemiColon {
+            let (type_node, name) = if self.is_var_decl_start() {
+                let ty = self.parse_type()?;
+                let n = self.get_identifier("Expected variable name in destructure")?;
+                (ty, n)
+            } else {
+                let n = self.get_identifier("Expected variable name in destructure")?;
+                (BaseType::Unknown, n)
+            };
+            if self.peek().kind == TokenKind::SemiColon || self.peek().kind == TokenKind::Comma {
                 self.advance();
             }
             let var_meta = VarMetadata {
@@ -904,9 +818,17 @@ impl Parser {
         }
 
         // then block
-        self.consume(TokenKind::LBrace, "Expected '{' to open if body")?;
-        let then_block = self.parse_block("if".to_string())?;
-        self.consume(TokenKind::RBrace, "Expected '}' to close if body")?;
+        let then_block = if self.peek().kind == TokenKind::LBrace {
+            self.advance(); // consume '{'
+            let blk = self.parse_block("if".to_string())?;
+            self.consume(TokenKind::RBrace, "Expected '}' to close if body")?;
+            blk
+        } else {
+            match self.parse_statement(ScopeType::Block)? {
+                Some(stmt) => vec![stmt],
+                None => vec![],
+            }
+        };
 
         // else block
         let else_block = if self.peek().kind == TokenKind::Else {
@@ -919,10 +841,17 @@ impl Parser {
                 if self.peek().kind == TokenKind::Arrow {
                     self.advance();
                 }
-                self.consume(TokenKind::LBrace, "Expected '{' after 'else'")?;
-                let blk = self.parse_block("if".to_string())?;
-                self.consume(TokenKind::RBrace, "Expected '}' to close else block")?;
-                Some(blk)
+                if self.peek().kind == TokenKind::LBrace {
+                    self.advance(); // consume '{'
+                    let blk = self.parse_block("if".to_string())?;
+                    self.consume(TokenKind::RBrace, "Expected '}' to close else block")?;
+                    Some(blk)
+                } else {
+                    match self.parse_statement(ScopeType::Block)? {
+                        Some(stmt) => Some(vec![stmt]),
+                        None => None,
+                    }
+                }
             }
         } else {
             None
@@ -935,129 +864,84 @@ impl Parser {
         })
     }
 
-    // --- loop N -> { ... }  or  loop -> { ... } (infinite) --
-    // أو  loop N -> scope_name()  /  loop -> scope_name()
-    pub(crate) fn parse_loop_stmt(&mut self) -> Result<Stmt, String> {
-        self.advance(); // 'loop'
-        let count = if self.peek().kind == TokenKind::Arrow {
-            None
-        } else {
-            Some(self.parse_expression()?)
-        };
-
-        self.consume(
-            TokenKind::Arrow,
-            "Expected '->' after loop count (use: loop N -> { } or loop N -> scope())"
-        )?;
-
-        let body = if self.peek().kind == TokenKind::LBrace {
-            self.advance(); // '{'
-            let stmts = self.parse_block("loop".to_string())?;
-            self.consume(TokenKind::RBrace, "Expected '}' to close loop body")?;
-            EitherBlock::Inline(stmts)
-        } else {
-            let expr = self.parse_expression()?;
-            if self.peek().kind == TokenKind::SemiColon {
-                self.advance();
-            }
-            EitherBlock::External(expr)
-        };
-
-        Ok(Stmt::LoopStmt { count, body })
-    }
-
-    // --- while (cond) -> { ... }  or  while (cond) -> scope_name() ---
-    pub(crate) fn parse_while_stmt(&mut self) -> Result<Stmt, String> {
-        self.advance(); // 'while'
-        self.consume(TokenKind::LParen, "Expected '(' after 'while'")?;
-        let condition = self.parse_expression()?;
-        self.consume(TokenKind::RParen, "Expected ')' after while condition")?;
-
-        self.consume(
-            TokenKind::Arrow,
-            "Expected '->' after while condition (use: while (cond) -> { } or while (cond) -> scope())"
-        )?;
-
-        let body = if self.peek().kind == TokenKind::LBrace {
-            self.advance(); // '{'
-            let stmts = self.parse_block("while".to_string())?;
-            self.consume(TokenKind::RBrace, "Expected '}' to close while body")?;
-            EitherBlock::Inline(stmts)
-        } else {
-            let expr = self.parse_expression()?;
-            if self.peek().kind == TokenKind::SemiColon {
-                self.advance();
-            }
-            EitherBlock::External(expr)
-        };
-
-        Ok(Stmt::WhileStmt { condition, body })
-    }
     //todo : make parse_scope_decl deal with switch
     pub(crate) fn parse_switch_stmt(&mut self) -> Result<Stmt, String> {
-        self.advance(); // consume 'switch'
-        self.consume(TokenKind::LParen, "Expected '(' after switch")?;
-        let condition = self.parse_expression()?;
-        self.consume(TokenKind::RParen, "Expected ')' after switch condition")?;
-
-        self.consume(TokenKind::Arrow, "Expected '->' after switch condition")?;
-
-        let cases = if self.peek().kind == TokenKind::LBrace {
-            self.advance(); // consume '{'
-            let mut body = Vec::new();
-            while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                if self.peek().kind == TokenKind::Case {
-                    self.advance(); // consume 'case'
-                    let val = self.parse_expression()?;
-                    self.consume(TokenKind::FatArrow, "Expected '=>' after case value")?;
-
-                    let case_body = if self.peek().kind == TokenKind::LBrace {
-                        self.advance();
-                        let b = self.parse_block("case".to_string())?;
-                        self.consume(TokenKind::RBrace, "Expected '}' to close case block")?;
-                        b
-                    } else {
-                        return Err("Syntax Error: Expected '{' after '=>' in case".to_string());
-                    };
-
-                    body.push(Stmt::CaseStmt {
-                        option: val,
-                        set: Expr::Identifier("void".to_string()),
-                        body: case_body,
-                    });
-                } else if self.peek().kind == TokenKind::Underscore {
-                    self.advance(); // consume '_'
-                    self.consume(TokenKind::FatArrow, "Expected '=>' after default case")?;
-
-                    let def_body = if self.peek().kind == TokenKind::LBrace {
-                        self.advance();
-                        let b = self.parse_block("switch".to_string())?;
-                        self.consume(TokenKind::RBrace, "Expected '}' to close default block")?;
-                        b
-                    } else {
-                        return Err(
-                            "Syntax Error: Expected '{' after '=>' in default case".to_string()
-                        );
-                    };
-                    // todo: add SwitchDecl for future updates
-                    body.push(Stmt::CaseStmt {
-                        option: Expr::Identifier("void".to_string()),
-                        set: Expr::Identifier("void".to_string()),
-                        body: def_body,
-                    });
-                } else {
-                    return Err(
-                        "Syntax Error: Expected 'case' or '_' inside switch block".to_string()
-                    );
-                }
-            }
-            self.consume(TokenKind::RBrace, "Expected '}' to close switch block")?;
-            body
+        self.advance(); // consume 'switch' or 'match'
+        let condition = if self.peek().kind == TokenKind::LParen {
+            self.advance();
+            let c = self.parse_expression()?;
+            self.consume(TokenKind::RParen, "Expected ')' after switch/match condition")?;
+            c
         } else {
-            return Err(
-                "External switch scopes are not supported yet; use a switch block".to_string()
-            );
+            self.parse_expression()?
         };
+
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance(); // consume optional '->'
+        }
+
+        self.consume(TokenKind::LBrace, "Expected '{' to open switch/match block")?;
+        let mut cases = Vec::new();
+        while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+            if self.peek().kind == TokenKind::Underscore {
+                self.advance(); // consume '_'
+                self.consume(TokenKind::FatArrow, "Expected '=>' after '_' in default match branch")?;
+
+                let def_body = if self.peek().kind == TokenKind::LBrace {
+                    self.advance();
+                    let b = self.parse_block("switch".to_string())?;
+                    self.consume(TokenKind::RBrace, "Expected '}' to close default block")?;
+                    if self.peek().kind == TokenKind::Comma || self.peek().kind == TokenKind::SemiColon {
+                        self.advance();
+                    }
+                    b
+                } else {
+                    let s = self.parse_statement(ScopeType::Block)?;
+                    if self.peek().kind == TokenKind::Comma {
+                        self.advance();
+                    }
+                    match s {
+                        Some(st) => vec![st],
+                        None => vec![],
+                    }
+                };
+
+                cases.push(Stmt::CaseStmt {
+                    option: Expr::Identifier("void".to_string()),
+                    set: Expr::Identifier("void".to_string()),
+                    body: def_body,
+                });
+            } else {
+                let val = self.parse_expression()?;
+                self.consume(TokenKind::FatArrow, "Expected '=>' after match pattern")?;
+
+                let case_body = if self.peek().kind == TokenKind::LBrace {
+                    self.advance();
+                    let b = self.parse_block("case".to_string())?;
+                    self.consume(TokenKind::RBrace, "Expected '}' to close match branch block")?;
+                    if self.peek().kind == TokenKind::Comma || self.peek().kind == TokenKind::SemiColon {
+                        self.advance();
+                    }
+                    b
+                } else {
+                    let s = self.parse_statement(ScopeType::Block)?;
+                    if self.peek().kind == TokenKind::Comma {
+                        self.advance();
+                    }
+                    match s {
+                        Some(st) => vec![st],
+                        None => vec![],
+                    }
+                };
+
+                cases.push(Stmt::CaseStmt {
+                    option: val,
+                    set: Expr::Identifier("void".to_string()),
+                    body: case_body,
+                });
+            }
+        }
+        self.consume(TokenKind::RBrace, "Expected '}' to close switch/match block")?;
 
         Ok(Stmt::SwitchStmt {
             name: String::new(),
@@ -1078,177 +962,6 @@ impl Parser {
         Ok(Stmt::DelStmt {
             target: expr,
             is_array,
-        })
-    }
-
-    pub(crate) fn parse_for_stmt(&mut self) -> Result<Stmt, String> {
-        self.advance(); // 'for'
-        self.consume(TokenKind::LParen, "Expected '(' after 'for'")?;
-
-        // Lookahead to see if it's a for-in loop
-        let mut is_for_in = false;
-        let mut lookahead = self.current;
-        let mut paren_depth = 1; // We already consumed the first LParen
-        while lookahead < self.tokens.len() {
-            match &self.tokens[lookahead].kind {
-                TokenKind::In => {
-                    if paren_depth == 1 {
-                        is_for_in = true;
-                        break;
-                    }
-                }
-                TokenKind::LParen => {
-                    paren_depth += 1;
-                }
-                TokenKind::RParen => {
-                    paren_depth -= 1;
-                    if paren_depth == 0 {
-                        break;
-                    }
-                }
-                TokenKind::SemiColon => {
-                    if paren_depth == 1 {
-                        break;
-                    }
-                }
-                _ => {}
-            }
-            lookahead += 1;
-        }
-
-        if is_for_in {
-            return self.parse_for_in_stmt_body();
-        }
-
-        let init = if self.peek().kind == TokenKind::SemiColon {
-            self.advance(); // skip ';'
-            None
-        } else {
-            Some(Box::new(self.parse_for_init_stmt()?))
-        };
-
-        let condition = if self.peek().kind == TokenKind::SemiColon {
-            None
-        } else {
-            Some(self.parse_expression()?)
-        };
-        self.consume(TokenKind::SemiColon, "Expected ';' after for condition")?;
-
-        let increment = if self.peek().kind == TokenKind::RParen {
-            None
-        } else {
-            let expr = self.parse_expression()?;
-            let op = self.peek().kind.clone();
-            // Only consume the op token if it's an assignment-like operator
-            if
-                op == TokenKind::Arrow ||
-                op == TokenKind::Assign ||
-                op == TokenKind::PlusAssign ||
-                op == TokenKind::MinusAssign ||
-                op == TokenKind::MulAssign ||
-                op == TokenKind::DivAssign
-            {
-                self.advance(); // consume the assignment operator
-                let mut value = self.parse_expression()?;
-                if op == TokenKind::PlusAssign {
-                    value = Expr::BinaryOp {
-                        left: Box::new(expr.clone()),
-                        operator: "+".to_string(),
-                        right: Box::new(value),
-                    };
-                } else if op == TokenKind::MinusAssign {
-                    value = Expr::BinaryOp {
-                        left: Box::new(expr.clone()),
-                        operator: "-".to_string(),
-                        right: Box::new(value),
-                    };
-                } else if op == TokenKind::MulAssign {
-                    value = Expr::BinaryOp {
-                        left: Box::new(expr.clone()),
-                        operator: "*".to_string(),
-                        right: Box::new(value),
-                    };
-                } else if op == TokenKind::DivAssign {
-                    value = Expr::BinaryOp {
-                        left: Box::new(expr.clone()),
-                        operator: "/".to_string(),
-                        right: Box::new(value),
-                    };
-                }
-
-                Some(
-                    Box::new(Stmt::ReassignStmt {
-                        target: expr,
-                        value,
-                        op: op.as_str().to_string(),
-                    })
-                )
-            } else {
-                // Expression-only increment (e.g. i++ or function call)
-                // Do NOT advance - the next token should be RParen
-                Some(Box::new(Stmt::ExpressionStmt(expr)))
-            }
-        };
-        self.consume(TokenKind::RParen, "Expected ')' after for clauses")?;
-
-        // Support optional '->' arrow before body brace (FastLang syntax)
-        if self.peek().kind == TokenKind::Arrow {
-            self.advance(); // consume '->'
-        }
-
-        let body = if self.peek().kind == TokenKind::LBrace {
-            self.advance();
-            let stmts = self.parse_block("for".to_string())?;
-            self.consume(TokenKind::RBrace, "Expected '}' to close for body")?;
-            EitherBlock::Inline(stmts)
-        } else {
-            let expr = self.parse_expression()?;
-            if self.peek().kind == TokenKind::SemiColon {
-                self.advance();
-            }
-            EitherBlock::External(expr)
-        };
-
-        Ok(Stmt::ForStmt {
-            init,
-            condition,
-            increment,
-            body,
-        })
-    }
-
-    pub(crate) fn parse_for_in_stmt_body(&mut self) -> Result<Stmt, String> {
-        // We already consumed `for (`
-        self.consume_optional_let();
-        let item = if self.is_var_decl_start() {
-            self.parse_var_decl(ScopeType::Block).map(Stmt::Declaration)?
-        } else {
-            let expr = self.parse_expression()?;
-            Stmt::ExpressionStmt(expr)
-        };
-
-        self.consume(TokenKind::In, "Expected 'in' in for-in loop")?;
-        let iterable = self.parse_expression()?;
-        self.consume(TokenKind::RParen, "Expected ')' after for-in clauses")?;
-        self.consume(TokenKind::Arrow, "Expected '->' after 'for-in' clauses")?;
-
-        let body = if self.peek().kind == TokenKind::LBrace {
-            self.advance();
-            let stmts = self.parse_block("for-in".to_string())?;
-            self.consume(TokenKind::RBrace, "Expected '}' to close for-in body")?;
-            EitherBlock::Inline(stmts)
-        } else {
-            let expr = self.parse_expression()?;
-            if self.peek().kind == TokenKind::SemiColon {
-                self.advance();
-            }
-            EitherBlock::External(expr)
-        };
-
-        Ok(Stmt::ForInStmt {
-            item: Box::new(item),
-            iterable,
-            body,
         })
     }
 
@@ -1378,40 +1091,8 @@ impl Parser {
             op == TokenKind::DivAssign
         {
             self.advance(); // consume '=' or '+=' etc.
-            let mut value = self.parse_expression()?;
-
-            if op == TokenKind::PlusAssign {
-                value = Expr::BinaryOp {
-                    left: Box::new(expr.clone()),
-                    operator: "+".to_string(),
-                    right: Box::new(value),
-                };
-            } else if op == TokenKind::MinusAssign {
-                value = Expr::BinaryOp {
-                    left: Box::new(expr.clone()),
-                    operator: "-".to_string(),
-                    right: Box::new(value),
-                };
-            } else if op == TokenKind::MulAssign {
-                value = Expr::BinaryOp {
-                    left: Box::new(expr.clone()),
-                    operator: "*".to_string(),
-                    right: Box::new(value),
-                };
-            } else if op == TokenKind::DivAssign {
-                value = Expr::BinaryOp {
-                    left: Box::new(expr.clone()),
-                    operator: "/".to_string(),
-                    right: Box::new(value),
-                };
-            }
-            let op_str = if op == TokenKind::Arrow {
-                op.as_str().to_string()
-            } else if op == TokenKind::Assign {
-                op.as_str().to_string()
-            } else {
-                op.as_str().to_string()
-            };
+            let value = self.parse_expression()?;
+            let op_str = op.as_str().to_string();
             if self.peek().kind == TokenKind::Comma {
                 self.advance();
             } else if self.peek().kind == TokenKind::SemiColon {
@@ -1426,7 +1107,6 @@ impl Parser {
             });
         }
 
-        print!("DEBUG: parse_expression_reassign_stmt: expr: {:?}", expr);
         if self.peek().kind == TokenKind::SemiColon {
             self.consume(TokenKind::SemiColon, "Expected ';' after expression statement")?;
         }
@@ -1435,7 +1115,6 @@ impl Parser {
 
     pub(crate) fn parse_expression_stmt(&mut self) -> Result<Stmt, String> {
         let expr = self.parse_expression()?;
-        print!("DEBUG: parse_expression_stmt: 1. expr: {:?} \n", self.peek().kind);
         // --- Bare reassignment: x = 10; or this.x = 20; ---
         let op = self.peek().kind.clone();
         if
@@ -1447,40 +1126,8 @@ impl Parser {
             op == TokenKind::DivAssign
         {
             self.advance(); // consume '=' or '->' or '+=' etc
-            let mut value = self.parse_expression()?;
-
-            if op == TokenKind::PlusAssign {
-                value = Expr::BinaryOp {
-                    left: Box::new(expr.clone()),
-                    operator: "+".to_string(),
-                    right: Box::new(value),
-                };
-            } else if op == TokenKind::MinusAssign {
-                value = Expr::BinaryOp {
-                    left: Box::new(expr.clone()),
-                    operator: "-".to_string(),
-                    right: Box::new(value),
-                };
-            } else if op == TokenKind::MulAssign {
-                value = Expr::BinaryOp {
-                    left: Box::new(expr.clone()),
-                    operator: "*".to_string(),
-                    right: Box::new(value),
-                };
-            } else if op == TokenKind::DivAssign {
-                value = Expr::BinaryOp {
-                    left: Box::new(expr.clone()),
-                    operator: "/".to_string(),
-                    right: Box::new(value),
-                };
-            }
-            let op_str = if op == TokenKind::Arrow {
-                op.as_str().to_string()
-            } else if op == TokenKind::Assign {
-                op.as_str().to_string()
-            } else {
-                op.as_str().to_string()
-            };
+            let value = self.parse_expression()?;
+            let op_str = op.as_str().to_string();
             self.consume(TokenKind::SemiColon, "Expected ';' after assignment statement")?;
             return Ok(Stmt::ReassignStmt {
                 target: expr,
@@ -1488,7 +1135,6 @@ impl Parser {
                 op: op_str,
             });
         }
-        print!("DEBUG: parse_expression_stmt: 3. expr: {:?} \n", self.peek().kind);
         if self.peek().kind == TokenKind::SemiColon {
             self.consume(TokenKind::SemiColon, "Expected ';' after expression statement")?;
         }
@@ -1533,12 +1179,22 @@ impl Parser {
     // ====================================================
 
     pub(crate) fn get_identifier(&mut self, err_msg: &str) -> Result<String, String> {
-        if let TokenKind::Identifier(n) = &self.peek().kind.clone() {
-            let s = n.to_string();
-            self.advance();
-            return Ok(s);
-        } else {
-            return Err(err_msg.to_string());
+        match &self.peek().kind {
+            TokenKind::Identifier(n) => {
+                let s = n.clone();
+                self.advance();
+                Ok(s)
+            }
+            TokenKind::ToString => { self.advance(); Ok("to_string".to_string()) }
+            TokenKind::Call => { self.advance(); Ok("call".to_string()) }
+            TokenKind::Return => { self.advance(); Ok("return".to_string()) }
+            TokenKind::Break => { self.advance(); Ok("break".to_string()) }
+            TokenKind::Continue => { self.advance(); Ok("continue".to_string()) }
+            TokenKind::Leave => { self.advance(); Ok("leave".to_string()) }
+            TokenKind::Yield => { self.advance(); Ok("yield".to_string()) }
+            TokenKind::Throw => { self.advance(); Ok("throw".to_string()) }
+            TokenKind::TypeError => { self.advance(); Ok("error".to_string()) }
+            _ => Err(err_msg.to_string()),
         }
     }
 }

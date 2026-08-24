@@ -95,14 +95,31 @@ pub enum SymbolKind {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SymbolInfo — المعلومات المخزّنة لكل اسم في الـ scope
-// ─────────────────────────────────────────────────────────────────────────────
 #[derive(Debug, Clone)]
 pub struct SymbolInfo {
     pub name: String,
     pub kind: SymbolKind,
     pub visibility: Visibility,
     pub dependencies: Vec<String>,
+    pub is_used: bool,
+    pub is_param: bool,
+}
+
+impl Default for SymbolInfo {
+    fn default() -> Self {
+        SymbolInfo {
+            name: String::new(),
+            kind: SymbolKind::Variable {
+                type_node: BaseType::Unknown,
+                editability: Editability::Editable,
+                is_array: false,
+            },
+            visibility: Visibility::Private,
+            dependencies: vec![],
+            is_used: false,
+            is_param: false,
+        }
+    }
 }
 
 impl SymbolInfo {
@@ -220,6 +237,17 @@ impl Environment {
         }
         if let Some(ref parent) = self.parent {
             return parent.borrow_mut().update(name, info);
+        }
+        false
+    }
+
+    pub fn mark_used(&mut self, name: &str) -> bool {
+        if let Some(info) = self.symbols.get_mut(name) {
+            info.is_used = true;
+            return true;
+        }
+        if let Some(ref parent) = self.parent {
+            return parent.borrow_mut().mark_used(name);
         }
         false
     }

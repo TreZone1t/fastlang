@@ -36,21 +36,21 @@ custom MathScope -> {
 }
 
 enum Direction -> {
-    variants -> {
-        Up,
-        Down,
-        Left,
-        Right
-    };
-    handle -> {
-     fn display() -> string {
-          switch (this) -> {
-              case Up => { return "Up"; }
-              case Down => { return "Down"; }
-              case Left => { return "Left"; }
-              case Right => { return "Right"; }
-          }
-     }
+    Up,
+    Down,
+    Left,
+    Right
+}
+
+impl handle for Direction -> {
+    fn display() -> string {
+        match (this) -> {
+            Direction::Up => { return "Up"; }
+            Direction::Down => { return "Down"; }
+            Direction::Left => { return "Left"; }
+            Direction::Right => { return "Right"; }
+            _ => { return "Unknown"; }
+        }
     }
 }
 

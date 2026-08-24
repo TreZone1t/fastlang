@@ -14,11 +14,11 @@ pub enum TokenKind {
     Set, // set
     If, // if
     Else, // else
-    Switch, // switch // i don't know how to implement it but it will be using scope we will make a new scope type for it.
-    Case, // case
+    Match, // match
     For, // for
     In, // in
     While, // while
+    Do, // do
     Loop, // loop
     Break, // break
     Continue, // continue
@@ -90,6 +90,7 @@ pub enum TokenKind {
     TypeCustom, // custom
     TypeStruct, // struct
     TypeBlock, // block
+    TypeMicro, // micro
     TypeClass, // class
     TypeEnum, // enum
     TypeMethod, // method
@@ -103,7 +104,6 @@ pub enum TokenKind {
     Private, // private   //* with  class and struct and  custom and scope
     Handle, // handle    //* with all meta-block: handle.<flag> -> { ... }
     Statement, // statement //* with all meta-block: statement -> { ... }
-    Variants,
 
     // 4. Operators / punctuation
     Assign, // =
@@ -180,7 +180,7 @@ impl TokenKind {
             TokenKind::ToString => "to_string",
             TokenKind::If => "if",
             TokenKind::Else => "else",
-            TokenKind::Switch => "switch",
+            TokenKind::Match => "match",
             TokenKind::Loop => "loop",
             TokenKind::While => "while",
             TokenKind::Break => "break",
