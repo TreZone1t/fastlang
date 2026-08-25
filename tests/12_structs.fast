@@ -1,0 +1,13 @@
+// Valid: Basic struct
+struct Point -> {
+    public -> {
+        int32 x;
+        int32 y;
+    }
+    constructor -> {
+    init(x : int32, y : int32) -> {
+        this.x -> x;
+        this.y -> y;
+    }
+    }
+}

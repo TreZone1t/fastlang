@@ -1,0 +1,35 @@
+// Test 44: Direct 'using' for enums and scopes
+import std;
+
+enum Status {
+    Active,
+    Inactive,
+    Pending(int32),
+}
+
+fn main() -> int32 {
+    using Status;
+
+    Status s1 = Active;
+    Status s2 = Inactive;
+    Status s3 = Pending(100);
+
+    match (s1) -> {
+        Active => {
+            print("Status 1 is Active");
+        }
+        Inactive => {
+            print("Status 1 is Inactive");
+        }
+        _ => {}
+    }
+
+    match (s3) -> {
+        Pending(code) => {
+            print("Status 3 is Pending with code: ", code);
+        }
+        _ => {}
+    }
+
+    return 0;
+}

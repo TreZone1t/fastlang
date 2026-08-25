@@ -1,0 +1,44 @@
+// FastLang Example: Enums, Using, and Pattern Matching (.fast)
+import std;
+
+enum Status {
+    Idle,
+    Running(int32),
+    Success(string),
+    Failed(int32, string),
+}
+
+fn process_status(s: Status) -> void {
+    match (s) -> {
+        Idle => {
+            log("State: System is idle.");
+        }
+        Running(progress) => {
+            log("State: In progress: ", progress);
+        }
+        Success(msg) => {
+            log("State: Success! ", msg);
+        }
+        Failed(err_code, reason) => {
+            log("State: Failed with code ", err_code);
+            log("Reason: ", reason);
+        }
+    }
+}
+
+fn main() -> int32 {
+    // Import enum variants into current scope
+    using Status;
+
+    Status s1 = Idle;
+    Status s2 = Running(45);
+    Status s3 = Success("Task completed successfully.");
+    Status s4 = Failed(404, "Not Found");
+
+    process_status(s1);
+    process_status(s2);
+    process_status(s3);
+    process_status(s4);
+
+    return 0;
+}

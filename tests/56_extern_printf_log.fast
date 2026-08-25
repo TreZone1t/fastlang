@@ -1,0 +1,13 @@
+// Test 56: Using extern C printf & puts from C stdio
+import @c "stdio.h";
+
+extern @c {
+    fn printf(format: string, a: int32, b: int32, c: int32) -> int32;
+    fn puts(s: string) -> int32;
+}
+
+fn main() -> int32 {
+    printf("Hello from stdio printf: %d + %d = %d\n", 10, 20, 30);
+    puts("Hello from stdio puts!");
+    return 0;
+}

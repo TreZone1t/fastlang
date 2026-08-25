@@ -44,8 +44,10 @@ impl Parser {
         _field_type: Visibility //todo : fix it
     ) -> Result<Vec<Decl>, String> {
         self.advance(); // 'public' , 'private' or 'static'
-        self.consume(TokenKind::Arrow, "Expected '->' after 'public'")?;
-        self.consume(TokenKind::LBrace, "Expected '{' to open public block")?;
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance();
+        }
+        self.consume(TokenKind::LBrace, "Expected '{' to open block")?;
         let mut block = Vec::new();
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
             //we have only fn decl and var decl so we will not use the parse_statement ever here
@@ -172,6 +174,8 @@ impl Parser {
 
                 handle_fn.push(Decl::FnDecl {
                     is_exported: false,
+                    is_virtual: true,
+                    is_abstract: false,
                     name: method_name,
                     params: method_params,
                     return_type,

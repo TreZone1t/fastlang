@@ -33,7 +33,9 @@ impl Parser {
             variants: None,
         };
 
-        self.consume(TokenKind::Arrow, "Expected '->' to open custom body")?;
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance();
+        }
         self.consume(TokenKind::LBrace, "Expected '{' to open custom body")?;
 
         let allowed_settings = [

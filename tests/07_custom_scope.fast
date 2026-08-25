@@ -1,0 +1,94 @@
+custom MathScope -> {
+    data -> 10;  
+    handle -> {
+        fn add(other: MathScope) -> MathScope {
+            MathScope result = new MathScope();
+            result.data = this.data + other.data;
+            return result;
+        }
+        fn sub(other: MathScope) -> MathScope {
+            MathScope result = new MathScope();
+            result.data = this.data - other.data;
+            return result;
+        }
+        fn mul(other: MathScope) -> MathScope {
+            MathScope result = new MathScope();
+            result.data = this.data * other.data;
+            return result;
+        }
+        fn div(other: MathScope) -> MathScope {
+            MathScope result = new MathScope();
+            result.data = this.data / other.data;
+            return result;
+        }
+        fn mod(other: MathScope) -> MathScope {
+            MathScope result = new MathScope();
+            result.data = this.data % other.data;
+            return result;
+        }
+        fn index_access(index: int32) -> int32 {
+            return this.data + index;
+        }
+        fn display() -> int32 {
+            return this.data; 
+        }
+    }
+}
+
+enum Direction -> {
+    Up,
+    Down,
+    Left,
+    Right
+}
+
+impl handle for Direction -> {
+    fn display() -> string {
+        match (this) -> {
+            Direction::Up => { return "Up"; }
+            Direction::Down => { return "Down"; }
+            Direction::Left => { return "Left"; }
+            Direction::Right => { return "Right"; }
+            _ => { return "Unknown"; }
+        }
+    }
+}
+
+fn main() -> int32 {
+  MathScope a = new MathScope();
+  MathScope b = new MathScope();
+  MathScope c = a + b;
+  MathScope d = a - b;
+  MathScope e = a * b;
+  MathScope f = a / b;
+  MathScope g = a % b;
+  print("c.data (10 + 10):");
+  print(c.data);
+  print("d.data (10 - 10):");
+  print(d.data);
+  print("e.data (10 * 10):");
+  print(e.data);
+  print("f.data (10 / 10):");
+  print(f.data);
+  print("g.data (10 % 10):");
+  print(g.data);
+  print("Index access a[5]:");
+  print(a[5]);
+
+  Direction dir1 = Direction::Up;
+  print(dir1);
+  return 0;
+}
+// EXPECT: c.data (10 + 10):
+// EXPECT: 20
+// EXPECT: d.data (10 - 10):
+// EXPECT: 0
+// EXPECT: e.data (10 * 10):
+// EXPECT: 100
+// EXPECT: f.data (10 / 10):
+// EXPECT: 1
+// EXPECT: g.data (10 % 10):
+// EXPECT: 0
+// EXPECT: Index access a[5]:
+// EXPECT: 15
+// EXPECT: Up

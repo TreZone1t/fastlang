@@ -12,7 +12,9 @@ impl Parser {
             self.parse_generics(&mut generics)?;
         }
 
-        self.consume(TokenKind::Arrow, "Expected '->'")?;
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance();
+        }
 
         let definition = if self.peek().kind == TokenKind::LBrace {
             self.advance();

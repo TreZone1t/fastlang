@@ -11,7 +11,9 @@ impl Parser {
         if self.peek().kind == TokenKind::Less {
             self.parse_generics(&mut generics)?;
         }
-        self.consume(TokenKind::Arrow, "Expected '->' to open enum body")?;
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance();
+        }
         self.consume(TokenKind::LBrace, "Expected '{' to open enum body")?;
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
             let t = self.peek().kind.clone();

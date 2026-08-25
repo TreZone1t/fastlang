@@ -1,0 +1,37 @@
+// Test 45: Smart Function Pointers, Lambdas, and Higher-Order Functions
+
+fn multiply(a: int32, b: int32) -> int32 {
+    return a * b;
+}
+
+fn apply_op(x: int32, y: int32, op: name<Fn<(int32, int32), int32>>) -> int32 {
+    return op(x, y);
+}
+
+fn main() -> int32 {
+    // 1. Function pointer via name<Fn>
+    name<Fn<(int32, int32), int32>> fn_ptr = multiply;
+    int32 res1 = fn_ptr(6, 7);
+    print("Multiply result: ", res1);
+
+    // 2. Anonymous Lambda function
+    name<Fn<(int32, int32), int32>> add_lambda = fn _(a: int32, b: int32) -> int32 {
+        return a + b;
+    };
+    int32 res2 = add_lambda(20, 30);
+    print("Lambda add result: ", res2);
+
+    // 3. Passing to Higher-Order Function
+    int32 res3 = apply_op(10, 5, fn_ptr);
+    print("Apply multiply: ", res3);
+
+    int32 res4 = apply_op(10, 5, add_lambda);
+    print("Apply lambda add: ", res4);
+
+    // 4. Reassignment with 'set'
+    set fn_ptr = add_lambda;
+    int32 res5 = fn_ptr(50, 50);
+    print("Reassigned fn_ptr call: ", res5);
+
+    return 0;
+}

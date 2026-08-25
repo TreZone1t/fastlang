@@ -1,0 +1,43 @@
+// FastLang Example: Loops & Control Flow (.fast)
+
+fn main() -> int32 {
+    log("=== 1. Standard While Loop ===");
+    int32 i = 0;
+    while (i < 5) -> {
+        log("While iteration: ", i);
+        i = i + 1;
+    }
+
+    log("=== 2. Do-While Loop ===");
+    int32 j = 0;
+    do -> {
+        log("Do-While iteration: ", j);
+        j = j + 1;
+    } while (j < 3);
+
+    log("=== 3. C-Style For Loop ===");
+    for (int32 k = 0; k < 4; k = k + 1) -> {
+        log("For iteration: ", k);
+    }
+
+    log("=== 4. Infinite Loop with Break & Continue ===");
+    int32 count = 0;
+    loop -> {
+        count = count + 1;
+        if (count == 2) -> {
+            continue;
+        }
+        log("Loop count: ", count);
+        if (count >= 5) -> {
+            break;
+        }
+    }
+
+    log("=== 5. For-In Iteration ===");
+    int32[5] numbers = [10, 20, 30, 40, 50];
+    for (val in numbers) -> {
+        log("Array item: ", val);
+    }
+
+    return 0;
+}

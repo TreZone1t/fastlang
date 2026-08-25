@@ -1,0 +1,36 @@
+{
+  "name": "fastlang",
+  "displayName": "FastLang",
+  "description": "Syntax highlighting and language support for FastLang (.fast)",
+  "version": "0.1.0",
+  "publisher": "antigravity",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "fast",
+        "aliases": [
+          "FastLang",
+          "fast"
+        ],
+        "extensions": [
+          ".fast",
+          ".fs"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "fast",
+        "scopeName": "source.fast",
+        "path": "./syntaxes/fastlang.tmLanguage.json"
+      }
+    ]
+  }
+}

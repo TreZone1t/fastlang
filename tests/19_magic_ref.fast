@@ -1,0 +1,18 @@
+fn main() -> void {
+    int32 number = 42;
+    int32 my_array[5] = [1,2,3,4,5];
+
+    name safe_ptr = &number; 
+
+    modify<int32> mut_ptr = &number;
+
+    int32* my_heap_array = new int32[1,2,3,4,5];
+    
+    modify<int32> not_safe_ptr = &my_heap_array[0];
+     del not_safe_ptr;  // now it will give error : cannot delete name
+    not_safe_ptr = my_array;   //it doesn't work *error: assignment of read-only reference 'not_safe_ptr'*
+    
+    name<int32> bad_ptr = safe_ptr;   //Warning : nested and linked ptr you must to be manged correctly
+    print(*bad_ptr);
+    print(*mut_ptr);
+}

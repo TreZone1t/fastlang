@@ -3,7 +3,7 @@ use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::Module;
 use std::collections::HashMap;
-//pub mod aot;
+pub mod aot;
 pub struct CraneliftBackend {
     module: JITModule,
     builder_context: FunctionBuilderContext,

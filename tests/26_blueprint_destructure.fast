@@ -1,0 +1,28 @@
+blueprint Point -> {
+    int32 x;
+    int32 y;
+};
+
+fn IreturnPoint() -> Point {
+    return Point { x = 10, y = 20 };
+}
+
+fn main() -> int32 {
+    {int32 x; int32 y;} = IreturnPoint();
+    print(x); // EXPECT: 10
+    print(y); // EXPECT: 20
+
+    const {int32 a; int32 b;} = IreturnPoint();
+    print(a); // EXPECT: 10
+    print(b); // EXPECT: 20
+
+    Point {c, d} = IreturnPoint();
+    print(c); // EXPECT: 10
+    print(d); // EXPECT: 20
+
+    const Point {e, f} = IreturnPoint();
+    print(e); // EXPECT: 10
+    print(f); // EXPECT: 20
+
+    return 0;
+}

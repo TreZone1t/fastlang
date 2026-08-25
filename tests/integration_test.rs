@@ -23,7 +23,8 @@ fn run_all_fs_tests() {
     let mut passed_tests = 0;
 
     for path in entries {
-        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("fs") {
+        let ext = path.extension().and_then(|s| s.to_str());
+        if path.is_file() && (ext == Some("fast") || ext == Some("fs")) {
             let filename = path.file_name().unwrap().to_str().unwrap();
             let should_fail =
                 filename.starts_with("fail_") ||

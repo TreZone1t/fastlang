@@ -1,0 +1,36 @@
+// Test 46: Built-in Scope State Flags and Function Scope Inspection
+
+fn add_numbers(a: int32, b: int32) -> int32 {
+    return a + b;
+}
+
+block generator -> {
+    int32 step = 0;
+    step = step + 1;
+    yield;
+    step = step + 1;
+    yield;
+}
+
+fn main() -> int32 {
+    // 1. Test name<T> smart wrapper on function
+    name<Fn<(int32, int32), int32>> s = add_numbers;
+    int32 result = s(15, 25);
+    print("Function result: ", result);
+    print("Scope has_return: ", s.has_return());
+    print("Scope return_value: ", s.return_value);
+    print("Scope is_done: ", s.is_done());
+
+    // 2. Test block state machine with yield and built-in flags
+    generator();
+    print("Generator step 1: ", generator.step);
+    print("Generator has_yielded: ", generator.has_yielded);
+
+    generator();
+    print("Generator step 2: ", generator.step);
+
+    generator();
+    print("Generator is_done: ", generator.is_done);
+
+    return 0;
+}

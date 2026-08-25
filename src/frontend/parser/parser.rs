@@ -38,6 +38,9 @@ impl Parser {
         // Should not happen in practice since is_at_end() gates the main loops.
         self.tokens.get(self.current).unwrap_or(&EOF_TOKEN)
     }
+    pub(crate) fn peek_ahead(&self, n: usize) -> Option<&Token> {
+        self.tokens.get(self.current + n)
+    }
     pub(crate) fn previous(&self, n: Option<usize>) -> &Token {
         let n = n.unwrap_or(1);
         &self.tokens[self.current - n]
@@ -65,15 +68,10 @@ impl Parser {
             match self.parse_statement(ScopeType::Global) {
                 Ok(Some(stmt)) => statements.push(stmt),
 
-                // إضافة الاحتمال الناقص لتجاهل الجمل الفارغة
+                // Skip empty statements
                 Ok(None) => continue,
 
                 Err(e) => {
-                    // =============== إضافة الـ Debug المؤقتة ===============
-                    println!("\n⚠️ ⚠️ ⚠️ ERROR OCCURRED! PRINTING AST BUILT SO FAR ⚠️ ⚠️ ⚠️");
-                    println!("{:#?}", statements);
-                    println!("=========================================================\n");
-
                     return Err(e);
                 }
             }
@@ -91,7 +89,7 @@ impl Parser {
         if core::mem::discriminant(&self.peek().kind) == core::mem::discriminant(&expected) {
             Ok(self.advance())
         } else {
-            // هنا هنضيف مستقبلاً اللوجيك اللي بيشاور على السطر وبيطبع الـ Hints (زي IF و print)
+            // Future location for line-based diagnostics and hints
             // NOTE: self.peek().line / .column are now available for exactly this.
             Err(format!(
                 "{} (at line {}, column {})",
@@ -102,7 +100,7 @@ impl Parser {
         }
     }
 
-    // الدالة دي بترجع البارسر لوعيه بعد ما يلاقي غلطة عشان الكومبايلر ميكراشش
+    // Synchronize parser state after encountering a syntax error
     pub(crate) fn synchronize(&mut self) {
         self.advance();
 
@@ -134,8 +132,8 @@ impl Parser {
     }
 
     // ----------------------------------------------------
-    // تحليل الجمل (Statement Parsing)
+    // Statement Parsing
     // ----------------------------------------------------
 
-    // الدالة دي بتحدد إحنا هنقرأ أي نوع من الأوامر
+    // Dispatches statement parsing based on token kind
 }

@@ -1,0 +1,21 @@
+import std::string;
+
+fn main() -> int32 {
+    usize memory_size = 1024;
+    isize offset = -16;
+    byte raw_byte = 255;
+    uint32 counter = 50000;
+    uint<16> port = 8080;
+    int<64> big_num = 9000000000;
+    float<32> pi_approx = 3.14;
+
+    print(memory_size);
+    print(offset);
+    print(raw_byte);
+    print(counter);
+    print(port);
+    print(big_num);
+    print(pi_approx);
+
+    return 0;
+}

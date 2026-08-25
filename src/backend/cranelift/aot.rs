@@ -1,7 +1,7 @@
 use crate::middle_end::ir::instruction::*;
 use cranelift::prelude::*;
-use cranelift_module::{default_libcall_names, Linkage, Module};
-use cranelift_object::{ObjectBuilder, ObjectModule};
+use cranelift_module::{Linkage, Module};
+use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
 pub struct CraneliftAotBackend {
@@ -30,7 +30,7 @@ impl CraneliftAotBackend {
             cranelift_module::default_libcall_names(),
         )
         .unwrap();
-        let mut module = ObjectModule::new(builder);
+        let module = ObjectModule::new(builder);
         let ctx = module.make_context();
 
         Self {
@@ -42,9 +42,11 @@ impl CraneliftAotBackend {
     }
 
     pub fn compile_module(&mut self, ir_module: &IRModule) {
+        let default_conv = self.module.target_config().default_call_conv;
         // 1. Declare all functions first
         for func in &ir_module.functions {
             let mut sig = self.module.make_signature();
+            sig.call_conv = default_conv;
             for (_name, ty) in &func.params {
                 sig.params
                     .push(cranelift::prelude::AbiParam::new(Self::map_type(ty)));
@@ -55,20 +57,27 @@ impl CraneliftAotBackend {
                         &func.return_type,
                     )));
             }
+            let linkage = if func.is_extern {
+                Linkage::Import
+            } else {
+                Linkage::Export
+            };
             let func_id = self
                 .module
-                .declare_function(&func.name, Linkage::Export, &sig)
+                .declare_function(&func.name, linkage, &sig)
                 .unwrap();
             self.funcs.insert(func.name.clone(), func_id);
         }
 
-        // 2. Define all functions
+        // 2. Define all non-extern functions
         let funcs_clone = self.funcs.clone();
         for func in &ir_module.functions {
-            self.compile_function(func, &funcs_clone, ir_module);
-            self.module
-                .define_function(funcs_clone[&func.name], &mut self.ctx)
-                .unwrap();
+            if !func.is_extern {
+                self.compile_function(func, &funcs_clone, ir_module);
+                self.module
+                    .define_function(funcs_clone[&func.name], &mut self.ctx)
+                    .unwrap();
+            }
         }
     }
 
@@ -85,6 +94,9 @@ impl CraneliftAotBackend {
             "CRANELIFT: Compiling function '{}' to CLIF...",
             ir_func.name
         );
+
+        let default_conv = self.module.target_config().default_call_conv;
+        self.ctx.func.signature.call_conv = default_conv;
 
         for (_name, ty) in &ir_func.params {
             self.ctx
@@ -124,7 +136,7 @@ impl CraneliftAotBackend {
         );
     }
 
-    pub fn finalize(mut self, out_path: &str) {
+    pub fn finalize(self, out_path: &str) {
         let obj = self.module.finish();
         std::fs::write(out_path, obj.emit().unwrap()).unwrap();
         println!(
@@ -171,14 +183,6 @@ impl<'a> FunctionTranslator<'a> {
         let entry_block = self.blocks[&ir_func.entry_block];
         self.builder
             .append_block_params_for_function_params(entry_block);
-        self.builder.switch_to_block(entry_block);
-        self.builder.seal_block(entry_block); // Seal if it has no predecessors (entry block usually has none)
-
-        for (i, (_name, _ty)) in ir_func.params.iter().enumerate() {
-            let val = self.builder.block_params(entry_block)[i];
-            // If the parameter is treated as a local variable, we need an alloc for it.
-            // But right now we'll just handle basic IR operations.
-        }
 
         // 3. Translate Instructions
         let mut sorted_blocks: Vec<&BlockID> = ir_func.blocks.keys().collect();
@@ -186,17 +190,14 @@ impl<'a> FunctionTranslator<'a> {
 
         for &b_id in sorted_blocks {
             let cl_block = self.blocks[&b_id];
-            if b_id != ir_func.entry_block {
-                self.builder.switch_to_block(cl_block);
-                self.builder.seal_block(cl_block); // Simplification: assuming no complex CFG loops for now
-            }
+            self.builder.switch_to_block(cl_block);
 
             for inst in &ir_func.blocks[&b_id].instructions {
                 self.translate_inst(inst);
             }
         }
 
-        // We skip builder.finalize() for now to avoid TargetFrontendConfig issues
+        self.builder.seal_all_blocks();
     }
 
     fn translate_inst(&mut self, inst: &IRInstruction) {
@@ -229,6 +230,19 @@ impl<'a> FunctionTranslator<'a> {
             }
             IROp::ConstInt32(v) => Some(self.builder.ins().iconst(types::I32, *v as i64)),
             IROp::ConstInt64(v) => Some(self.builder.ins().iconst(types::I64, *v)),
+            IROp::ConstBool(b) => Some(self.builder.ins().iconst(types::I8, if *b { 1 } else { 0 })),
+            IROp::ConstString(s) => {
+                use cranelift_module::DataDescription;
+                let mut data_desc = DataDescription::new();
+                let unescaped = s.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r");
+                let mut bytes = unescaped.into_bytes();
+                bytes.push(0); // Null terminator for C strings
+                data_desc.define(bytes.into_boxed_slice());
+                let data_id = self.module.declare_anonymous_data(false, false).unwrap();
+                self.module.define_data(data_id, &data_desc).unwrap();
+                let local_data = self.module.declare_data_in_func(data_id, self.builder.func);
+                Some(self.builder.ins().symbol_value(types::I64, local_data))
+            }
             IROp::Store { ptr, value } => {
                 let var = self.variables[ptr];
                 let val = self.values[value];
@@ -240,8 +254,12 @@ impl<'a> FunctionTranslator<'a> {
                 Some(self.builder.use_var(var))
             }
             IROp::GetFieldPtr { ptr, offset } => {
-                let base_ptr_val = self.builder.use_var(self.variables[ptr]);
-                Some(self.builder.ins().iadd_imm(base_ptr_val, *offset as i64))
+                let base_ptr_val = if let Some(&var) = self.variables.get(ptr) {
+                    self.builder.use_var(var)
+                } else {
+                    self.values[ptr]
+                };
+                Some(self.builder.ins().iadd_imm_s(base_ptr_val, *offset as i64))
             }
             IROp::LoadMemory { ptr, ty } => {
                 let cl_ty = CraneliftAotBackend::map_type(ty);
@@ -267,6 +285,18 @@ impl<'a> FunctionTranslator<'a> {
             IROp::Add(l, r) => Some(self.builder.ins().iadd(self.values[l], self.values[r])),
             IROp::Sub(l, r) => Some(self.builder.ins().isub(self.values[l], self.values[r])),
             IROp::Mul(l, r) => Some(self.builder.ins().imul(self.values[l], self.values[r])),
+            IROp::Div(l, r) => Some(self.builder.ins().sdiv(self.values[l], self.values[r])),
+            IROp::Mod(l, r) => Some(self.builder.ins().srem(self.values[l], self.values[r])),
+            IROp::Neg(v) => Some(self.builder.ins().ineg(self.values[v])),
+            IROp::Eq(l, r) => Some(self.builder.ins().icmp(IntCC::Equal, self.values[l], self.values[r])),
+            IROp::Neq(l, r) => Some(self.builder.ins().icmp(IntCC::NotEqual, self.values[l], self.values[r])),
+            IROp::Lt(l, r) => Some(self.builder.ins().icmp(IntCC::SignedLessThan, self.values[l], self.values[r])),
+            IROp::Le(l, r) => Some(self.builder.ins().icmp(IntCC::SignedLessThanOrEqual, self.values[l], self.values[r])),
+            IROp::Gt(l, r) => Some(self.builder.ins().icmp(IntCC::SignedGreaterThan, self.values[l], self.values[r])),
+            IROp::Ge(l, r) => Some(self.builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, self.values[l], self.values[r])),
+            IROp::And(l, r) => Some(self.builder.ins().band(self.values[l], self.values[r])),
+            IROp::Or(l, r) => Some(self.builder.ins().bor(self.values[l], self.values[r])),
+            IROp::Not(v) => Some(self.builder.ins().bnot(self.values[v])),
             IROp::Return(Some(v)) => {
                 self.builder.ins().return_(&[self.values[v]]);
                 None
@@ -297,7 +327,16 @@ impl<'a> FunctionTranslator<'a> {
             IROp::Call { func, args } => {
                 let func_id = self.funcs[func];
                 let local_func = self.module.declare_func_in_func(func_id, self.builder.func);
-                let arg_vals: Vec<Value> = args.iter().map(|a| self.values[a]).collect();
+                let arg_vals: Vec<Value> = args
+                    .iter()
+                    .map(|a| {
+                        if let Some(&var) = self.variables.get(a) {
+                            self.builder.use_var(var)
+                        } else {
+                            self.values[a]
+                        }
+                    })
+                    .collect();
                 let call = self.builder.ins().call(local_func, &arg_vals);
                 let results = self.builder.inst_results(call);
                 if results.is_empty() {

@@ -33,6 +33,12 @@ pub enum TokenKind {
     Import, // import
     Use, // use
     Export, // export
+    Extern, // extern
+    Abstract, // abstract
+    Virtual, // virtual
+    TypeMachine, // machine
+    AbiC, // @c
+    AbiCpp, // @cpp
     New, // new
 
     This, // this
@@ -56,23 +62,24 @@ pub enum TokenKind {
     // 3. Built-in Types
 
     // Primitives
-    TypeInt, // int
-    TypeFloat, // float
+    TypeInt(u8), // int, int8, int16, int32, int64, int128
+    TypeUInt(u8), // uint, uint8, uint16, uint32, uint64, uint128, byte
+    TypeUSize, // usize
+    TypeISize, // isize
+    TypeFloat(u8), // float, float32, float64, float128
     TypeChar, // char
     TypeBool, // bool
     TypeVoid, // void
     TypeType, // type
+    Using, // using
     //the mabeuptype is removed and we will add a alternative for it as a ast node if we need it
     // but i don't think so
-
-    //temp
-    TypeError, //todo : remove this
 
     // built-in fn
     SizeOf, // sizeof()
     TypeOf, // typeof()
     ToString, // to_string()
-    Log, // log()
+    Default, // default()
 
     // Context Types
     Scope, // scope    //todo we may used in a future update as a ref type like
@@ -159,8 +166,6 @@ pub enum TokenKind {
     SemiColon, // ;
 
     EOF,
-    Default, // legacy catch-all, no longer emitted by the scanner (kept so nothing
-    // downstream that matches on it breaks); prefer Error(String) instead.
     Error(String), // lexical error with a human-readable message; scanning continues
     // afterward so the parser can still synchronize() and report more errors.
 }
@@ -176,8 +181,8 @@ impl TokenKind {
             //TokenKind::Let => "let",
             TokenKind::Const => "const",
             TokenKind::Set => "set",
-            TokenKind::Log => "log",
             TokenKind::ToString => "to_string",
+            TokenKind::Default => "default",
             TokenKind::If => "if",
             TokenKind::Else => "else",
             TokenKind::Match => "match",
@@ -193,6 +198,12 @@ impl TokenKind {
             TokenKind::Import => "import",
             TokenKind::Use => "use",
             TokenKind::Export => "export",
+            TokenKind::Extern => "extern",
+            TokenKind::Abstract => "abstract",
+            TokenKind::Virtual => "virtual",
+            TokenKind::TypeMachine => "machine",
+            TokenKind::AbiC => "@c",
+            TokenKind::AbiCpp => "@cpp",
             TokenKind::New => "new",
             TokenKind::TypeCopy => "copy",
             TokenKind::TypeModify => "modify",
@@ -209,7 +220,6 @@ impl TokenKind {
             TokenKind::LabelName(v) => v,
             TokenKind::TypeClass => "class",
             TokenKind::TypeEnum => "enum",
-            TokenKind::TypeError => "error",
             TokenKind::Handle => "handle",
             TokenKind::TypeName => "name",
             TokenKind::TypeCustom => "custom",
@@ -265,8 +275,11 @@ impl TokenKind {
     /// `as_str` falls through to the `_ => "error"` arm.
     pub fn type_keyword(&self) -> Option<&str> {
         match self {
-            TokenKind::TypeInt => Some("int"),
-            TokenKind::TypeFloat => Some("float"),
+            TokenKind::TypeInt(_) => Some("int"),
+            TokenKind::TypeUInt(_) => Some("uint"),
+            TokenKind::TypeUSize => Some("usize"),
+            TokenKind::TypeISize => Some("isize"),
+            TokenKind::TypeFloat(_) => Some("float"),
             TokenKind::TypeType => Some("type"),
             TokenKind::TypeBool => Some("bool"),
             TokenKind::TypeChar => Some("char"),
@@ -276,6 +289,7 @@ impl TokenKind {
             TokenKind::Flag => Some("flag"),
             TokenKind::Scope => Some("scope"),
             TokenKind::TypeName => Some("name"),
+            TokenKind::Using => Some("using"),
             _ => None,
         }
     }

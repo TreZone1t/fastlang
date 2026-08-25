@@ -1,0 +1,13 @@
+import std::string;
+
+class DatabaseError extends Error -> {
+    public -> {
+        string table = "users";
+    }
+}
+
+fn main() -> int32 {
+    // Should fail: class cannot be called without 'new'
+    DatabaseError err = DatabaseError("Invalid", 400);
+    return 0;
+}

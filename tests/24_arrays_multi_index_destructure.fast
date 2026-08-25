@@ -1,0 +1,41 @@
+custom Matrix -> {
+    data -> 42;
+    handle -> {
+        fn index_access(r: int32, c: int32) -> int32 {
+            return r * 10 + c;
+        }
+    }
+}
+
+fn sum_pair(arr: int32[]) -> int32 {
+    return arr[0] + arr[1];
+}
+
+fn main() -> int32 {
+    int32 nums[] = [10, 20, 30];
+    print(nums[0]);
+    print(nums[1]);
+    print(nums[2]);
+
+    int32 [first, second, third] = [100, 200, 300];
+    print(first);
+    print(second);
+    print(third);
+
+    Matrix mat = new Matrix();
+    int32 val = mat[3, 7];
+    print(val);
+
+    int32 pair_sum = sum_pair([5, 15]);
+    print(pair_sum);
+
+    return 0;
+}
+// EXPECT: 10
+// EXPECT: 20
+// EXPECT: 30
+// EXPECT: 100
+// EXPECT: 200
+// EXPECT: 300
+// EXPECT: 37
+// EXPECT: 20

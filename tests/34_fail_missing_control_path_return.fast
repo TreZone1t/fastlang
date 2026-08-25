@@ -1,0 +1,13 @@
+// Test 34: Expected Failure - Missing return in else branch
+
+fn bad_branch(x: int32) -> int32 {
+    if (x > 100) {
+        return 1;
+    }
+    // Missing return when x <= 100
+}
+
+fn main() -> int32 {
+    int32 res = bad_branch(50);
+    return res;
+}

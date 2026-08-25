@@ -32,25 +32,31 @@ impl ProjectLoader {
     }
 
     pub fn resolve_path(&self, mod_name: &str) -> Option<String> {
-        if mod_name.starts_with("std/") {
-            let test = format!("src/{}.fs", mod_name);
-            if Path::new(&test).exists() {
-                return Some(test);
+        let extensions = [".fast", ".fs"];
+        for ext in &extensions {
+            if mod_name.starts_with("std/") {
+                let test = format!("src/{}{}", mod_name, ext);
+                if Path::new(&test).exists() {
+                    return Some(test);
+                }
+            } else if mod_name == "std" {
+                let test = format!("src/std/std{}", ext);
+                if Path::new(&test).exists() {
+                    return Some(test);
+                }
             }
-        } else if mod_name == "std" {
-            return Some("src/std/std.fs".to_string());
-        }
-        
-        for path in &self.include_paths {
-            let test = format!("{}{}.fs", path, mod_name);
-            if Path::new(&test).exists() {
-                return Some(test);
+            
+            for path in &self.include_paths {
+                let test = format!("{}{}{}", path, mod_name, ext);
+                if Path::new(&test).exists() {
+                    return Some(test);
+                }
             }
-        }
-        
-        let local_test = format!("{}.fs", mod_name);
-        if Path::new(&local_test).exists() {
-            return Some(local_test);
+            
+            let local_test = format!("{}{}", mod_name, ext);
+            if Path::new(&local_test).exists() {
+                return Some(local_test);
+            }
         }
         None
     }
@@ -61,8 +67,12 @@ impl ProjectLoader {
             if let Stmt::Declaration(Decl::Import {
                 module_path,
                 imports,
+                abi,
             }) = stmt
             {
+                if abi.is_some() || module_path.first().map_or(false, |p| p.ends_with(".h") || p.ends_with(".hpp")) {
+                    continue;
+                }
                 let mut path_clone = module_path.clone();
                 let mod_name = path_clone.join("/");
 
@@ -96,25 +106,31 @@ impl ProjectLoader {
     }
 
     fn resolve_path_static(mod_name: &str) -> Option<String> {
-        if mod_name.starts_with("std/") {
-            let test = format!("src/{}.fs", mod_name);
-            if Path::new(&test).exists() {
-                return Some(test);
+        let extensions = [".fast", ".fs"];
+        for ext in &extensions {
+            if mod_name.starts_with("std/") {
+                let test = format!("src/{}{}", mod_name, ext);
+                if Path::new(&test).exists() {
+                    return Some(test);
+                }
+            } else if mod_name == "std" {
+                let test = format!("src/std/std{}", ext);
+                if Path::new(&test).exists() {
+                    return Some(test);
+                }
             }
-        } else if mod_name == "std" {
-            return Some("src/std/std.fs".to_string());
-        }
 
-        for path in &["src/", "src/examples/", "src/std/"] {
-            let test = format!("{}{}.fs", path, mod_name);
-            if Path::new(&test).exists() {
-                return Some(test);
+            for path in &["src/", "src/examples/", "src/std/"] {
+                let test = format!("{}{}{}", path, mod_name, ext);
+                if Path::new(&test).exists() {
+                    return Some(test);
+                }
             }
-        }
 
-        let local_test = format!("{}.fs", mod_name);
-        if Path::new(&local_test).exists() {
-            return Some(local_test);
+            let local_test = format!("{}{}", mod_name, ext);
+            if Path::new(&local_test).exists() {
+                return Some(local_test);
+            }
         }
         None
     }
@@ -237,6 +253,23 @@ impl ProjectLoader {
 
         let mut loaded_modules = Vec::new();
         let mut loaded_names = HashSet::new();
+
+        // Auto-load standard library prelude (std.fs) if available
+        if let Some(std_file) = self.resolve_path("std") {
+            if Path::new(&std_file).exists() && entry_path != std_file {
+                let std_ast = self.parse_file(&std_file)?;
+                global_metadata.extend(std_ast.1.clone());
+                let nested_deps = Self::collect_deps_from_ast(&std_ast.0);
+                self.resolve_import_deps(&nested_deps, &mut loaded_names, &mut loaded_modules, &mut global_metadata)?;
+                loaded_modules.push(LoadedModule {
+                    name: "std".to_string(),
+                    path: std_file,
+                    ast: std_ast.0,
+                });
+                loaded_names.insert("std".to_string());
+            }
+        }
+
         self.resolve_import_deps(&deps, &mut loaded_names, &mut loaded_modules, &mut global_metadata)?;
 
         Ok(Program {

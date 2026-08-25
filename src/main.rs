@@ -50,9 +50,14 @@ fn module_import_deps(ast: &[Stmt]) -> Vec<(String, Option<Vec<String>>)> {
             if let Stmt::Declaration(Decl::Import {
                 module_path,
                 imports,
+                abi,
             }) = stmt
             {
-                Some((module_path.join("/"), imports.clone()))
+                if abi.is_some() || module_path.first().map_or(false, |p| p.ends_with(".h") || p.ends_with(".hpp")) {
+                    None
+                } else {
+                    Some((module_path.join("/"), imports.clone()))
+                }
             } else {
                 None
             }
@@ -83,6 +88,19 @@ fn inject_module_exports(
                 }
                 analyzer.current_env.borrow_mut().define(sym_name, info).ok();
             }
+        }
+    }
+    let blueprints = env.borrow().blueprints.clone();
+    for (bp_name, bp_data) in blueprints {
+        let should_inject = match imports {
+            Some(selected) => selected.contains(&bp_name),
+            None => true,
+        };
+        if should_inject {
+            if debug {
+                println!("Module {} injected blueprint: {}", dep_name, bp_name);
+            }
+            analyzer.current_env.borrow_mut().define_blueprint(bp_name, bp_data);
         }
     }
     Ok(())
@@ -238,6 +256,10 @@ fn main() {
             }
 
             let mut analyzer = SemanticAnalyzer::new(program.global_metadata.clone());
+            analyzer.current_file = module.name.clone();
+            if envs.contains_key("std") && module.name != "std" {
+                inject_module_exports(&mut analyzer, "std", &None, &envs, debug).ok();
+            }
             for (dep_name, imports) in &deps {
                 if let Err(e) = inject_module_exports(&mut analyzer, dep_name, imports, &envs, debug) {
                     eprintln!("{}", e);
@@ -265,12 +287,25 @@ fn main() {
         println!("\n=== Semantic Analysis ===");
     }
     let mut main_analyzer = SemanticAnalyzer::new(program.global_metadata.clone());
+    main_analyzer.current_file = path.clone();
+    main_analyzer.source_code = std::fs::read_to_string(&path).ok();
+
+    if envs.contains_key("std") {
+        inject_module_exports(&mut main_analyzer, "std", &None, &envs, debug).ok();
+    }
 
     // Inject exported symbols from main's imports
     for (mod_name, imports) in &program.main_deps {
         if let Err(e) = inject_module_exports(&mut main_analyzer, mod_name, imports, &envs, debug) {
             eprintln!("{}", e);
             std::process::exit(1);
+        }
+    }
+
+    for stmt in &program.main_ast {
+        if let Stmt::Declaration(Decl::Import { module_path, abi: Some(abi), .. }) = stmt {
+            let mod_str = module_path.join("/");
+            println!("Including external library <{}> (ABI: @{})...", mod_str, abi);
         }
     }
 
@@ -315,13 +350,28 @@ fn main() {
             if !build_dir.exists() {
                 std::fs::create_dir_all(&build_dir).unwrap();
             }
-        /*
             let out_path = build_dir.join("output.o").to_string_lossy().into_owned();
+            let exe_path = build_dir.join(if cfg!(windows) { "app.exe" } else { "app" }).to_string_lossy().into_owned();
 
-        let mut aot_backend = crate::backend::codegen::cranelift::aot::CraneliftAotBackend::new();
-        aot_backend.compile_module(&ir_module);
-        aot_backend.finalize(&out_path);
-        */
+            let mut aot_backend = crate::backend::cranelift::aot::CraneliftAotBackend::new();
+            aot_backend.compile_module(&ir_module);
+            aot_backend.finalize(&out_path);
+
+            println!("Linking {} into {}...", out_path, exe_path);
+            let linker_status = std::process::Command::new("gcc")
+                .arg(&out_path)
+                .arg("-o")
+                .arg(&exe_path)
+                .status();
+
+            match linker_status {
+                Ok(s) if s.success() => {
+                    println!("Native compilation successful! Executable is {} 🚀", exe_path);
+                }
+                _ => {
+                    eprintln!("Linker failed to produce executable from {}", out_path);
+                }
+            }
         } else {
             let mut cl_backend = cranelift::CraneliftBackend::new();
             cl_backend.compile_module(&ir_module);
@@ -347,6 +397,9 @@ fn main() {
         let module_cpp = codegen.generate(&module.ast, false, false);
         final_cpp.push_str(&module_cpp);
         final_cpp.push_str(&format!("\n}} // namespace {}\n\n", cpp_namespace));
+        if cpp_namespace == "fast_std" {
+            final_cpp.push_str("using namespace fast_std;\n\n");
+        }
     }
 
     let mut main_codegen = cpp::generator::CodeGenerator::new();
@@ -401,6 +454,8 @@ fn main() {
         .arg("-o")
         .arg(&exe_path)
         .arg("-std=c++17")
+        .arg("-Isrc/std")
+        .arg("-Isrc")
         .status();
 
     match status {

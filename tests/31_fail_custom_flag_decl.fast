@@ -1,0 +1,5 @@
+// Test 31 (Expected Failure): User cannot declare arbitrary custom flag variables
+fn main() -> int32 {
+    flag run_on_gpu = true;
+    return 0;
+}

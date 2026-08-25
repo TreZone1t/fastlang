@@ -1,0 +1,70 @@
+// Test 40: impl <field> for <target> and comprehensive impl with handles
+
+blueprint Point -> {
+    int32 x;
+    int32 y;
+};
+
+impl Point -> {
+    fn get_x() -> int32 {
+        return this.x;
+    }
+    fn get_y() -> int32 {
+        return this.y;
+    }
+    handle -> {
+        fn add(other: Point) -> Point {
+            Point res;
+            res.x = this.x + other.x;
+            res.y = this.y + other.y;
+            return res;
+        }
+    }
+};
+
+enum Status -> {
+    Pending,
+    Completed,
+    Failed
+}
+
+impl handle for Status -> {
+    fn display() -> string {
+        match (this) -> {
+            Status::Completed => { return "Done"; }
+            _ => { return "Other"; }
+        }
+    }
+}
+
+fn compute(x: int32) -> int32 {
+    return x * 10;
+}
+
+impl handle for compute -> {
+    fn error() -> bool {
+        return false;
+    }
+}
+
+fn main() -> int32 {
+    Point p1;
+    p1.x = 10;
+    p1.y = 20;
+
+    Point p2;
+    p2.x = 5;
+    p2.y = 15;
+
+    Point p3 = p1 + p2;
+    print("Point sum X: ", p3.get_x());
+    print("Point sum Y: ", p3.get_y());
+
+    Status st = Status::Completed;
+    print("Status st: ", st);
+
+    int32 ans = compute(7);
+    print("Compute result: ", ans);
+
+    return 0;
+}

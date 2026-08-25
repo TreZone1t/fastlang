@@ -1,0 +1,45 @@
+// FastLang Example: Custom Scopes & Operator Overloading (.fast)
+
+custom Vector2D {
+    public {
+        int32 x = 0;
+        int32 y = 0;
+    }
+
+    constructor {
+        init(x: int32, y: int32) -> {
+            this.x = x;
+            this.y = y;
+        }
+    }
+
+    handle -> {
+        fn add(other: Vector2D) -> Vector2D {
+            return new Vector2D(this.x + other.x, this.y + other.y);
+        }
+
+        fn sub(other: Vector2D) -> Vector2D {
+            return new Vector2D(this.x - other.x, this.y - other.y);
+        }
+
+        fn display() -> void {
+            log("Vector2D(", this.x, ", ", this.y, ")");
+        }
+    }
+}
+
+fn main() -> int32 {
+    Vector2D v1 = new Vector2D(10, 20);
+    Vector2D v2 = new Vector2D(5, 15);
+
+    Vector2D sum = v1 + v2;
+    Vector2D diff = v1 - v2;
+
+    log("Vector 1 + Vector 2:");
+    sum.display();
+
+    log("Vector 1 - Vector 2:");
+    diff.display();
+
+    return 0;
+}

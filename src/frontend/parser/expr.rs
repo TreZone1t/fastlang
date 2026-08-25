@@ -89,55 +89,98 @@ impl Parser {
 
         match kind {
             // Primitives
-            TokenKind::TypeInt => {
-                self.advance(); // consume 'int'
-                if self.peek().kind == TokenKind::LParen {
+            TokenKind::TypeInt(default_size) => {
+                self.advance(); // consume 'int' / 'int32'
+                if self.peek().kind == TokenKind::Less {
                     self.advance();
                     let size = if let TokenKind::Int(s) = self.peek().kind {
                         self.advance();
                         s
                     } else {
-                        return Err("Syntax Error: Expected integer size for type int".to_string());
+                        return Err("Syntax Error: Expected integer size for type int<size>".to_string());
                     };
-                    self.consume(TokenKind::RParen, "Expected ')' after type size")?;
+                    self.consume(TokenKind::Greater, "Expected '>' after type size")?;
                     match size {
                         8 => Ok(BaseType::Int8),
                         16 => Ok(BaseType::Int16),
                         32 => Ok(BaseType::Int32),
                         64 => Ok(BaseType::Int64),
                         128 => Ok(BaseType::Int128),
-                        _ =>
-                            Err(
-                                format!("Syntax Error: Invalid size {} for int. Allowed: 8, 16, 32, 64, 128", size)
-                            ),
+                        _ => Err(format!("Syntax Error: Invalid size {} for int. Allowed: 8, 16, 32, 64, 128", size)),
                     }
                 } else {
-                    Ok(BaseType::Int32)
+                    match default_size {
+                        8 => Ok(BaseType::Int8),
+                        16 => Ok(BaseType::Int16),
+                        32 => Ok(BaseType::Int32),
+                        64 => Ok(BaseType::Int64),
+                        128 => Ok(BaseType::Int128),
+                        _ => Ok(BaseType::Int32),
+                    }
                 }
             }
-            TokenKind::TypeFloat => {
-                self.advance(); // consume 'float'
-                if self.peek().kind == TokenKind::LParen {
+            TokenKind::TypeUInt(default_size) => {
+                self.advance(); // consume 'uint' / 'uint32' / 'byte'
+                if self.peek().kind == TokenKind::Less {
                     self.advance();
                     let size = if let TokenKind::Int(s) = self.peek().kind {
                         self.advance();
                         s
                     } else {
-                        return Err(
-                            "Syntax Error: Expected integer size for type float".to_string()
-                        );
+                        return Err("Syntax Error: Expected integer size for type uint<size>".to_string());
                     };
-                    self.consume(TokenKind::RParen, "Expected ')' after type size")?;
+                    self.consume(TokenKind::Greater, "Expected '>' after type size")?;
+                    match size {
+                        8 => Ok(BaseType::UInt8),
+                        16 => Ok(BaseType::UInt16),
+                        32 => Ok(BaseType::UInt32),
+                        64 => Ok(BaseType::UInt64),
+                        128 => Ok(BaseType::UInt128),
+                        _ => Err(format!("Syntax Error: Invalid size {} for uint. Allowed: 8, 16, 32, 64, 128", size)),
+                    }
+                } else {
+                    match default_size {
+                        8 => Ok(BaseType::UInt8),
+                        16 => Ok(BaseType::UInt16),
+                        32 => Ok(BaseType::UInt32),
+                        64 => Ok(BaseType::UInt64),
+                        128 => Ok(BaseType::UInt128),
+                        _ => Ok(BaseType::UInt32),
+                    }
+                }
+            }
+            TokenKind::TypeUSize => {
+                self.advance();
+                Ok(BaseType::USize)
+            }
+            TokenKind::TypeISize => {
+                self.advance();
+                Ok(BaseType::ISize)
+            }
+            TokenKind::TypeFloat(default_size) => {
+                self.advance(); // consume 'float' / 'float32'
+                if self.peek().kind == TokenKind::Less {
+                    self.advance();
+                    let size = if let TokenKind::Int(s) = self.peek().kind {
+                        self.advance();
+                        s
+                    } else {
+                        return Err("Syntax Error: Expected size for type float<size>".to_string());
+                    };
+                    self.consume(TokenKind::Greater, "Expected '>' after type size")?;
                     match size {
                         32 => Ok(BaseType::Float32),
                         64 => Ok(BaseType::Float64),
-                        _ =>
-                            Err(
-                                format!("Syntax Error: Invalid size {} for float. Allowed: 32, 64", size)
-                            ),
+                        128 => Ok(BaseType::Float128),
+                        _ => Err(format!("Syntax Error: Invalid size {} for float. Allowed: 32, 64, 128", size)),
                     }
                 } else {
-                    Ok(BaseType::Float32)
+                    match default_size {
+                        32 => Ok(BaseType::Float32),
+                        64 => Ok(BaseType::Float64),
+                        128 => Ok(BaseType::Float128),
+                        _ => Ok(BaseType::Float32),
+                    }
                 }
             }
             TokenKind::TypeBool => {
@@ -152,10 +195,6 @@ impl Parser {
                 self.advance();
                 Ok(BaseType::Void)
             }
-            TokenKind::TypeError => {
-                self.advance();
-                Ok(BaseType::Error)
-            }
             TokenKind::TypeName => {
                 self.advance();
                 let mut name_type = BaseType::Unknown;
@@ -164,40 +203,57 @@ impl Parser {
                     let mut generics = Vec::new();
                     self.parse_generic_list(&mut generics)?;
                     self.consume(TokenKind::Greater, "Expected '>' after name type parameter")?;
-                    name_type = BaseType::Generic(generics);
+                    name_type = if generics.len() == 1 {
+                        generics.into_iter().next().unwrap()
+                    } else {
+                        BaseType::Generic(generics)
+                    };
+                } else if self.is_type_start() {
+                    name_type = self.parse_type()?;
                 }
                 Ok(BaseType::Name(Box::new(name_type)))
             }
             TokenKind::TypeModify => {
-                self.advance(); //modify
-                let mut generics = Vec::new();
-                if self.peek().kind == TokenKind::Less {
+                self.advance(); // modify
+                let modify_inner = if self.peek().kind == TokenKind::Less {
                     self.advance(); // '<'
+                    let mut generics = Vec::new();
                     self.parse_generic_list(&mut generics)?;
                     self.consume(TokenKind::Greater, "Expected '>' after modify types")?;
-                }
-
-                let name_inner = if generics.is_empty() {
-                    BaseType::Unknown
+                    if generics.len() == 1 {
+                        generics.into_iter().next().unwrap()
+                    } else if generics.is_empty() {
+                        BaseType::Unknown
+                    } else {
+                        BaseType::Generic(generics)
+                    }
+                } else if self.is_type_start() {
+                    self.parse_type()?
                 } else {
-                    BaseType::Generic(generics)
+                    BaseType::Unknown
                 };
-                Ok(BaseType::Modify(Box::new(BaseType::Name(Box::new(name_inner)))))
+                Ok(BaseType::Modify(Box::new(modify_inner)))
             }
             TokenKind::TypeCopy => {
-                self.advance();
-                let mut generics = Vec::new();
-                if self.peek().kind == TokenKind::Less {
+                self.advance(); // copy
+                let copy_inner = if self.peek().kind == TokenKind::Less {
                     self.advance(); // '<'
+                    let mut generics = Vec::new();
                     self.parse_generic_list(&mut generics)?;
                     self.consume(TokenKind::Greater, "Expected '>' after copy types")?;
-                }
-                let name_inner = if generics.is_empty() {
-                    BaseType::Unknown
+                    if generics.len() == 1 {
+                        generics.into_iter().next().unwrap()
+                    } else if generics.is_empty() {
+                        BaseType::Unknown
+                    } else {
+                        BaseType::Generic(generics)
+                    }
+                } else if self.is_type_start() {
+                    self.parse_type()?
                 } else {
-                    BaseType::Generic(generics)
+                    BaseType::Unknown
                 };
-                Ok(BaseType::Copy(Box::new(BaseType::Name(Box::new(name_inner)))))
+                Ok(BaseType::Copy(Box::new(copy_inner)))
             }
             TokenKind::TypeType => {
                 self.advance();
@@ -328,6 +384,35 @@ impl Parser {
         }
     }
 
+    pub(crate) fn is_type_start(&self) -> bool {
+        if matches!(
+            &self.peek().kind,
+            TokenKind::TypeInt(_)
+                | TokenKind::TypeUInt(_)
+                | TokenKind::TypeUSize
+                | TokenKind::TypeISize
+                | TokenKind::TypeFloat(_)
+                | TokenKind::TypeChar
+                | TokenKind::TypeBool
+                | TokenKind::TypeVoid
+                | TokenKind::TypeName
+                | TokenKind::TypeModify
+                | TokenKind::TypeCopy
+                | TokenKind::TypeMethod
+                | TokenKind::TypeFn
+        ) {
+            return true;
+        }
+
+        if matches!(&self.peek().kind, TokenKind::Identifier(_)) {
+            if let Some(next) = self.tokens.get(self.current + 1) {
+                return matches!(next.kind, TokenKind::Identifier(_));
+            }
+        }
+
+        false
+    }
+
     pub(crate) fn parse_expression(&mut self) -> Result<Expr, String> {
         self.parse_expr(0)
     }
@@ -419,6 +504,59 @@ impl Parser {
                 Ok(Expr::LiteralVoid)
             }
 
+            TokenKind::Fn => {
+                self.advance(); // consume 'fn'
+                // Optional name or '_' (e.g. fn _(...) or fn(...))
+                if let TokenKind::Identifier(ref name) = self.peek().kind {
+                    if name == "_" || self.peek_ahead(1).map(|t| t.kind == TokenKind::LParen).unwrap_or(false) {
+                        self.advance();
+                    }
+                } else if self.peek().kind == TokenKind::Underscore {
+                    self.advance();
+                }
+
+                self.consume(TokenKind::LParen, "Expected '(' for lambda parameter list")?;
+                let mut params = Vec::new();
+                if self.peek().kind != TokenKind::RParen {
+                    loop {
+                        let param_name = self.get_identifier("Expected parameter name")?;
+                        self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
+                        let type_node = self.parse_type()?;
+                        params.push(Param {
+                            name: param_name,
+                            type_node,
+                        });
+                        if self.peek().kind == TokenKind::Comma {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                self.consume(TokenKind::RParen, "Expected ')' after lambda parameter list")?;
+
+                let mut return_type = None;
+                if self.peek().kind == TokenKind::Arrow {
+                    self.advance();
+                    return_type = Some(self.parse_type()?);
+                }
+
+                self.consume(TokenKind::LBrace, "Expected '{' to open lambda body")?;
+                let mut body = Vec::new();
+                while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                    if let Some(stmt) = self.parse_statement(ScopeType::Fn)? {
+                        body.push(stmt);
+                    }
+                }
+                self.consume(TokenKind::RBrace, "Expected '}' to close lambda body")?;
+
+                Ok(Expr::Lambda {
+                    params,
+                    return_type,
+                    body,
+                })
+            }
+
             // --- Identifier ---
             TokenKind::Identifier(name) => {
                 let val = name.clone();
@@ -444,17 +582,25 @@ impl Parser {
                     target: Box::new(target),
                 })
             }
-            TokenKind::Log => {
+            TokenKind::Default => {
                 self.advance();
-                Ok(Expr::Identifier("log".to_string()))
+                let type_arg = if self.peek().kind == TokenKind::Less {
+                    self.advance();
+                    let t = self.parse_type()?;
+                    self.consume(TokenKind::Greater, "Expected '>' after default type argument")?;
+                    Some(t)
+                } else {
+                    None
+                };
+                if self.peek().kind == TokenKind::LParen {
+                    self.advance();
+                    self.consume(TokenKind::RParen, "Expected ')' after default()")?;
+                }
+                Ok(Expr::Default(type_arg))
             }
             TokenKind::ToString => {
                 self.advance();
                 Ok(Expr::Identifier("to_string".to_string()))
-            }
-            TokenKind::TypeError => {
-                self.advance();
-                Ok(Expr::Identifier("error".to_string()))
             }
 
             // --- Unary: !expr ---
@@ -591,12 +737,15 @@ impl Parser {
                         )?;
 
                         if args.is_empty() {
-                            Expr::Identifier("__default__".to_string())
+                            Expr::Default(None)
                         } else {
-                            Expr::ArrayLiteral(args)
+                            Expr::Instantiate {
+                                target: Box::new(Expr::Identifier(type_node.as_str())),
+                                args,
+                            }
                         }
                     }
-                    _ => { Expr::Identifier("__default__".to_string()) }
+                    _ => { Expr::Default(None) }
                 };
                 Ok(Expr::New {
                     type_node,
@@ -701,14 +850,14 @@ impl Parser {
 
             // --- Function Call: lhs(arg1, arg2, ...) ---
             TokenKind::LParen => {
-                self.advance(); // نتخطى '('
+                self.advance(); // consume '('
                 let mut args = Vec::new();
 
-                // اقرأ الـ arguments لو مش قائمة فاضية
+                // Parse arguments if argument list is not empty
                 if self.peek().kind != TokenKind::RParen {
                     args.push(self.parse_expr(0)?);
                     while self.peek().kind == TokenKind::Comma {
-                        self.advance(); // نتخطى ','
+                        self.advance(); // consume ','
                         args.push(self.parse_expr(0)?);
                     }
                 }

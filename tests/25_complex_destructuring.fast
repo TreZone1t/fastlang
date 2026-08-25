@@ -1,0 +1,47 @@
+fn main() -> int32 {
+    // 1. (x,y,z) = 10,20,30
+    int32 (x,y,z) = 10,20,30;
+    print(x); // EXPECT: 10
+    print(y); // EXPECT: 20
+    print(z); // EXPECT: 30
+
+    // 2. (xy1,xy2),z2 = 10,20
+    int32 (xy1,xy2),z2 = 10,20;
+    print(xy1); // EXPECT: 10
+    print(xy2); // EXPECT: 10
+    print(z2);  // EXPECT: 20
+
+    // 3. multiple uninitialized
+    int32 a,b,c;
+    a = 1;
+    b = 2;
+    c = 3;
+    print(a); // EXPECT: 1
+    print(b); // EXPECT: 2
+    print(c); // EXPECT: 3
+
+    // 4. d,e,f = 10
+    int32 d,e,f = 10;
+    print(d); // EXPECT: 10
+    print(e); // EXPECT: 10
+    print(f); // EXPECT: 10
+
+    // 5. g,(h,i) = 10,20
+    int32 g,(h,i) = 10,20;
+    print(g); // EXPECT: 10
+    print(h); // EXPECT: 20
+    print(i); // EXPECT: 20
+
+    // 6. j,(k,l) = 10,(20,30)
+    int32 j,(k,l) = 10,(20,30);
+    print(j); // EXPECT: 10
+    print(k); // EXPECT: 20
+    print(l); // EXPECT: 30
+
+    // 7. array with empty brackets from list [1,2,3,4,5]
+    int32 arr[] = [1,2,3,4,5];
+    print(arr[0]); // EXPECT: 1
+    print(arr[4]); // EXPECT: 5
+
+    return 0;
+}

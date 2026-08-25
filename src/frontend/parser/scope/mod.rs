@@ -14,6 +14,7 @@ pub mod builtins;
 pub mod class;
 pub mod custom;
 pub mod enum_decl;
+pub mod machine;
 pub mod struct_decl;
 
 impl Parser {

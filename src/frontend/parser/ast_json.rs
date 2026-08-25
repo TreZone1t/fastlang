@@ -160,10 +160,12 @@ pub fn decl_to_json(decl: &Decl) -> Value {
             "editability": format!("{:?}", editability),
             "value": expr_to_json(value)
         }),
-        Decl::FnDecl { is_exported, name, params, return_type, body } => json!({
+        Decl::FnDecl { is_exported, is_virtual, is_abstract, name, params, return_type, body } => json!({
             "type": "FnDecl",
             "name": name,
             "is_exported": is_exported,
+            "is_virtual": is_virtual,
+            "is_abstract": is_abstract,
             "params": params.iter().map(|p| json!({
                 "name": p.name,
                 "type": p.type_node.as_str()
@@ -219,10 +221,11 @@ pub fn decl_to_json(decl: &Decl) -> Value {
             "name": name,
             "body": stmts_to_json(body)
         }),
-        Decl::Import { module_path, imports } => json!({
+        Decl::Import { module_path, imports, abi } => json!({
             "type": "Import",
             "module": module_path.join("/"),
-            "imports": imports
+            "imports": imports,
+            "abi": abi
         }),
         _ => json!({
             "type": "OtherDecl"

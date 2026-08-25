@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// op_to_handle — يحوّل أي operator string إلى HandleMethods مقابل له
+// op_to_handle — maps an operator string to its corresponding HandleMethods
 // ─────────────────────────────────────────────────────────────────────────────
 pub fn op_to_handle(op: &str) -> HandleMethods {
     match op {
@@ -37,8 +37,8 @@ pub fn op_to_handle(op: &str) -> HandleMethods {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// resolve_handle_for_op — يبحث عن blueprint يملك handle مقابل الـ operator
-// يُستخدم عند VarDecl وReassignStmt للتحقق من operator overloading
+// resolve_handle_for_op — looks up a blueprint defining a handle for the given operator
+// Used in VarDecl and ReassignStmt to verify operator overloading
 // ─────────────────────────────────────────────────────────────────────────────
 pub fn resolve_handle_for_op(
     env: &Rc<RefCell<Environment>>,
@@ -65,23 +65,23 @@ pub fn resolve_handle_for_op(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HandleLookupResult — نتيجة البحث عن handle
+// HandleLookupResult — outcome of handle resolution
 // ─────────────────────────────────────────────────────────────────────────────
 #[derive(Debug)]
 pub enum HandleLookupResult {
-    /// وُجد الـ handle في الـ blueprint
+    /// Handle was found in the blueprint
     Found(BlueprintData),
-    /// الـ blueprint غير موجود في الـ scope (لم يُعرَّف بعد)
+    /// Blueprint was not found in the scope (not yet defined)
     BlueprintNotFound,
-    /// الـ blueprint موجود لكن لا يملك هذا الـ handle
+    /// Blueprint exists but does not implement this handle
     HandleMissing { handle: HandleMethods },
-    /// الـ operator نفسه غير معروف
+    /// Operator is unknown
     UnknownOp,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // extract_blueprint_name_from_type
-// يستخرج اسم الـ blueprint من نوع مثل:
+// Extracts blueprint name from types like:
 //   "custom<list>"   -> Some("list")
 //   "class<Node>"    -> Some("Node")
 //   "struct<Point>"  -> Some("Point")
@@ -99,7 +99,7 @@ pub fn extract_blueprint_name_from_type(type_str: &str) -> Option<String> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// is_complex_type — هل النوع مركّب (يمكن أن يملك handles)?
+// is_complex_type — checks if type is composite/user-defined (can define handles)
 // ─────────────────────────────────────────────────────────────────────────────
 pub fn is_complex_type(type_str: &str) -> bool {
     type_str.starts_with("custom<")
@@ -111,7 +111,7 @@ pub fn is_complex_type(type_str: &str) -> bool {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // build_blueprint_from_metadata
-// يحوّل TypeMetadata (من الـ parser) إلى BlueprintData
+// Converts TypeMetadata (from parser) into BlueprintData
 // ─────────────────────────────────────────────────────────────────────────────
 pub fn build_blueprint_from_metadata(
     meta: &crate::frontend::parser::ast::TypeMetadata,
@@ -133,6 +133,8 @@ pub fn build_blueprint_from_metadata(
                 name: fn_type.name.clone(),
                 params: fn_type.params.clone(),
                 return_type: fn_type.return_type.clone(),
+                is_virtual: true,
+                is_abstract: false,
             },
         );
     }
@@ -142,12 +144,12 @@ pub fn build_blueprint_from_metadata(
         bp.handles.insert(*h);
     }
 
-    // generics — نستخرج أسماء الـ generics من النوع
+    // generics — extract generic parameter names from type
     for g in &meta.generics {
         if let crate::frontend::parser::ast::BaseType::New(name) = g {
             bp.generics.push(name.clone());
         } else {
-            // Generic params مخزّنة كـ identifiers
+            // Generic parameters stored as identifiers
             let s = g.as_str();
             if !s.is_empty() && s != "unknown" {
                 bp.generics.push(s);

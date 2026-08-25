@@ -69,7 +69,6 @@ impl Scanner {
             "del" => Some(TokenKind::Del),
 
             // built-in fn
-            "log" => Some(TokenKind::Log),
             "sizeof" => Some(TokenKind::SizeOf),
             "typeof" => Some(TokenKind::TypeOf),
             "to_string" => Some(TokenKind::ToString),
@@ -109,9 +108,27 @@ impl Scanner {
 
             // Primitives
             "char" => Some(TokenKind::TypeChar),
-            "int" => Some(TokenKind::TypeInt),
-            "float" => Some(TokenKind::TypeFloat),
+            "int" => Some(TokenKind::TypeInt(32)),
+            "int8" => Some(TokenKind::TypeInt(8)),
+            "int16" => Some(TokenKind::TypeInt(16)),
+            "int32" => Some(TokenKind::TypeInt(32)),
+            "int64" => Some(TokenKind::TypeInt(64)),
+            "int128" => Some(TokenKind::TypeInt(128)),
+            "uint" => Some(TokenKind::TypeUInt(32)),
+            "uint8" => Some(TokenKind::TypeUInt(8)),
+            "uint16" => Some(TokenKind::TypeUInt(16)),
+            "uint32" => Some(TokenKind::TypeUInt(32)),
+            "uint64" => Some(TokenKind::TypeUInt(64)),
+            "uint128" => Some(TokenKind::TypeUInt(128)),
+            "byte" => Some(TokenKind::TypeUInt(8)),
+            "usize" => Some(TokenKind::TypeUSize),
+            "isize" => Some(TokenKind::TypeISize),
+            "float" => Some(TokenKind::TypeFloat(32)),
+            "float32" => Some(TokenKind::TypeFloat(32)),
+            "float64" => Some(TokenKind::TypeFloat(64)),
+            "float128" => Some(TokenKind::TypeFloat(64)),
             "bool" => Some(TokenKind::TypeBool),
+            "using" => Some(TokenKind::Using),
 
             // Context Types
             "scope" => Some(TokenKind::Scope),
@@ -127,6 +144,9 @@ impl Scanner {
             "private" => Some(TokenKind::Private),
 
             "static" => Some(TokenKind::Static),
+            "abstract" => Some(TokenKind::Abstract),
+            "virtual" => Some(TokenKind::Virtual),
+            "machine" => Some(TokenKind::TypeMachine),
 
             "data" => Some(TokenKind::TypeData),
             // memory / instances
@@ -158,12 +178,13 @@ impl Scanner {
             "try" => Some(TokenKind::Try),
             "catch" => Some(TokenKind::Catch),
             "throw" => Some(TokenKind::Throw),
-            "error" => Some(TokenKind::TypeError),
             "import" => Some(TokenKind::Import),
             "use" => Some(TokenKind::Use),
             "export" => Some(TokenKind::Export),
+            "extern" => Some(TokenKind::Extern),
 
             "_" => Some(TokenKind::Underscore),
+            "default" => Some(TokenKind::Default),
             _ => None,
         }
     }
@@ -209,7 +230,13 @@ impl Scanner {
                         break;
                     }
                 }
-                TokenKind::LabelName(word.clone())
+                if word.eq_ignore_ascii_case("@c") {
+                    TokenKind::AbiC
+                } else if word.eq_ignore_ascii_case("@cpp") {
+                    TokenKind::AbiCpp
+                } else {
+                    TokenKind::LabelName(word.clone())
+                }
             }
             '0'..='9' => {
                 let mut num_str = String::new();

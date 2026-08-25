@@ -37,6 +37,17 @@ impl IRType {
             _ => IRType::Pointer(Box::new(IRType::Void)),
         }
     }
+
+    pub fn size_in_bytes(&self) -> usize {
+        match self {
+            IRType::Void => 0,
+            IRType::Bool => 1,
+            IRType::Int32 | IRType::Float32 => 4,
+            IRType::Int64 | IRType::Float64 => 8,
+            IRType::Pointer(_) | IRType::Array(_) | IRType::Object(_) | IRType::CustomScope(_) => 8,
+            IRType::Generic(_) => 8,
+        }
+    }
 }
 
 pub type IRValue = usize; // Virtual Register ID
@@ -94,6 +105,26 @@ pub enum IROp {
         true_block: BlockID,
         false_block: BlockID,
     },
+
+    // Param and Heap / Field Access
+    StoreParam {
+        param_idx: usize,
+        ptr: IRValue,
+    },
+    GetFieldPtr {
+        ptr: IRValue,
+        offset: i32,
+    },
+    LoadMemory {
+        ptr: IRValue,
+        ty: IRType,
+    },
+    StoreMemory {
+        ptr: IRValue,
+        value: IRValue,
+    },
+    Not(IRValue),
+    Neg(IRValue),
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +148,7 @@ pub struct IRFunction {
     pub entry_block: BlockID,
     pub next_vreg: usize,
     pub next_block_id: usize,
+    pub is_extern: bool,
 }
 
 impl IRFunction {
@@ -129,6 +161,7 @@ impl IRFunction {
             entry_block: 0,
             next_vreg: 1,
             next_block_id: 1,
+            is_extern: false,
         };
         func.blocks.insert(
             0,
@@ -138,6 +171,19 @@ impl IRFunction {
             },
         );
         func
+    }
+
+    pub fn new_extern(name: String, params: Vec<(String, IRType)>, return_type: IRType) -> Self {
+        IRFunction {
+            name,
+            params,
+            return_type,
+            blocks: HashMap::new(),
+            entry_block: 0,
+            next_vreg: 1,
+            next_block_id: 1,
+            is_extern: true,
+        }
     }
 
     pub fn new_vreg(&mut self) -> IRValue {
@@ -167,9 +213,31 @@ impl IRFunction {
 }
 
 #[derive(Debug, Clone)]
+pub struct IRStruct {
+    pub name: String,
+    pub size: usize,
+    pub fields: Vec<(String, IRType, usize)>, // (field_name, field_type, byte_offset)
+}
+
+#[derive(Debug, Clone)]
 pub struct IRModule {
     pub name: String,
     pub functions: Vec<IRFunction>,
+    pub structs: HashMap<String, IRStruct>,
+}
+
+impl IRModule {
+    pub fn new(name: String) -> Self {
+        Self {
+            name,
+            functions: Vec::new(),
+            structs: HashMap::new(),
+        }
+    }
+
+    pub fn get(&self, name: &str) -> Option<&IRStruct> {
+        self.structs.get(name)
+    }
 }
 use std::fmt;
 
@@ -238,6 +306,12 @@ impl fmt::Display for IROp {
                 "br_if v{}, block_{}, block_{}",
                 cond, true_block, false_block
             ),
+            IROp::StoreParam { param_idx, ptr } => write!(f, "store_param #{} -> [v{}]", param_idx, ptr),
+            IROp::GetFieldPtr { ptr, offset } => write!(f, "get_field_ptr [v{}] + {}", ptr, offset),
+            IROp::LoadMemory { ptr, ty } => write!(f, "load_mem [v{}] as {}", ptr, ty),
+            IROp::StoreMemory { ptr, value } => write!(f, "store_mem v{} -> [v{}]", value, ptr),
+            IROp::Not(v) => write!(f, "not v{}", v),
+            IROp::Neg(v) => write!(f, "neg v{}", v),
         }
     }
 }

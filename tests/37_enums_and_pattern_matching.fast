@@ -1,0 +1,39 @@
+enum YesOrNo -> {
+    No,
+    Yes,
+}
+
+fn test_number_match(num: int32) -> int32 {
+    match (num) -> {
+        1 => {
+            return 100;
+        }
+        2 => {
+            return 200;
+        }
+        _ => {
+            return -1;
+        }
+    }
+}
+
+fn main() -> int32 {
+    int32 num_res = test_number_match(2);
+    print("Matched number result: ", num_res);
+
+    YesOrNo answer = YesOrNo.Yes;
+    print("Enum value: ", answer);
+
+    match (answer) -> {
+        YesOrNo.Yes => {
+            print("Outcome: Affirmative!");
+        }
+        YesOrNo.No => {
+            print("Outcome: Negative!");
+        }
+        _ => {
+            print("Outcome: Unknown!");
+        }
+    }
+    return 0;
+}

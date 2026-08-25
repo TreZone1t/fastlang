@@ -1,0 +1,28 @@
+import std::string;
+
+class DatabaseError extends Error -> {
+    public -> {
+        string table = "users";
+    }
+}
+
+fn query_db(id: int32) -> int32 {
+    if (id < 0) {
+        throw new DatabaseError("Invalid user ID", 404);
+    }
+    return 100;
+}
+
+fn main() -> int32 {
+    try -> {
+        int32 res = query_db(-5);
+        print(res);
+    } catch (e) -> {
+        print("Caught DatabaseError with message:");
+        print(e.message);
+        print("and code:");
+        print(e.code);
+    }
+
+    return 0;
+}

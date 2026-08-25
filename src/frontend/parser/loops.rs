@@ -4,7 +4,7 @@ use crate::frontend::parser::parser::Parser;
 
 impl Parser {
     // --- loop N -> { ... }  or  loop -> { ... } (infinite) --
-    // أو  loop N -> scope_name()  /  loop -> scope_name()
+    // or loop N -> scope_name() / loop -> scope_name()
     pub(crate) fn parse_loop_stmt(&mut self) -> Result<Stmt, String> {
         self.advance(); // 'loop'
         let count = if self.peek().kind == TokenKind::Arrow {
@@ -95,44 +95,52 @@ impl Parser {
         Ok(Stmt::DoWhileStmt { body, condition })
     }
 
-    // --- for (init; cond; inc) -> { ... } ---
+    // --- for (init; cond; inc) -> { ... } or for (x in y) -> { ... } or for x in y -> { ... } ---
     pub(crate) fn parse_for_stmt(&mut self) -> Result<Stmt, String> {
         self.advance(); // 'for'
-        self.consume(TokenKind::LParen, "Expected '(' after 'for'")?;
+
+        let has_paren = if self.peek().kind == TokenKind::LParen {
+            self.advance();
+            true
+        } else {
+            false
+        };
 
         // Lookahead to see if it's a for-in loop
-        let mut is_for_in = false;
-        let mut lookahead = self.current;
-        let mut paren_depth = 1; // We already consumed the first LParen
-        while lookahead < self.tokens.len() {
-            match &self.tokens[lookahead].kind {
-                TokenKind::In => {
-                    if paren_depth == 1 {
-                        is_for_in = true;
-                        break;
+        let mut is_for_in = !has_paren;
+        if has_paren {
+            let mut lookahead = self.current;
+            let mut paren_depth = 1;
+            while lookahead < self.tokens.len() {
+                match &self.tokens[lookahead].kind {
+                    TokenKind::In => {
+                        if paren_depth == 1 {
+                            is_for_in = true;
+                            break;
+                        }
                     }
-                }
-                TokenKind::LParen => {
-                    paren_depth += 1;
-                }
-                TokenKind::RParen => {
-                    paren_depth -= 1;
-                    if paren_depth == 0 {
-                        break;
+                    TokenKind::LParen => {
+                        paren_depth += 1;
                     }
-                }
-                TokenKind::SemiColon => {
-                    if paren_depth == 1 {
-                        break;
+                    TokenKind::RParen => {
+                        paren_depth -= 1;
+                        if paren_depth == 0 {
+                            break;
+                        }
                     }
+                    TokenKind::SemiColon => {
+                        if paren_depth == 1 {
+                            break;
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
+                lookahead += 1;
             }
-            lookahead += 1;
         }
 
         if is_for_in {
-            return self.parse_for_in_stmt_body();
+            return self.parse_for_in_stmt_body(has_paren);
         }
 
         let init = if self.peek().kind == TokenKind::SemiColon {
@@ -204,7 +212,7 @@ impl Parser {
         })
     }
 
-    pub(crate) fn parse_for_in_stmt_body(&mut self) -> Result<Stmt, String> {
+    pub(crate) fn parse_for_in_stmt_body(&mut self, has_paren: bool) -> Result<Stmt, String> {
         self.consume_optional_let();
         let item = if self.is_var_decl_start() {
             self.parse_var_decl(ScopeType::Block).map(Stmt::Declaration)?
@@ -215,7 +223,9 @@ impl Parser {
 
         self.consume(TokenKind::In, "Expected 'in' in for-in loop")?;
         let iterable = self.parse_expression()?;
-        self.consume(TokenKind::RParen, "Expected ')' after for-in clauses")?;
+        if has_paren {
+            self.consume(TokenKind::RParen, "Expected ')' after for-in clauses")?;
+        }
         self.consume(TokenKind::Arrow, "Expected '->' after 'for-in' clauses")?;
 
         let body = if self.peek().kind == TokenKind::LBrace {

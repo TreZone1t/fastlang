@@ -22,19 +22,27 @@ impl Parser {
                     TokenKind::Import => self.parse_import_stmt().map(Stmt::Declaration),
                     TokenKind::Use => self.parse_use_stmt().map(Stmt::Declaration),
                     TokenKind::Export => self.parse_exported_stmt().map(Stmt::Declaration),
+                    TokenKind::Extern => self.parse_extern_decl().map(Stmt::Declaration),
                     _ => unreachable!(),
                 }
             }
+            TokenKind::Extern => self.parse_extern_decl().map(Stmt::Declaration),
             TokenKind::Const => {
                 if self.tokens.get(self.current + 1).map(|t| &t.kind) == Some(&TokenKind::LBrace) {
                     self.advance(); // consume 'const'
                     self.parse_object_destructure_decl(Editability::NotEditable, scope)
+                } else if self.is_named_destructure_start_at(self.current + 1) {
+                    self.advance(); // consume 'const'
+                    self.parse_named_destructure_decl(Editability::NotEditable, scope)
                 } else {
                     self.parse_const(scope).map(Stmt::Declaration)
                 }
             }
-            | TokenKind::TypeInt
-            | TokenKind::TypeFloat
+            | TokenKind::TypeInt(_)
+            | TokenKind::TypeUInt(_)
+            | TokenKind::TypeUSize
+            | TokenKind::TypeISize
+            | TokenKind::TypeFloat(_)
             | TokenKind::TypeChar
             | TokenKind::TypeBool
             | TokenKind::Flag
@@ -47,17 +55,21 @@ impl Parser {
             | TokenKind::TypeModify
             | TokenKind::TypeCopy => self.parse_var_decl(scope).map(Stmt::Declaration),
 
+            TokenKind::Using => self.parse_using_stmt(),
             TokenKind::Set => self.parse_reassign_stmt(),
 
             | TokenKind::TypeBluePrint
             | TokenKind::Impl
             | TokenKind::Fn
+            | TokenKind::Virtual
+            | TokenKind::Abstract
             | TokenKind::TypeClass
             | TokenKind::TypeCustom
             | TokenKind::TypeStruct
             | TokenKind::TypeEnum
             | TokenKind::TypeBlock
             | TokenKind::TypeMicro
+            | TokenKind::TypeMachine
             | TokenKind::Del => {
                 if
                     !matches!(
@@ -83,13 +95,14 @@ impl Parser {
                 match self.peek().kind {
                     TokenKind::TypeBluePrint => self.parse_blueprint_decl().map(Stmt::Declaration),
                     TokenKind::Impl => self.parse_impl_decl().map(Stmt::Declaration),
-                    TokenKind::Fn => self.parse_fn_decl().map(Stmt::Declaration),
+                    TokenKind::Fn | TokenKind::Virtual | TokenKind::Abstract => self.parse_fn_decl().map(Stmt::Declaration),
                     TokenKind::TypeClass => self.parse_class_decl().map(Stmt::Declaration),
                     TokenKind::TypeCustom => self.parse_custom_decl().map(Stmt::Declaration),
                     TokenKind::TypeStruct => self.parse_struct_decl().map(Stmt::Declaration),
                     TokenKind::TypeEnum => self.parse_enum_decl().map(Stmt::Declaration),
                     TokenKind::TypeBlock => self.parse_block_scope_decl().map(Stmt::Declaration),
                     TokenKind::TypeMicro => self.parse_micro_decl().map(Stmt::Declaration),
+                    TokenKind::TypeMachine => self.parse_machine_decl().map(Stmt::Declaration),
                     TokenKind::Del => self.parse_del_stmt(),
                     _ => unreachable!(),
                 }
@@ -164,6 +177,12 @@ impl Parser {
             TokenKind::Throw => self.parse_throw_stmt(),
             TokenKind::Try => self.parse_try_catch_stmt(),
 
+            TokenKind::Identifier(_) if self.is_named_destructure_start() => {
+                self.parse_named_destructure_decl(Editability::Editable, scope)
+            }
+            TokenKind::Identifier(_) if self.is_var_decl_start() => {
+                self.parse_var_decl(scope).map(Stmt::Declaration)
+            }
             TokenKind::Identifier(_) => self.parse_expression_or_reassignment(),
 
             TokenKind::This => {
@@ -226,6 +245,49 @@ impl Parser {
     }
     pub(crate) fn parse_import_stmt(&mut self) -> Result<Decl, String> {
         self.advance(); // consume 'import'
+
+        // Check for ABI prefix e.g. import @c "stdio.h"; or import @cpp "vector";
+        let mut abi: Option<String> = None;
+        if self.peek().kind == TokenKind::AbiC {
+            self.advance();
+            abi = Some("C".to_string());
+        } else if self.peek().kind == TokenKind::AbiCpp {
+            self.advance();
+            abi = Some("Cpp".to_string());
+        } else if let TokenKind::LabelName(lbl) = &self.peek().kind {
+            if lbl.eq_ignore_ascii_case("@c") {
+                self.advance();
+                abi = Some("C".to_string());
+            } else if lbl.eq_ignore_ascii_case("@cpp") {
+                self.advance();
+                abi = Some("Cpp".to_string());
+            }
+        }
+
+        // Case 1: String import (e.g. import "stdio.h" or import "std/string")
+        if let TokenKind::String(path) = &self.peek().kind {
+            let mod_path = path.clone();
+            self.advance();
+
+            // Check if ABI is specified at the end e.g. import "stdio.h" @c;
+            if abi.is_none() {
+                if self.peek().kind == TokenKind::AbiC {
+                    self.advance();
+                    abi = Some("C".to_string());
+                } else if self.peek().kind == TokenKind::AbiCpp {
+                    self.advance();
+                    abi = Some("Cpp".to_string());
+                }
+            }
+
+            self.consume(TokenKind::SemiColon, "Expected ';' after import statement")?;
+            return Ok(Decl::Import {
+                module_path: vec![mod_path],
+                imports: None,
+                abi,
+            });
+        }
+
         let mut module_path: Vec<String> = Vec::new();
         let mut imports: Option<Vec<String>> = None;
 
@@ -264,6 +326,86 @@ impl Parser {
         Ok(Decl::Import {
             module_path,
             imports,
+            abi,
+        })
+    }
+
+    pub(crate) fn parse_extern_decl(&mut self) -> Result<Decl, String> {
+        self.consume(TokenKind::Extern, "Expected 'extern'")?;
+        let abi = match &self.peek().kind {
+            TokenKind::AbiC => {
+                self.advance();
+                "C".to_string()
+            }
+            TokenKind::AbiCpp => {
+                self.advance();
+                "Cpp".to_string()
+            }
+            TokenKind::LabelName(lbl) if lbl.eq_ignore_ascii_case("@c") => {
+                self.advance();
+                "C".to_string()
+            }
+            TokenKind::LabelName(lbl) if lbl.eq_ignore_ascii_case("@cpp") => {
+                self.advance();
+                "Cpp".to_string()
+            }
+            _ => "C".to_string(),
+        };
+
+        if self.peek().kind == TokenKind::LBrace {
+            self.advance(); // consume '{'
+            let mut decls = Vec::new();
+            while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                if self.peek().kind == TokenKind::Fn {
+                    let fn_decl = self.parse_extern_fn_signature(&abi)?;
+                    decls.push(fn_decl);
+                } else {
+                    return Err(format!("Syntax Error: Unexpected token '{:?}' in extern block", self.peek().kind));
+                }
+            }
+            self.consume(TokenKind::RBrace, "Expected '}' at end of extern block")?;
+            Ok(Decl::ExternBlockDecl { abi, decls })
+        } else if self.peek().kind == TokenKind::Fn {
+            self.parse_extern_fn_signature(&abi)
+        } else {
+            Err(format!("Syntax Error: Expected '{{' or 'fn' after extern, found '{:?}'", self.peek().kind))
+        }
+    }
+
+    pub(crate) fn parse_extern_fn_signature(&mut self, abi: &str) -> Result<Decl, String> {
+        self.consume(TokenKind::Fn, "Expected 'fn'")?;
+        let name = self.get_identifier("Expected function name in extern declaration")?;
+        self.consume(TokenKind::LParen, "Expected '(' after function name")?;
+        let mut params = Vec::new();
+        if self.peek().kind != TokenKind::RParen {
+            loop {
+                let p_name = self.get_identifier("Expected parameter name")?;
+                self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
+                let p_type = self.parse_type()?;
+                params.push(Param {
+                    name: p_name,
+                    type_node: p_type,
+                });
+                if self.peek().kind == TokenKind::Comma {
+                    self.advance();
+                    continue;
+                }
+                break;
+            }
+        }
+        self.consume(TokenKind::RParen, "Expected ')' after parameters")?;
+        let return_type = if self.peek().kind == TokenKind::Arrow {
+            self.advance();
+            self.parse_type()?
+        } else {
+            BaseType::Void
+        };
+        self.consume(TokenKind::SemiColon, "Expected ';' after extern function declaration")?;
+        Ok(Decl::ExternFnDecl {
+            abi: abi.to_string(),
+            name,
+            params,
+            return_type,
         })
     }
 
@@ -283,15 +425,26 @@ impl Parser {
         Ok(Decl::Import {
             module_path,
             imports: None,
+            abi: None,
         })
+    }
+
+    pub(crate) fn parse_using_stmt(&mut self) -> Result<Stmt, String> {
+        self.consume(TokenKind::Using, "Expected 'using'")?;
+        let name = self.get_identifier("Expected identifier after 'using'")?;
+        self.consume(TokenKind::SemiColon, "Expected ';' after using statement")?;
+        Ok(Stmt::UsingStmt(name))
     }
 
     pub(crate) fn parse_const(&mut self, scope: ScopeType) -> Result<Decl, String> {
         self.advance(); // consume 'const'
 
         let mut decl = match &self.peek().kind {
-            | TokenKind::TypeInt
-            | TokenKind::TypeFloat
+            | TokenKind::TypeInt(_)
+            | TokenKind::TypeUInt(_)
+            | TokenKind::TypeUSize
+            | TokenKind::TypeISize
+            | TokenKind::TypeFloat(_)
             | TokenKind::TypeChar
             | TokenKind::TypeBool
             | TokenKind::TypeType
@@ -326,17 +479,20 @@ impl Parser {
     pub(crate) fn parse_exported_stmt(&mut self) -> Result<Decl, String> {
         self.advance(); // consume 'export'
 
-        // After export, we expect a valid exportable statement (fn, scope, let, class, struct, enum)
+        // After export, we expect a valid exportable statement (fn, scope, let, class, struct, enum, micro/macro)
         let mut stmt = match &self.peek().kind {
             TokenKind::Fn => self.parse_fn_decl()?,
             TokenKind::TypeClass => self.parse_class_decl()?,
             TokenKind::TypeStruct => self.parse_struct_decl()?,
             TokenKind::TypeCustom => self.parse_custom_decl()?,
             TokenKind::TypeEnum => self.parse_enum_decl()?,
+            TokenKind::TypeMicro => self.parse_micro_decl()?,
+            TokenKind::TypeBluePrint => self.parse_blueprint_decl()?,
+            TokenKind::TypeMachine => self.parse_machine_decl()?,
             kind => {
                 return Err(
                     format!(
-                        "Syntax Error: Cannot export '{:?}', only let, fn, scope, class, struct, and enum can be exported",
+                        "Syntax Error: Cannot export '{:?}', only let, fn, scope, class, struct, enum, blueprint, machine, and micro can be exported",
                         kind
                     )
                 );
@@ -360,7 +516,16 @@ impl Parser {
             Decl::StructDecl { ref mut is_exported, .. } => {
                 *is_exported = true;
             }
+            Decl::BlueprintDecl { ref mut is_exported, .. } => {
+                *is_exported = true;
+            }
             Decl::EnumDecl { ref mut is_exported, .. } => {
+                *is_exported = true;
+            }
+            Decl::MicroDecl { ref mut is_exported, .. } => {
+                *is_exported = true;
+            }
+            Decl::MachineDecl { ref mut is_exported, .. } => {
                 *is_exported = true;
             }
             Decl::VarDecl { ref mut visibility, .. } => {
@@ -389,13 +554,18 @@ impl Parser {
     pub(crate) fn is_var_decl_start(&self) -> bool {
         match &self.peek().kind {
             | TokenKind::Const
-            | TokenKind::TypeInt
-            | TokenKind::TypeFloat
+            | TokenKind::TypeInt(_)
+            | TokenKind::TypeUInt(_)
+            | TokenKind::TypeUSize
+            | TokenKind::TypeISize
+            | TokenKind::TypeFloat(_)
             | TokenKind::TypeChar
             | TokenKind::TypeBool
             | TokenKind::Flag
             | TokenKind::Scope
             | TokenKind::TypeName
+            | TokenKind::TypeModify
+            | TokenKind::TypeCopy
             | TokenKind::TypeType
             | TokenKind::TypeMethod
             | TokenKind::TypeFn => true,
@@ -410,6 +580,113 @@ impl Parser {
             }
             _ => false,
         }
+    }
+
+    pub(crate) fn is_named_destructure_start_at(&self, start: usize) -> bool {
+        let mut idx = start;
+        if idx >= self.tokens.len() {
+            return false;
+        }
+        if !matches!(&self.tokens[idx].kind, TokenKind::Identifier(_)) {
+            return false;
+        }
+        idx += 1;
+        while idx < self.tokens.len() && self.tokens[idx].kind == TokenKind::DoubleColon {
+            idx += 1;
+            if idx >= self.tokens.len() || !matches!(&self.tokens[idx].kind, TokenKind::Identifier(_)) {
+                return false;
+            }
+            idx += 1;
+        }
+        if idx >= self.tokens.len() {
+            return false;
+        }
+        let open_kind = &self.tokens[idx].kind;
+        if *open_kind != TokenKind::LBrace && *open_kind != TokenKind::LParen {
+            return false;
+        }
+        let (open_tok, close_tok) = if *open_kind == TokenKind::LBrace {
+            (TokenKind::LBrace, TokenKind::RBrace)
+        } else {
+            (TokenKind::LParen, TokenKind::RParen)
+        };
+        let mut depth = 0;
+        while idx < self.tokens.len() {
+            if self.tokens[idx].kind == open_tok {
+                depth += 1;
+            } else if self.tokens[idx].kind == close_tok {
+                depth -= 1;
+                if depth == 0 {
+                    let next = self.tokens.get(idx + 1).map(|t| &t.kind);
+                    return matches!(next, Some(TokenKind::Assign) | Some(TokenKind::Arrow));
+                }
+            } else if self.tokens[idx].kind == TokenKind::EOF {
+                break;
+            }
+            idx += 1;
+        }
+        false
+    }
+
+    pub(crate) fn is_named_destructure_start(&self) -> bool {
+        self.is_named_destructure_start_at(self.current)
+    }
+
+    pub(crate) fn parse_named_destructure_decl(
+        &mut self,
+        editability: Editability,
+        scope: ScopeType
+    ) -> Result<Stmt, String> {
+        let mut type_name = self.get_identifier("Expected type name in destructure")?;
+        while self.peek().kind == TokenKind::DoubleColon {
+            self.advance();
+            let sub = self.get_identifier("Expected identifier after '::'")?;
+            type_name.push_str("::");
+            type_name.push_str(&sub);
+        }
+        let is_tuple = self.peek().kind == TokenKind::LParen;
+        if is_tuple {
+            self.consume(TokenKind::LParen, "Expected '(' in tuple destructure")?;
+        } else {
+            self.consume(TokenKind::LBrace, "Expected '{' in struct destructure")?;
+        }
+        let close_kind = if is_tuple { TokenKind::RParen } else { TokenKind::RBrace };
+        let mut fields = Vec::new();
+        while !self.is_at_end() && self.peek().kind != close_kind {
+            let (type_node, name) = if self.is_var_decl_start() {
+                let ty = self.parse_type()?;
+                let n = self.get_identifier("Expected variable name in destructure")?;
+                (ty, n)
+            } else {
+                let n = self.get_identifier("Expected variable name in destructure")?;
+                (BaseType::Unknown, n)
+            };
+            if self.peek().kind == TokenKind::SemiColon || self.peek().kind == TokenKind::Comma {
+                self.advance();
+            }
+            let var_meta = VarMetadata {
+                name: name.clone(),
+                type_node: type_node.clone(),
+                visibility: Visibility::Private,
+                editability: editability.clone(),
+                scope: scope.clone(),
+                is_array: false,
+            };
+            self.var_metadata.insert(name.clone(), var_meta);
+            fields.push((type_node, name));
+        }
+        self.consume(close_kind, "Expected closing brace/paren after destructure fields")?;
+        self.consume(TokenKind::Assign, "Expected '=' after destructure pattern")?;
+        let rhs = self.parse_expression()?;
+        if self.peek().kind == TokenKind::SemiColon {
+            self.advance();
+        }
+        Ok(Stmt::Declaration(Decl::ObjectDestructureDecl {
+            visibility: Visibility::Private,
+            editability,
+            fields,
+            rhs,
+        }))
     }
 
     pub(crate) fn is_object_destructure_start(&self) -> bool {
@@ -491,11 +768,6 @@ impl Parser {
 
     pub(crate) fn parse_pattern_item(&mut self) -> Result<Pattern, String> {
         match &self.peek().kind.clone() {
-            TokenKind::Identifier(name) => {
-                let n = name.clone();
-                self.advance();
-                Ok(Pattern::Identifier(n))
-            }
             TokenKind::LParen => {
                 self.advance();
                 let mut items = Vec::new();
@@ -526,20 +798,20 @@ impl Parser {
                 self.advance();
                 let mut fields = Vec::new();
                 while self.peek().kind != TokenKind::RBrace && self.peek().kind != TokenKind::EOF {
-                    if let TokenKind::Identifier(fname) = &self.peek().kind {
-                        fields.push(fname.clone());
+                    let fname = self.get_identifier("Expected field identifier inside destructuring braces")?;
+                    fields.push(fname);
+                    if self.peek().kind == TokenKind::Comma || self.peek().kind == TokenKind::SemiColon {
                         self.advance();
-                        if self.peek().kind == TokenKind::Comma || self.peek().kind == TokenKind::SemiColon {
-                            self.advance();
-                        }
-                    } else {
-                        return Err(format!("Expected field identifier inside destructuring braces, found {:?}", self.peek().kind));
                     }
                 }
                 self.consume(TokenKind::RBrace, "Expected '}' after destructuring fields")?;
                 Ok(Pattern::Struct { name: None, fields })
             }
-            other => Err(format!("Expected variable name or destructuring pattern, found {:?}", other)),
+            _ => {
+                let err = format!("Expected variable name or destructuring pattern, found {:?}", self.peek().kind);
+                let name = self.get_identifier(&err)?;
+                Ok(Pattern::Identifier(name))
+            }
         }
     }
 
@@ -655,7 +927,7 @@ impl Parser {
                         }
                         Expr::ArrayLiteral(elems)
                     }
-                    None => Expr::Identifier("__default__".to_string()),
+                    None => Expr::Default(None),
                 };
 
                 let var_meta = VarMetadata {
@@ -701,7 +973,7 @@ impl Parser {
                         }
                         Expr::ArrayLiteral(elems)
                     }
-                    None => Expr::Identifier("__default__".to_string()),
+                    None => Expr::Default(None),
                 };
 
                 let elem_type = if array_sizes.len() > 1 {
@@ -748,7 +1020,7 @@ impl Parser {
                     let mut names = Vec::new();
                     collect_pattern_identifiers(&pattern, &mut names);
                     for n in names {
-                        assignments.push((n, Expr::Identifier("__default__".to_string())));
+                        assignments.push((n, Expr::Default(None)));
                     }
                 }
 
@@ -966,16 +1238,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_throw_stmt(&mut self) -> Result<Stmt, String> {
-        //todo : we will make throw work only in fn and custom scope so you can take the name of the scope as a parameter
-        //todo :  and update the scope data the flag has_throw to true and the error flied to the string that we will throw to  allow the user to catch it or handle it using the scope handler
-        //! check 21_throw.fs to see how it will work
         self.advance(); // 'throw'
-
-        // Optional 'new' (like: throw new error("...")) //todo: we will make it not optional
-        if self.peek().kind == TokenKind::New {
-            self.advance();
-        }
-
         let expr = self.parse_expression()?;
         self.consume(TokenKind::SemiColon, "Expected ';' after throw statement")?;
         Ok(Stmt::ThrowStmt(expr))
@@ -1185,6 +1448,7 @@ impl Parser {
                 self.advance();
                 Ok(s)
             }
+            // Handle method names allowed in handle blocks
             TokenKind::ToString => { self.advance(); Ok("to_string".to_string()) }
             TokenKind::Call => { self.advance(); Ok("call".to_string()) }
             TokenKind::Return => { self.advance(); Ok("return".to_string()) }
@@ -1193,7 +1457,6 @@ impl Parser {
             TokenKind::Leave => { self.advance(); Ok("leave".to_string()) }
             TokenKind::Yield => { self.advance(); Ok("yield".to_string()) }
             TokenKind::Throw => { self.advance(); Ok("throw".to_string()) }
-            TokenKind::TypeError => { self.advance(); Ok("error".to_string()) }
             _ => Err(err_msg.to_string()),
         }
     }

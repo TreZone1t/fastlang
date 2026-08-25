@@ -33,6 +33,8 @@ pub struct SemanticAnalyzer {
     pub global_metadata: HashMap<String, TypeMetadata>,
     pub dependency_graph: HashMap<String, HashSet<String>>,
     pub current_context: Option<String>,
+    pub current_file: String,
+    pub source_code: Option<String>,
 }
 
 impl SemanticAnalyzer {
@@ -49,9 +51,10 @@ impl SemanticAnalyzer {
             global_metadata,
             dependency_graph: HashMap::new(),
             current_context: None,
+            current_file: String::new(),
+            source_code: None,
         };
         analyzer.import_metadata();
-        analyzer.inject_stdlib();
         analyzer
     }
 
@@ -67,28 +70,6 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn inject_stdlib(&mut self) {
-        let std_funcs: &[(&str, BaseType)] = &[
-            ("log", BaseType::Void),
-            ("input", BaseType::from_str("string")),
-            ("to_string", BaseType::from_str("string")),
-        ];
-        for (name, ret) in std_funcs {
-            let info = SymbolInfo {
-                name: name.to_string(),
-                kind: SymbolKind::Function {
-                    params: vec![],
-                    return_type: ret.clone(),
-                },
-                visibility: Visibility::Public,
-                dependencies: vec![],
-                is_used: true,
-                is_param: false,
-            };
-            self.current_env.borrow_mut().define_or_update(name.to_string(), info);
-        }
-    }
-
     // ----------------------------------------------------------
     // Scope management
     // ----------------------------------------------------------
@@ -97,12 +78,40 @@ impl SemanticAnalyzer {
         self.current_env = new_env;
     }
 
+    pub fn emit_warning(&self, message: &str, line: Option<usize>, column: Option<usize>, hint: Option<&str>) {
+        eprintln!("\x1b[33;1mwarning:\x1b[0m {}", message);
+        if let (Some(l), Some(c)) = (line, column) {
+            let file_display = if self.current_file.is_empty() { "<input>" } else { &self.current_file };
+            eprintln!("  --> {}:{}:{}", file_display, l, c);
+            if let Some(ref src) = self.source_code {
+                if let Some(line_str) = src.lines().nth(l.saturating_sub(1)) {
+                    let pad = " ".repeat(format!("{}", l).len());
+                    eprintln!("   {} |", pad);
+                    eprintln!("{} | {}", l, line_str);
+                    let caret_pad = " ".repeat(c.saturating_sub(1));
+                    eprintln!("   {} | {}^{}", pad, caret_pad, "~".repeat(4));
+                }
+            }
+        }
+        if let Some(h) = hint {
+            eprintln!("  = \x1b[36;1mhelp:\x1b[0m {}", h);
+        }
+    }
+
     fn leave_scope(&mut self) {
-        for (name, info) in &self.current_env.borrow().symbols {
-            if !info.is_used && !name.starts_with('_') && name != "this" && name != "data" && name != "__this__" {
-                if let SymbolKind::Variable { .. } = &info.kind {
-                    let kind_str = if info.is_param { "parameter" } else { "variable" };
-                    eprintln!("\x1b[33;1mwarning:\x1b[0m {} '{}' is declared but never used in scope", kind_str, name);
+        if !self.in_class && !self.in_struct && !self.in_custom_scope {
+            for (name, info) in &self.current_env.borrow().symbols {
+                if !info.is_used && !name.starts_with('_') && name != "this" && name != "data" && name != "__this__" {
+                    if let SymbolKind::Variable { .. } = &info.kind {
+                        let kind_str = if info.is_param { "parameter" } else { "variable" };
+                        let hint = format!("if this is intentional, prefix with an underscore: '_{}'", name);
+                        self.emit_warning(
+                            &format!("{} '{}' is declared but never used in scope", kind_str, name),
+                            None,
+                            None,
+                            Some(&hint),
+                        );
+                    }
                 }
             }
         }
@@ -123,6 +132,9 @@ impl SemanticAnalyzer {
         }
     }
     fn is_valid_pointer_rhs(&self, value: &Expr, expr_type: &str) -> bool {
+        if matches!(value, Expr::Default(_)) || expr_type == "default" || expr_type == "unknown" {
+            return true;
+        }
         if let Expr::UnaryOp { operator, .. } = value {
             if operator == "&"  {
                 return true;
@@ -234,13 +246,41 @@ impl SemanticAnalyzer {
 
             Stmt::ForInStmt { item, iterable, body } => {
                 let iterable_type = self.visit_expression(iterable)?;
-                let item_type = if iterable_type.starts_with("array<") {
-                    iterable_type.trim_start_matches("array<").trim_end_matches('>').to_string()
+                let (base_name, type_args) = extract_type_args_from_str(&iterable_type);
+
+                let item_type = if iterable_type.starts_with("array<") || iterable_type.ends_with("[]") {
+                    iterable_type.trim_start_matches("array<").trim_end_matches('>').trim_end_matches("[]").to_string()
                 } else if iterable_type == "string" {
                     "char".to_string()
-                } else if let Some(meta) = self.global_metadata.get(&iterable_type) {
+                } else if let Some(bp) = self.current_env.borrow().lookup_blueprint(&base_name) {
+                    let specialized_bp = bp.specialize(&type_args);
+                    if let Some(sig) = specialized_bp.methods.get("next") {
+                        extract_iter_payload_type(&sig.return_type)
+                    } else if specialized_bp.handles.contains(&HandleMethods::Next) {
+                        if !type_args.is_empty() {
+                            type_args[0].as_str()
+                        } else {
+                            "int32".to_string()
+                        }
+                    } else {
+                        return Err(
+                            format!("Semantic Error: Type '{}' does not implement 'next' handle for for-in iteration", iterable_type)
+                        );
+                    }
+                } else if let Some(meta) = self.global_metadata.get(&base_name).or_else(|| self.global_metadata.get(&iterable_type)) {
                     if let Some(next_fn) = meta.methods.get("next") {
-                        next_fn.return_type.as_str()
+                        let mut map = HashMap::new();
+                        for (g_param, g_arg) in meta.generics.iter().zip(type_args.iter()) {
+                            map.insert(g_param.as_str(), g_arg.clone());
+                        }
+                        let specialized_ret = next_fn.return_type.substitute_generics(&map);
+                        extract_iter_payload_type(&specialized_ret)
+                    } else if meta.handles.contains(&HandleMethods::Next) {
+                        if !type_args.is_empty() {
+                            type_args[0].as_str()
+                        } else {
+                            "int32".to_string()
+                        }
                     } else {
                         return Err(
                             format!("Semantic Error: Type '{}' does not implement 'next' handle for for-in iteration", iterable_type)
@@ -256,7 +296,7 @@ impl SemanticAnalyzer {
 
                 if let Stmt::Declaration(Decl::VarDecl { type_node, .. }) = &**item {
                     let declared_type = type_node.as_str();
-                    if !self.types_are_compatible(&declared_type, &item_type) {
+                    if item_type != "auto" && item_type != "unknown" && !self.types_are_compatible(&declared_type, &item_type) {
                         return Err(
                             format!(
                                 "Semantic Error: Type mismatch in for-in loop. Iterable elements are '{}', but item is declared as '{}'",
@@ -265,9 +305,24 @@ impl SemanticAnalyzer {
                             )
                         );
                     }
+                    self.visit_statement(item)?;
+                } else if let Stmt::ExpressionStmt(Expr::Identifier(var_name)) = &**item {
+                    let info = SymbolInfo {
+                        name: var_name.clone(),
+                        kind: SymbolKind::Variable {
+                            type_node: BaseType::from_str(&item_type),
+                            editability: Editability::Editable,
+                            is_array: false,
+                        },
+                        visibility: Visibility::Private,
+                        dependencies: vec![],
+                        is_used: false,
+                        is_param: false,
+                    };
+                    self.current_env.borrow_mut().define(var_name.clone(), info)?;
+                } else {
+                    self.visit_statement(item)?;
                 }
-
-                self.visit_statement(item)?;
 
                 match body {
                     EitherBlock::Inline(stmts) => {
@@ -421,24 +476,44 @@ impl SemanticAnalyzer {
             Stmt::ThrowStmt(expr) => {
                 if !self.active_flags.contains(&"+has_throw".to_string()) {
                     return Err(
-                        "Semantic Error: Throw statement is not allowed here. 'has_throw' flag is not enabled.".to_string()
+                        "Semantic Error: Throw statement is not allowed here. The scope must have 'has_throw' enabled (e.g. inside try block or custom scope with error handle).".to_string()
                     );
                 }
-                self.visit_expression(expr)?;
+                let thrown_type = self.visit_expression(expr)?;
+                if thrown_type != "unknown" {
+                    let bp_name = extract_blueprint_name_from_type(&thrown_type).unwrap_or_else(|| thrown_type.clone());
+                    let is_throwable = if bp_name == "Error" || bp_name == "std::Error" {
+                        true
+                    } else if let Some(bp) = self.current_env.borrow().lookup_blueprint(&bp_name) {
+                        bp.handles.contains(&HandleMethods::Throw) || bp.methods.contains_key("throw") || bp.name == "Error"
+                    } else if let Some(meta) = self.global_metadata.get(&bp_name) {
+                        meta.handles.contains(&HandleMethods::Throw) || meta.methods.contains_key("throw") || meta.name == "Error"
+                    } else {
+                        false
+                    };
+                    if !is_throwable {
+                        return Err(format!(
+                            "Semantic Error: Type '{}' is not throwable. Only 'Error' or types implementing a 'throw' handle can be thrown.",
+                            thrown_type
+                        ));
+                    }
+                }
             }
 
             Stmt::TryCatchStmt { try_block, catch_param, catch_block } => {
                 self.enter_scope();
+                self.active_flags.push("+has_throw".to_string());
                 for s in try_block {
                     self.visit_statement(s)?;
                 }
+                self.active_flags.retain(|f| f != "+has_throw");
                 self.leave_scope();
 
                 self.enter_scope();
                 let info = SymbolInfo {
                     name: catch_param.clone(),
                     kind: SymbolKind::Variable {
-                        type_node: BaseType::Error,
+                        type_node: BaseType::from_str("Error"),
                         editability: Editability::NotEditable,
                         is_array: false,
                     },
@@ -475,6 +550,47 @@ impl SemanticAnalyzer {
                 }
             }
 
+            Stmt::UsingStmt(name) => {
+                if let Some(meta) = self.global_metadata.get(name) {
+                    if let Some(ref variants) = meta.variants {
+                        for v in variants {
+                            let var_symbol = SymbolInfo {
+                                name: v.name.clone(),
+                                kind: SymbolKind::Variable {
+                                    type_node: BaseType::from_str(name),
+                                    editability: Editability::NotEditable,
+                                    is_array: false,
+                                },
+                                visibility: Visibility::Public,
+                                dependencies: vec![],
+                                is_used: false,
+                                is_param: false,
+                            };
+                            let _ = self.current_env.borrow_mut().define(v.name.clone(), var_symbol);
+                        }
+                    }
+                }
+                if let Some(bp) = self.current_env.borrow().lookup_blueprint(name) {
+                    if !bp.variants.is_empty() {
+                        for v in &bp.variants {
+                            let var_symbol = SymbolInfo {
+                                name: v.name.clone(),
+                                kind: SymbolKind::Variable {
+                                    type_node: BaseType::from_str(name),
+                                    editability: Editability::NotEditable,
+                                    is_array: false,
+                                },
+                                visibility: Visibility::Public,
+                                dependencies: vec![],
+                                is_used: false,
+                                is_param: false,
+                            };
+                            let _ = self.current_env.borrow_mut().define(v.name.clone(), var_symbol);
+                        }
+                    }
+                }
+            }
+
             _ => {}
         }
         Ok(())
@@ -484,17 +600,41 @@ impl SemanticAnalyzer {
     // analyze_reassign - ReassignStmt with full operator awareness
     // ----------------------------------------------------------
     fn analyze_reassign(&mut self, target: &Expr, value: &Expr, op: &str) -> Result<(), String> {
-        // Check mutability first
+        // Scope flags are strictly read-only
+        if let Expr::Identifier(name) = target {
+            if matches!(name.trim(), "broken" | "is_done" | "yielded" | "returned" | "leaved" | "continued" | "has_break" | "has_yield" | "has_leave" | "has_return" | "has_call" | "has_error") {
+                return Err(format!("Semantic Error: Scope flag '{}' is read-only and cannot be manually modified", name));
+            }
+        }
+        // Check mutability and pointer lifecycle
+        let mut is_modify_target = false;
         if let Expr::Identifier(name) = target {
             if let Some(info) = self.current_env.borrow().lookup(name) {
                 if !info.is_editable() {
                     return Err(format!("Semantic Error: Cannot reassign constant '{}'", name));
+                }
+                if let SymbolKind::Variable { type_node, .. } = &info.kind {
+                    if matches!(type_node, BaseType::Modify(_)) {
+                        is_modify_target = true;
+                    }
                 }
             }
         }
 
         let expr_type = self.visit_expression(value)?;
         let target_type = self.visit_expression(target)?;
+
+        if op == "=" && is_modify_target {
+            let is_addr = matches!(value, Expr::UnaryOp { operator, .. } if operator == "&");
+            if expr_type.starts_with("modify<") || expr_type.starts_with("name<") || expr_type.starts_with("pointer") || is_addr {
+                if let Expr::Identifier(name) = target {
+                    return Err(format!(
+                        "Semantic Error: Cannot reassign a modify pointer '{}' directly. 'modify' manages owned memory; use 'name' for rebindable weak references.",
+                        name
+                    ));
+                }
+            }
+        }
 
         if op != "=" {
             return self.verify_operator_overload(&target_type, &expr_type, op, target);
@@ -573,6 +713,10 @@ impl SemanticAnalyzer {
         expr_type: &str,
         target: &Expr
     ) -> Result<(), String> {
+        if expr_type == "default" || expr_type == "unknown" {
+            return Ok(());
+        }
+
         // ----------------------------------------------------------
         // Smart Pointers: name, modify, copy
         // ----------------------------------------------------------
@@ -717,10 +861,16 @@ impl SemanticAnalyzer {
             Decl::ObjectDestructureDecl { visibility, editability, fields, rhs, .. } => {
                 let rhs_type = self.visit_expression(rhs)?;
                 let bp_meta = self.global_metadata.get(&rhs_type).cloned();
-                for (type_node, name) in fields {
+                for (idx, (type_node, name)) in fields.iter().enumerate() {
                     let actual_type = if matches!(type_node, BaseType::Unknown) {
                         if let Some(ref meta) = bp_meta {
-                            meta.fields.get(name).cloned().unwrap_or(BaseType::Unknown)
+                            if let Some(ty) = meta.fields.get(name) {
+                                ty.clone()
+                            } else if idx < meta.params.len() {
+                                meta.params[idx].type_node.clone()
+                            } else {
+                                BaseType::Unknown
+                            }
                         } else {
                             BaseType::Unknown
                         }
@@ -816,6 +966,7 @@ impl SemanticAnalyzer {
             Decl::ClassDecl {
                 is_exported,
                 name,
+                extends,
                 handles,
                 public_block,
                 private_block,
@@ -827,6 +978,8 @@ impl SemanticAnalyzer {
                 self.analyze_class_or_struct_decl(
                     *is_exported,
                     name,
+                    true,
+                    extends.as_deref(),
                     handles,
                     public_block,
                     private_block,
@@ -850,6 +1003,8 @@ impl SemanticAnalyzer {
                 self.analyze_class_or_struct_decl(
                     *is_exported,
                     name,
+                    false,
+                    None,
                     handles,
                     public_block,
                     private_block,
@@ -933,7 +1088,55 @@ impl SemanticAnalyzer {
                 self.current_env.borrow_mut().define(name.to_string(), info)?;
             }
 
-            Decl::FnDecl { is_exported, name, params, return_type, body } => {
+            Decl::MachineDecl { is_exported, name, labels, handle_block } => {
+                // Register the machine as a custom blueprint type
+                let bp = BlueprintData::new(name);
+
+                let info = SymbolInfo {
+                    name: name.clone(),
+                    kind: SymbolKind::Variable {
+                        type_node: BaseType::Custom {
+                            name: name.clone(),
+                            fields: Box::new(std::collections::HashMap::new()),
+                            methods: Box::new(std::collections::HashMap::new()),
+                            generics: vec![],
+                            params: vec![],
+                        },
+                        editability: Editability::Editable,
+                        is_array: false,
+                    },
+                    visibility: if *is_exported { Visibility::Public } else { Visibility::Private },
+                    dependencies: vec![],
+                    is_used: false,
+                    is_param: false,
+                };
+                self.current_env.borrow_mut().define(name.to_string(), info)?;
+
+                let prev = self.in_custom_scope;
+                self.in_custom_scope = true;
+                self.enter_scope();
+
+                // Analyze each label body
+                for (_, label_decl) in labels {
+                    if let Decl::LabelDecl { body, .. } = label_decl {
+                        for s in body {
+                            let _ = self.visit_statement(s);
+                        }
+                    }
+                }
+
+                // Analyze handle block (only call/leave allowed, enforced by parser)
+                for d in handle_block {
+                    let _ = self.visit_declaration(d);
+                }
+
+                self.leave_scope();
+                self.in_custom_scope = prev;
+                self.current_env.borrow_mut().define_blueprint(name.to_string(), bp);
+            }
+
+
+            Decl::FnDecl { is_exported, name, params, return_type, body, .. } => {
                 let fn_info = SymbolInfo {
                     name: name.clone(),
                     kind: SymbolKind::Function {
@@ -1154,6 +1357,27 @@ impl SemanticAnalyzer {
                 self.leave_scope();
             }
 
+            Decl::ExternFnDecl { name, params, return_type, .. } => {
+                let info = SymbolInfo {
+                    name: name.clone(),
+                    kind: SymbolKind::Function {
+                        return_type: return_type.clone(),
+                        params: params.clone(),
+                    },
+                    visibility: Visibility::Public,
+                    dependencies: vec![],
+                    is_used: false,
+                    is_param: false,
+                };
+                self.current_env.borrow_mut().define(name.clone(), info)?;
+            }
+
+            Decl::ExternBlockDecl { decls, .. } => {
+                for d in decls {
+                    self.visit_declaration(d)?;
+                }
+            }
+
             Decl::Import { .. } => {}
             _ => {}
         }
@@ -1179,6 +1403,13 @@ impl SemanticAnalyzer {
     ) -> Result<(), String> {
         let prev_context = self.current_context.clone();
         self.current_context = Some(name.to_string());
+
+        if matches!(type_node, BaseType::Flag) {
+            return Err(format!(
+                "Semantic Error: 'flag' is a reserved state inspection type and cannot be declared as a user variable '{}'. Use 'bool' instead.",
+                name
+            ));
+        }
 
         let expr_type = self.visit_expression(value)?;
         let declared_type = type_node.as_str();
@@ -1516,11 +1747,13 @@ impl SemanticAnalyzer {
         // Register handle method signatures
         if let Some(hb) = handle_block {
             for d in hb {
-                if let Decl::FnDecl { name: fn_name, params: fn_params, return_type, .. } = d {
+                if let Decl::FnDecl { name: fn_name, params: fn_params, return_type, is_virtual, is_abstract, .. } = d {
                     bp.methods.insert(fn_name.clone(), FnSignature {
                         name: fn_name.clone(),
                         params: fn_params.clone(),
                         return_type: return_type.clone(),
+                        is_virtual: *is_virtual,
+                        is_abstract: *is_abstract,
                     });
                 }
             }
@@ -1664,6 +1897,8 @@ impl SemanticAnalyzer {
         &mut self,
         is_exported: bool,
         name: &str,
+        is_class: bool,
+        extends: Option<&str>,
         handles: &[HandleMethods],
         public_block: &[Decl],
         private_block: &[Decl],
@@ -1672,6 +1907,20 @@ impl SemanticAnalyzer {
         constructor: &Option<Vec<ConstructorDecl>>
     ) -> Result<(), String> {
         let mut bp = BlueprintData::new(name);
+        bp.is_class = is_class;
+        if let Some(parent) = extends {
+            if let Some(parent_bp) = self.current_env.borrow().lookup_blueprint(parent) {
+                for (f_k, f_v) in &parent_bp.fields {
+                    bp.fields.entry(f_k.clone()).or_insert_with(|| f_v.clone());
+                }
+                for (m_k, m_v) in &parent_bp.methods {
+                    bp.methods.entry(m_k.clone()).or_insert_with(|| m_v.clone());
+                }
+                for h in &parent_bp.handles {
+                    bp.handles.insert(*h);
+                }
+            }
+        }
         for h in handles {
             bp.handles.insert(*h);
         }
@@ -1680,12 +1929,14 @@ impl SemanticAnalyzer {
                 bp.fields.insert(f_name.clone(), type_node.clone());
             }
         }
-        for d in handle_block {
-            if let Decl::FnDecl { name: fn_name, params, return_type, .. } = d {
+        for d in private_block.iter().chain(public_block).chain(static_block).chain(handle_block) {
+            if let Decl::FnDecl { name: fn_name, params, return_type, is_virtual, is_abstract, .. } = d {
                 bp.methods.insert(fn_name.clone(), FnSignature {
                     name: fn_name.clone(),
                     params: params.clone(),
                     return_type: return_type.clone(),
+                    is_virtual: *is_virtual,
+                    is_abstract: *is_abstract,
                 });
             }
         }
@@ -1797,23 +2048,39 @@ impl SemanticAnalyzer {
                 Ok("object".to_string())
             }
 
+            Expr::Default(type_arg) => {
+                if let Some(t) = type_arg {
+                    Ok(t.as_str())
+                } else {
+                    Ok("default".to_string())
+                }
+            }
+
             Expr::Identifier(name) => {
-                if matches!(name.trim(), "__default__" | "None" | "null") {
-                    return Ok("unknown".to_string());
+                if matches!(name.trim(), "broken" | "is_done" | "yielded" | "returned" | "leaved" | "continued" | "has_break" | "has_yield" | "has_leave" | "has_return" | "has_call" | "has_error") {
+                    return Ok("bool".to_string());
                 }
                 self.record_dependency(name.clone());
                 self.current_env.borrow_mut().mark_used(name);
-                match self.current_env.borrow().lookup(name) {
-                    Some(info) => Ok(info.type_str()),
-                    None => {
-                        if self.in_struct || self.in_class || self.in_custom_scope {
-                            return Ok("auto".to_string());
+                if let Some(info) = self.current_env.borrow().lookup(name) {
+                    return Ok(info.type_str());
+                }
+                for (enum_name, meta) in &self.global_metadata {
+                    if let Some(ref variants) = meta.variants {
+                        if variants.iter().any(|v| v.name == *name) {
+                            return Ok(enum_name.clone());
                         }
-                        Err(
-                            format!("Semantic Error: Identifier '{}' is not defined in this scope.", name)
-                        )
                     }
                 }
+                if let Some(enum_name) = self.current_env.borrow().lookup_enum_for_variant(name) {
+                    return Ok(enum_name);
+                }
+                if self.in_struct || self.in_class || self.in_custom_scope {
+                    return Ok("auto".to_string());
+                }
+                Err(
+                    format!("Semantic Error: Identifier '{}' is not defined in this scope.", name)
+                )
             }
 
             Expr::NamespaceAccess { namespace, property } => {
@@ -1838,6 +2105,8 @@ impl SemanticAnalyzer {
 
             Expr::Call { callee, args } => {
                 if let Expr::Identifier(name) = &**callee {
+                    self.record_dependency(name.clone());
+                    self.current_env.borrow_mut().mark_used(name);
                     if let Some(info) = self.current_env.borrow().lookup(name) {
                         if let SymbolKind::Variable { type_node, .. } = &info.kind {
                             let base_str = type_node.as_str();
@@ -1851,6 +2120,14 @@ impl SemanticAnalyzer {
                             self.visit_expression(arg)?;
                         }
                         return Ok("error".to_string());
+                    }
+                    if let Some(bp) = self.current_env.borrow().lookup_blueprint(name) {
+                        if bp.is_class {
+                            return Err(format!(
+                                "Semantic Error: Class '{}' must be instantiated on the heap using 'new' (e.g. 'new {}(...)').",
+                                name, name
+                            ));
+                        }
                     }
                     if name != "Some" && self.current_env.borrow().lookup(name).is_none() {
                         return Err(
@@ -2008,6 +2285,10 @@ impl SemanticAnalyzer {
                     }
                 }
 
+                if matches!(property.as_str(), "broken" | "is_done" | "yielded" | "returned" | "leaved" | "continued" | "has_break" | "has_yield" | "has_leave" | "has_return" | "has_call" | "has_error") {
+                    return Ok("bool".to_string());
+                }
+
                 if obj_type.starts_with("scope") {
                     match property.as_str() {
                         "has_yield" | "has_leave" | "has_return" | "is_done" => return Ok("bool".to_string()),
@@ -2102,7 +2383,7 @@ impl SemanticAnalyzer {
     // types_are_compatible
     // ----------------------------------------------------------
     fn types_are_compatible(&self, expected: &str, actual: &str) -> bool {
-        if expected == actual || expected == "any" || actual == "unknown" || actual == "auto" {
+        if expected == actual || expected == "any" || actual == "unknown" || actual == "auto" || actual == "default" || expected == "default" {
             return true;
         }
         if (expected == "flag" && actual == "bool") || (expected == "bool" && actual == "flag") {
@@ -2115,11 +2396,12 @@ impl SemanticAnalyzer {
            (actual.starts_with("method") || actual.starts_with("Fn") || actual.contains("<Fn<") || actual == "fn") {
             return true;
         }
-        // int family
-        if expected.starts_with("int") && actual.starts_with("int") {
+        // int and uint family
+        if (expected.starts_with("int") || expected.starts_with("uint") || expected == "byte" || expected == "usize" || expected == "isize") &&
+           (actual.starts_with("int") || actual.starts_with("uint") || actual == "byte" || actual == "usize" || actual == "isize") {
             return true;
         }
-        if (expected == "int" || expected == "int32") && actual == "int" {
+        if (expected == "int" || expected == "int32" || expected == "uint" || expected == "uint32") && (actual == "int" || actual == "uint") {
             return true;
         }
         // float family
@@ -2247,9 +2529,19 @@ impl SemanticAnalyzer {
                 "int32" |
                 "int64" |
                 "int128" |
+                "uint" |
+                "uint8" |
+                "uint16" |
+                "uint32" |
+                "uint64" |
+                "uint128" |
+                "byte" |
+                "usize" |
+                "isize" |
                 "float" |
                 "float32" |
-                "float64"
+                "float64" |
+                "float128"
         )
     }
 
@@ -2315,4 +2607,56 @@ fn strip_wrapper<'a>(s: &'a str, prefix: &str) -> &'a str {
         return rest;
     }
     s
+}
+
+fn extract_type_args_from_str(s: &str) -> (String, Vec<BaseType>) {
+    let mut trimmed = s.trim();
+    if let Some(rest) = trimmed.strip_prefix("custom<") {
+        if let Some(inner) = rest.strip_suffix('>') {
+            trimmed = inner.trim();
+        }
+    } else if let Some(rest) = trimmed.strip_prefix("class<") {
+        if let Some(inner) = rest.strip_suffix('>') {
+            trimmed = inner.trim();
+        }
+    } else if let Some(rest) = trimmed.strip_prefix("struct<") {
+        if let Some(inner) = rest.strip_suffix('>') {
+            trimmed = inner.trim();
+        }
+    }
+
+    if let Some(start) = trimmed.find('<') {
+        if let Some(rest) = trimmed.strip_suffix('>') {
+            let base = trimmed[..start].trim().to_string();
+            let inside = &rest[start + 1..];
+            let mut args = Vec::new();
+            for arg_str in inside.split(',') {
+                let clean_arg = arg_str.trim();
+                if !clean_arg.is_empty() {
+                    args.push(BaseType::from_str(clean_arg));
+                }
+            }
+            return (base, args);
+        }
+    }
+    (trimmed.to_string(), Vec::new())
+}
+
+fn extract_iter_payload_type(t: &BaseType) -> String {
+    match t {
+        BaseType::Custom { name, generics, .. } | BaseType::Enum { name, generics, .. } if name == "Option" && !generics.is_empty() => {
+            extract_iter_payload_type(&generics[0])
+        }
+        BaseType::Copy(inner) | BaseType::Name(inner) | BaseType::Modify(inner) => {
+            match &**inner {
+                BaseType::Custom { name, generics, .. } | BaseType::Enum { name, generics, .. } if name == "Option" && !generics.is_empty() => {
+                    extract_iter_payload_type(&generics[0])
+                }
+                BaseType::Generic(vec) if !vec.is_empty() => extract_iter_payload_type(&vec[0]),
+                _ => inner.as_str(),
+            }
+        }
+        BaseType::Generic(vec) if !vec.is_empty() => extract_iter_payload_type(&vec[0]),
+        _ => t.as_str(),
+    }
 }

@@ -1,0 +1,84 @@
+// FastLang Standard Library: Core Prelude, Option & Error
+import std::string;
+import @c "clib/io.h";
+
+extern @c {
+    fn printf(format: string) -> int32;
+    fn puts(s: string) -> int32;
+    fn fast_println(s: string) -> void;
+    fn fast_print_int(val: int64) -> void;
+    fn fast_print_double(val: float64) -> void;
+}
+
+export fn print(s: string) -> void {
+    fast_println(s);
+}
+
+export fn print(n: int32) -> void {
+    fast_print_int(n);
+}
+
+export fn print(n: int64) -> void {
+    fast_print_int(n);
+}
+
+export fn print(f: float64) -> void {
+    fast_print_double(f);
+}
+
+export fn print(b: bool) -> void {
+    if (b) {
+        fast_println("true");
+    } else {
+        fast_println("false");
+    }
+}
+
+export enum Option<T> -> {
+    Some(T),
+    None,
+}
+
+export micro stop -> {
+    break;
+}
+
+export blueprint ErrorData -> {
+    string message;
+    int32 code;
+};
+
+export class Error -> {
+    public -> {
+        string message = "";
+        int32 code = 0;
+    }
+
+    constructor -> {
+        init(err_data: ErrorData) -> {
+            this.message = err_data.message;
+            this.code = err_data.code;
+        }
+        init(msg: string) -> {
+            this.message = msg;
+            this.code = 0;
+        }
+        init(code: int32) -> {
+            this.message = "Error happened with code";
+            this.code = code;
+        }
+        init(msg: string, code: int32) -> {
+            this.message = msg;
+            this.code = code;
+        }
+    }
+
+    handle -> {
+        fn throw() -> ErrorData {
+            return ErrorData {
+                message = this.message,
+                code = this.code,
+            };
+        }
+    }
+}

@@ -35,16 +35,15 @@ impl CodeGenerator {
                 );
                 struct_code
             }
-            Expr::Identifier(name) => {
-                if name == "null" || name == "void" {
-                    "nullptr".to_string()
-                } else if name == "None" {
-                    "std::nullopt".to_string()
-                } else if name == "__default__" {
-                    "{}".to_string()
+            Expr::Default(type_arg) => {
+                if let Some(t) = type_arg {
+                    format!("{}()", type_to_cpp(t))
                 } else {
-                    name.clone()
+                    "{}".to_string()
                 }
+            }
+            Expr::Identifier(name) => {
+                name.clone()
             }
             Expr::This => "this".to_string(),
             Expr::Super => "super".to_string(), // will be handled in PropertyAccess
@@ -98,15 +97,7 @@ impl CodeGenerator {
             Expr::Call { callee, args } => {
                 let callee_code = self.visit_expression(callee);
 
-                // Temporary hack: convert fast_lang `log` to `std::cout`
-                if callee_code == "log" {
-                    let mut cout_expr = "std::cout".to_string();
-                    for arg in args {
-                        cout_expr.push_str(&format!(" << {}", self.visit_expression(arg)));
-                    }
-                    cout_expr.push_str(" << std::endl");
-                    return cout_expr;
-                }
+
 
                 if callee_code == "input" {
                     // Inline lambda to return user input
@@ -135,7 +126,7 @@ impl CodeGenerator {
                             match s {
                                 Stmt::Declaration(Decl::VarDecl { name, value, assign_op, .. }) => {
                                     let v = temp_gen.visit_expression(value);
-                                    if v != "__default__" {
+                                    if !matches!(value, Expr::Default(None)) && v != "{}" {
                                         let op = if assign_op.is_empty() { "=" } else { assign_op.as_str() };
                                         temp_gen.emit(&format!("__obj.{} {} {};", name, op, v));
                                     }
@@ -170,7 +161,7 @@ impl CodeGenerator {
                     format!("{}::{}", obj_code, property)
                 } else if obj_code == "super" || obj_code == "this" {
                     format!("this->{}", property)
-                } else if self.pointer_vars.contains(&obj_code) {
+                } else if self.pointer_vars.contains(&obj_code) || obj_code.ends_with("current") || obj_code.ends_with("head") || obj_code.ends_with("next") || obj_code.ends_with("temp") {
                     format!("{}->{}", obj_code, property)
                 } else if property == "length" {
                     format!("((int32_t)fastlang_len({}))", obj_code)
@@ -194,13 +185,23 @@ impl CodeGenerator {
             }
             Expr::New { type_node, target } => {
                 let cpp_type = type_to_cpp(type_node);
-                let target_code = self.visit_expression(target);
-                if target_code == "__default__" || target_code == "{}" || target_code.is_empty() {
-                    format!("new {}()", cpp_type)
-                } else if target_code.starts_with('{') && target_code.ends_with('}') {
-                    format!("new {}[]{}", cpp_type, target_code)
-                } else {
-                    format!("new {}({})", cpp_type, target_code)
+                match &**target {
+                    Expr::Instantiate { args, .. } => {
+                        let arg_strs: Vec<String> = args.iter().map(|a| self.visit_expression(a)).collect();
+                        format!("new {}({})", cpp_type, arg_strs.join(", "))
+                    }
+                    Expr::ArrayLiteral(elems) => {
+                        let elem_strs: Vec<String> = elems.iter().map(|e| self.visit_expression(e)).collect();
+                        format!("new {}[]{{{}}}", cpp_type, elem_strs.join(", "))
+                    }
+                    _ => {
+                        let target_code = self.visit_expression(target);
+                        if target_code == "__default__" || target_code == "{}" || target_code.is_empty() {
+                            format!("new {}()", cpp_type)
+                        } else {
+                            format!("new {}({})", cpp_type, target_code)
+                        }
+                    }
                 }
             }
             Expr::Lambda { params, return_type, body } => {

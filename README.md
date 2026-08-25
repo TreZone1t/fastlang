@@ -1,6 +1,6 @@
 <div align="center">
-  <h1> FastLang</h1>
-  <p>A modern, fast, and highly customizable programming language built for performance and ultimate control over data and scopes.</p>
+  <h1>⚡ FastLang</h1>
+  <p>A modern, high-performance, statically typed systems programming language with fine-grained memory management and explicit scope engines.</p>
 
   <a href="https://ko-fi.com/W5V0236W86" target="_blank">
       <img src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" alt="Support me on Ko-fi" height="36" style="border:0px;height:36px;" />
@@ -9,174 +9,172 @@
 
 <br />
 
-## What is FastLang?
+## 🌟 What is FastLang?
 
-FastLang is a compiled, statically typed programming language designed with an emphasis on **explicit control**, **modular scope management**, and **raw execution speed**. It blends the familiarity of C-like syntax with advanced meta-programming capabilities like Custom Scopes and explicit type definitions.
+FastLang is a compiled, statically typed language designed with an emphasis on **explicit control**, **zero runtime ambiguity**, and **raw execution speed**. It eliminates unpredictable hidden overhead while providing powerful modern abstractions like Custom Scopes, Smart Pointer semantics (`name<T>`, `modify<T>`, `copy<T>`), Pattern Matching, and Built-in Macros (`default()`).
 
-### Language Features
+Source files use the official **`.fast`** file extension.
 
-- **Strict Explicit Typing**: Define types precisely, e.g., `int(32)`, `int(64)`, `float(32)`.
-- **Advanced Scope Engine**: Use the `scope` keyword to create powerful, customizable structures (`custom`, `object`, `enum`) with rich settings and flags.
-- **Access Control**: Fine-grained access modifiers (`private`, `public`, `restricted`) natively integrated into scopes.
-- **Built-in Handles**: Handle specific lifecycle events like `Error`, `Copy`, `Destruct` directly in your scope declarations.
+---
 
-##  Syntax & Examples
+## 🚀 Key Language Features
 
-### 1. Functions & Basic Types
-FastLang embraces explicit typing for safety and clarity:
+- **Direct Type Bitwidth Syntax**: `int32`, `int64`, `int16`, `int8`, `float32`, `float64`, or generic parameterized forms `int<32>`, `float<64>`.
+- **Zero-Arrow Scope Declarations**: Clean struct, class, enum, and custom scope definitions (`struct Point { ... }`, `class Node { ... }`, `enum Status { ... }`).
+- **Unified `using` System**: Instant namespace imports for enum variants (`using Status;`), static class methods, and zero-parameter usable micros.
+- **Explicit Memory Model**:
+  - `name<T>`: Tracked pointer reference.
+  - `modify<T>`: Mutable pointer borrow.
+  - `copy<T>`: Strict deep value snapshot.
+- **Algebraic Data Types & Pattern Matching**: Enums with tuple payloads and exhaustive `match` branches.
+- **Custom Scopes & Operator Overloading**: Extensible scopes with lifecycle handles (`add`, `sub`, `mul`, `display`, `default`, etc.).
+- **Built-in `default()` Macro**: Universal clean zero-initialization or user-overridden handle default values.
 
+---
+
+## 📖 Syntax & Examples
+
+### 1. Functions & Variables
 ```rust
-fn my_add(a: int(32), b: int(32)) -> int(32) {
-    int(32) result = a + b;
+fn add(a: int32, b: int32) -> int32 {
+    int32 result = a + b;
     return result;
 }
 
-fn main() -> void {
-    int(32) x = 10;
-    int(32) y = 20;
-    int(32) z = my_add(x, y);
+fn main() -> int32 {
+    int32 x = 10;
+    int32 y = 20;
+    int32 z = add(x, y);
+    log("Result: ", z);
+    return 0;
 }
 ```
 
-### 2. Custom Scopes (Advanced Objects)
-FastLang allows you to build custom types with extreme precision using the `scope` syntax. You can enable specific capabilities and handle initialization:
-
+### 2. Enums, Using, and Pattern Matching
 ```rust
-custom MathScope -> {
-    enable [operators, index_access, data, handle, display];
-    data -> 10;  
+enum Status {
+    Idle,
+    Running(int32),
+    Success(string),
+}
+
+fn main() -> int32 {
+    using Status;
+
+    Status state = Running(75);
+
+    match (state) -> {
+        Idle => {
+            log("Waiting...");
+        }
+        Running(progress) => {
+            log("Progress: ", progress, "%");
+        }
+        Success(msg) => {
+            log("Done: ", msg);
+        }
+    }
+    return 0;
+}
+```
+
+### 3. Custom Scopes & Operator Overloading
+```rust
+custom Vector2D {
+    enable [public, handle, static];
+
+    public {
+        int32 x = 0;
+        int32 y = 0;
+    }
+
+    constructor {
+        init(x: int32, y: int32) -> {
+            this.x = x;
+            this.y = y;
+        }
+    }
+
     handle -> {
-        fn add(other: MathScope) -> MathScope {
-            MathScope result = new MathScope();
-            result.data = this.data + other.data;
-            return result;
+        fn add(other: Vector2D) -> Vector2D {
+            return new Vector2D(this.x + other.x, this.y + other.y);
         }
-        fn sub(other: MathScope) -> MathScope {
-            MathScope result = new MathScope();
-            result.data = this.data - other.data;
-            return result;
-        }
-        fn mul(other: MathScope) -> MathScope {
-            MathScope result = new MathScope();
-            result.data = this.data * other.data;
-            return result;
-        }
-        fn div(other: MathScope) -> MathScope {
-            MathScope result = new MathScope();
-            result.data = this.data / other.data;
-            return result;
-        }
-        fn mod(other: MathScope) -> MathScope {
-            MathScope result = new MathScope();
-            result.data = this.data % other.data;
-            return result;
-        }
-        fn index_access(index: int(32)) -> int(32) {
-            return this.data + index;
-        }
-        fn display() -> string {
-            return to_string(this.data);
+
+        fn display() -> void {
+            log("Vector2D(", this.x, ", ", this.y, ")");
         }
     }
 }
 
-enum Direction -> {
-    variants -> {
-        Up,
-        Down,
-        Left,
-        Right
-    };
-    handle -> {
-     fn display() -> string {
-          switch (this) -> {
-              case Up => { return "Up"; }
-              case Down => { return "Down"; }
-              case Left => { return "Left"; }
-              case Right => { return "Right"; }
-          }
-     }
-    }
+fn main() -> int32 {
+    Vector2D v1 = new Vector2D(10, 20);
+    Vector2D v2 = new Vector2D(5, 15);
+    Vector2D sum = v1 + v2;
+    sum.display();
+    return 0;
 }
-
-fn main() -> int(32) {
-  MathScope a = new MathScope();
-  MathScope b = new MathScope();
-  MathScope c = a + b;
-  MathScope d = a - b;
-  MathScope e = a * b;
-  MathScope f = a / b;
-  MathScope g = a % b;
-  log("c.data (10 + 10):");
-  log(c.data);
-  log("d.data (10 - 10):");
-  log(d.data);
-  log("e.data (10 * 10):");
-  log(e.data);
-  log("f.data (10 / 10):");
-  log(f.data);
-  log("g.data (10 % 10):");
-  log(g.data);
-  log("Index access a[5]:");
-  log(a[5]);
-
-  Direction dir1 = Direction::Up;
-  log(dir1);
-  return 0;
-}
-
 ```
 
 ---
 
-## 🛠️ The Compiler
+## 🛠️ The Compiler Architecture
 
-Behind the language is a cutting-edge compiler built with Rust. It provides massive flexibility whether you want to run code on the fly or generate native machine code.
+The FastLang compiler is written in Rust:
 
-- **Frontend**: Custom Lexer and Parser generating a strict AST.
-- **Middle-End**: Robust Semantic Analyzer and Environment resolver lowering to a Custom IR.
-- **Backend (Cranelift)**: Directly lowers Custom IR to Cranelift CLIF for fast code generation.
-- **Execution Modes**:
-  - **JIT**: Executes directly in memory.
-  - **AOT**: Compiles down to native Object (`.o`) files.
-  - **Transpiler**: Experimental C++ source code generation.
-
-## 🚀 Quick Start
-
-### Build the Compiler
-```bash
-cargo build --release
-```
-
-### Run a Script (JIT)
-Execute FastLang code directly in memory using the Cranelift JIT engine:
-```bash
-cargo run -- -b cranelift tests/ir_test.fs
-```
-
-### Compile Ahead-of-Time (AOT)
-Generate a native object file (`.o`) in the `build/` folder next to your script:
-```bash
-cargo run -- -b cranelift --aot tests/ir_test.fs
-```
-
-### View Custom IR
-To preview the generated Intermediate Representation before lowering to Cranelift:
-```bash
-cargo run -- -b cranelift --emit-ir tests/ir_test.fs
-```
-
-## 🗺️ Roadmap
-- [x] Custom IR Lowering to Cranelift CLIF
-- [x] JIT Execution Support
-- [x] AOT Object Generation
-- [ ] Middle-End Scope & Array Lowering
-- [ ] Standard Library (std) Integration
-- [ ] Advanced Optimizations Pass
+- **Frontend**: High-speed Lexer and Recursive-Descent Parser producing a strict AST.
+- **Middle-End**: Robust Semantic Analyzer, Spatial Control Flow Analyzer, Scope Environment Table, and Type Checker.
+- **Backend (C++20)**: High-performance code generation yielding native C++ binaries with zero memory leaks.
 
 ---
-## To-Do
-- [ ] move the checking for the meta into the analyzer 
+
+## 🧪 Testing & Execution
+
+Run the complete test suite:
+```bash
+cargo test --test integration_test
+```
+
+Run a specific `.fast` script:
+```bash
+cargo run -- tests/01_variables.fast
+```
+
+---
+
+## 🗺️ Roadmap & To-Do List
+
+### ✅ Phase 1: Core Engine & Type System (Completed)
+- [x] **Strict Type Bitwidth**: Direct `int32`, `int64`, `int16`, `int8`, `float32`, `float64` and generic parameterized forms `int<32>`.
+- [x] **Zero-Arrow Clean Declarations**: Removed mandatory `->` on `struct`, `class`, `blueprint`, `custom`, `enum`, and visibility blocks (`public`, `private`, `static`).
+- [x] **Standard `.fast` Extension**: Fully migrated all 47 tests and standard library modules to `.fast`.
+- [x] **Unified `using` System**: Instant namespace imports for enums (`using Status;`), static scope methods, and usable zero-param micros.
+- [x] **Eradication of `null`**: Universal zero-cost tag structs (`fastlang_tag_Enum_Variant`) for pure typed variants.
+- [x] **Universal `default()` Macro**: Zero-initialization & user-overridden `handle -> { fn default() -> T { ... } }`.
+- [x] **100% English Codebase**: Completely cleaned and translated all internal source code doc-comments to English.
+- [x] **Editor Ecosystem**: Built-in VS Code and Antigravity IDE TextMate syntax highlighter extension.
+
+### ✅ Phase 2: Function Pointers & Memory Unification (Completed)
+- [x] **Unified `name<T>` Pointer System**:
+  - Replaced legacy `scope<T>` wrappers with universal `name<Fn<(Args), Ret>>` and `name<method>`.
+  - Type-inferred function and method references.
+- [x] **First-Class Lambdas & Anonymous Functions**:
+  - Support inline anonymous functions: `fn _(x: int32, y: int32) -> int32 { return x + y; }`.
+  - Seamless passing to Higher-Order Functions and `set` reassignment.
+
+### ⏳ Phase 3: Error System & Control Flow Safety
+- [ ] **First-Class `Error` Class & `Result<T, E>` ADT**:
+  - Built-in typed errors with stack trace and error codes.
+  - Ergonomic `?` try operator or explicit matching.
+- [ ] **Total Analyzer Strictness**:
+  - Full eradication of `auto` / loose type inferences in the middle-end analyzer.
+  - Exhaustive control flow validation across all branch combinations.
+
+### ⏳ Phase 4: Standard Library & Tooling
+- [ ] Collections (`list<T>`, `map<K, V>`, `set<T>`, `string` methods).
+- [ ] Asynchronous Task & Coroutine runtime scheduler.
+- [ ] FastLang CLI Package Manager & Formatter.
+
+<br />
 
 <div align="center">
   <sub>Built with ❤️ by TreZone1t.</sub>

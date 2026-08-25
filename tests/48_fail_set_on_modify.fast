@@ -1,0 +1,10 @@
+// Test 48 (Expected Failure): Direct pointer rebinding using 'set' is forbidden on 'modify'
+fn main() -> int32 {
+    int32 a = 10;
+    int32 b = 20;
+
+    modify<int32> m = &a;
+    set m = &b; // Error: Cannot reassign modify pointer directly
+
+    return 0;
+}

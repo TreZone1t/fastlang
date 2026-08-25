@@ -8,6 +8,7 @@ pub struct CodeGenerator {
     pub(crate) enum_types: std::collections::HashSet<String>,
     pub(crate) pointer_vars: std::collections::HashSet<String>,
     pub(crate) yield_counter: usize,
+    pub(crate) in_class_or_scope: bool,
 }
 
 impl CodeGenerator {
@@ -20,6 +21,7 @@ impl CodeGenerator {
             enum_types: std::collections::HashSet::new(),
             pointer_vars: std::collections::HashSet::new(),
             yield_counter: 0,
+            in_class_or_scope: false,
         }
     }
     pub(crate) fn emit_operator_overloads(&mut self, handle_block: &Option<Vec<Decl>>) {
@@ -185,6 +187,88 @@ impl CodeGenerator {
         self.emit("    }");
         self.emit("}");
         self.emit("");
+        self.emit("template <typename T, typename = void>");
+        self.emit("struct has_fastlang_iter : std::false_type {};");
+        self.emit("template <typename T>");
+        self.emit("struct has_fastlang_iter<T, std::void_t<decltype(std::declval<T>().iterator()), decltype(std::declval<T>().next())>> : std::true_type {};");
+        self.emit("");
+        self.emit("template <typename T, typename = void>");
+        self.emit("struct has_broken_flag : std::false_type {};");
+        self.emit("template <typename T>");
+        self.emit("struct has_broken_flag<T, std::void_t<decltype(std::declval<T>().broken)>> : std::true_type {};");
+        self.emit("");
+        self.emit("template <typename T, typename = void>");
+        self.emit("struct has_is_done_flag : std::false_type {};");
+        self.emit("template <typename T>");
+        self.emit("struct has_is_done_flag<T, std::void_t<decltype(std::declval<T>().is_done)>> : std::true_type {};");
+        self.emit("");
+        self.emit("template <typename T, typename = void>");
+        self.emit("struct is_fastlang_option : std::false_type {};");
+        self.emit("template <typename T>");
+        self.emit("struct is_fastlang_option<T, std::void_t<decltype(std::declval<T>().is_Some()), decltype(std::declval<T>().is_None())>> : std::true_type {};");
+        self.emit("");
+        self.emit("template <typename Iterable>");
+        self.emit("struct fastlang_iter_wrapper {");
+        self.emit("    Iterable* _target;");
+        self.emit("    bool _done;");
+        self.emit("    using RawValType = std::decay_t<decltype(std::declval<Iterable>().next())>;");
+        self.emit("    RawValType _current_val;");
+        self.emit("    fastlang_iter_wrapper(Iterable* t, bool is_end) : _target(t), _done(is_end), _current_val{} {");
+        self.emit("        if (!_done && _target) {");
+        self.emit("            _target->iterator();");
+        self.emit("            advance();");
+        self.emit("        }");
+        self.emit("    }");
+        self.emit("    void advance() {");
+        self.emit("        if (!_target) { _done = true; return; }");
+        self.emit("        if constexpr (has_broken_flag<Iterable>::value) {");
+        self.emit("            if (_target->broken) { _done = true; return; }");
+        self.emit("        }");
+        self.emit("        if constexpr (has_is_done_flag<Iterable>::value) {");
+        self.emit("            if (_target->is_done) { _done = true; return; }");
+        self.emit("        }");
+        self.emit("        _current_val = _target->next();");
+        self.emit("        if constexpr (is_fastlang_option<RawValType>::value) {");
+        self.emit("            if (_current_val.is_None()) {");
+        self.emit("                _done = true;");
+        self.emit("                return;");
+        self.emit("            }");
+        self.emit("        }");
+        self.emit("        if constexpr (has_broken_flag<Iterable>::value) {");
+        self.emit("            if (_target->broken) { _done = true; return; }");
+        self.emit("        }");
+        self.emit("    }");
+        self.emit("    bool operator!=(const fastlang_iter_wrapper& other) const { return _done != other._done; }");
+        self.emit("    fastlang_iter_wrapper& operator++() { advance(); return *this; }");
+        self.emit("    decltype(auto) operator*() const {");
+        self.emit("        if constexpr (is_fastlang_option<RawValType>::value) {");
+        self.emit("            return std::get<1>(_current_val.data)._0;");
+        self.emit("        } else {");
+        self.emit("            return _current_val;");
+        self.emit("        }");
+        self.emit("    }");
+        self.emit("};");
+        self.emit("");
+        self.emit("template <typename Iterable>");
+        self.emit("struct fastlang_iter_range {");
+        self.emit("    Iterable* _target;");
+        self.emit("    auto begin() const { return fastlang_iter_wrapper<Iterable>(_target, false); }");
+        self.emit("    auto end() const { return fastlang_iter_wrapper<Iterable>(_target, true); }");
+        self.emit("};");
+        self.emit("");
+        self.emit("template <typename T>");
+        self.emit("auto fastlang_iterable(T& obj) {");
+        self.emit("    if constexpr (has_fastlang_iter<T>::value) {");
+        self.emit("        return fastlang_iter_range<T>{&obj};");
+        self.emit("    } else {");
+        self.emit("        return obj;");
+        self.emit("    }");
+        self.emit("}");
+        self.emit("template <typename T, size_t N>");
+        self.emit("auto fastlang_iterable(T (&arr)[N]) {");
+        self.emit("    return fastlang_slice<T>(arr);");
+        self.emit("}");
+        self.emit("");
         self.emit("");
         self.emit("template<typename T, typename = void>");
         self.emit("struct has_drop : std::false_type {};");
@@ -266,6 +350,7 @@ impl CodeGenerator {
         self.emit("fastlang_name& operator=(const fastlang_copy<T>& c);");
         self.emit("const T& operator*() const { return *ptr; }");
         self.emit("const T* operator->() const { return ptr; }");
+        self.emit("T* operator->() { return const_cast<T*>(ptr); }");
         self.emit("operator const T&() const { return *ptr; }");
         self.emit("fastlang_name& operator=(const T* p) { ptr = p; return *this; }");
         self.emit("fastlang_name& operator=(const T& ref) { ptr = &ref; return *this; }");
@@ -276,6 +361,51 @@ impl CodeGenerator {
         self.emit("};");
         self.emit("template <typename T> fastlang_name(const T&) -> fastlang_name<T>;");
         self.emit("template <typename T> fastlang_name(T*) -> fastlang_name<T>;");
+        self.emit("");
+        self.emit("template <typename Ret, typename... Args>");
+        self.emit("class fastlang_name<std::function<Ret(Args...)>> {");
+        self.emit("public:");
+        self.emit("    std::function<Ret(Args...)> callable{};");
+        self.emit("    bool _has_yield = false;");
+        self.emit("    bool _has_leave = false;");
+        self.emit("    bool _has_return = false;");
+        self.emit("    bool _is_done = false;");
+        self.emit("    Ret return_value{};");
+        self.emit("");
+        self.emit("    fastlang_name() : callable{} {}");
+        self.emit("    template <typename F, typename = std::enable_if_t<!std::is_same_v<std::decay_t<F>, fastlang_name>>>");
+        self.emit("    fastlang_name(F&& fn) : callable(std::forward<F>(fn)) {}");
+        self.emit("");
+        self.emit("    template <typename F>");
+        self.emit("    fastlang_name& operator=(F&& fn) {");
+        self.emit("        if constexpr (std::is_same_v<std::decay_t<F>, fastlang_name>) {");
+        self.emit("            callable = fn.callable;");
+        self.emit("        } else {");
+        self.emit("            callable = std::forward<F>(fn);");
+        self.emit("        }");
+        self.emit("        return *this;");
+        self.emit("    }");
+        self.emit("");
+        self.emit("    bool has_yield() const { return _has_yield; }");
+        self.emit("    bool has_leave() const { return _has_leave; }");
+        self.emit("    bool has_return() const { return _has_return; }");
+        self.emit("    bool is_done() const { return _is_done; }");
+        self.emit("");
+        self.emit("    Ret operator()(Args... args) {");
+        self.emit("        _has_yield = false;");
+        self.emit("        _has_leave = false;");
+        self.emit("        if constexpr (std::is_void_v<Ret>) {");
+        self.emit("            callable(std::forward<Args>(args)...);");
+        self.emit("            _is_done = true;");
+        self.emit("        } else {");
+        self.emit("            auto res = callable(std::forward<Args>(args)...);");
+        self.emit("            return_value = res;");
+        self.emit("            _has_return = true;");
+        self.emit("            _is_done = true;");
+        self.emit("            return res;");
+        self.emit("        }");
+        self.emit("    }");
+        self.emit("};");
         self.emit("");
         self.emit("template <typename T>");
         self.emit("class fastlang_modify {");
@@ -326,10 +456,10 @@ impl CodeGenerator {
         self.emit("delete ptr;");
         self.emit("ptr = nullptr;");
         self.emit("}");
-        self.emit("T& operator[](size_t index) { return ptr[index]; }");
-        self.emit("fastlang_copy(T& ref) : ptr(&ref) {}");
+        self.emit("fastlang_copy(const T& ref) : ptr(new T(ref)) {}");
+        self.emit("fastlang_copy(T&& ref) : ptr(new T(std::move(ref))) {}");
         self.emit("fastlang_copy(T* p = nullptr) : ptr(p) {}");
-        self.emit("fastlang_copy(const fastlang_copy& other) : ptr(other.ptr) {}");
+        self.emit("fastlang_copy(const fastlang_copy& other) : ptr(other.ptr ? new T(*other.ptr) : nullptr) {}");
         self.emit("fastlang_copy(const fastlang_name<T>& n);");
         self.emit("fastlang_copy(const fastlang_modify<T>& m);");
         self.emit("fastlang_copy& operator=(const fastlang_copy& other) { ptr = other.ptr; return *this; }");
@@ -388,50 +518,6 @@ impl CodeGenerator {
         self.emit("");
         self.emit("template <typename T>");
         self.emit("fastlang_copy<T>& fastlang_copy<T>::operator=(const fastlang_modify<T>& m) { ptr = m.ptr; return *this; }");
-        self.emit("");
-        self.emit("template <typename T = std::function<void()>>");
-        self.emit("class fastlang_scope {");
-        self.emit("public:");
-        self.emit("    T callable{};");
-        self.emit("    bool _has_yield = false;");
-        self.emit("    bool _has_leave = false;");
-        self.emit("    bool _has_return = false;");
-        self.emit("    bool _is_done = false;");
-        self.emit("    int32_t yield_value = 0;");
-        self.emit("    int32_t leave_value = 0;");
-        self.emit("    int32_t return_value = 0;");
-        self.emit("");
-        self.emit("    fastlang_scope() : callable{} {}");
-        self.emit("    template <typename F, typename = std::enable_if_t<!std::is_same_v<std::decay_t<F>, fastlang_scope>>>");
-        self.emit("    fastlang_scope(F&& fn) : callable(std::forward<F>(fn)) {}");
-        self.emit("");
-        self.emit("    bool has_yield() const { return _has_yield; }");
-        self.emit("    bool has_leave() const { return _has_leave; }");
-        self.emit("    bool has_return() const { return _has_return; }");
-        self.emit("    bool is_done() const { return _is_done; }");
-        self.emit("");
-        self.emit("    template <typename... Args>");
-        self.emit("    auto operator()(Args&&... args) {");
-        self.emit("        _has_yield = false;");
-        self.emit("        _has_leave = false;");
-        self.emit("        if constexpr (std::is_invocable_v<T, Args...>) {");
-        self.emit("            using Ret = std::invoke_result_t<T, Args...>;");
-        self.emit("            if constexpr (std::is_void_v<Ret>) {");
-        self.emit("                callable(std::forward<Args>(args)...);");
-        self.emit("                _is_done = true;");
-        self.emit("            } else {");
-        self.emit("                auto res = callable(std::forward<Args>(args)...);");
-        self.emit("                if constexpr (std::is_convertible_v<Ret, int32_t>) {");
-        self.emit("                    return_value = static_cast<int32_t>(res);");
-        self.emit("                }");
-        self.emit("                _has_return = true;");
-        self.emit("                _is_done = true;");
-        self.emit("                return res;");
-        self.emit("            }");
-        self.emit("        }");
-        self.emit("    }");
-        self.emit("};");
-        self.emit("template <typename T> fastlang_scope(T) -> fastlang_scope<T>;");
         self.emit("");
         self.emit("namespace fastlang_detail {");
         self.emit("    template <typename T, typename U>");
@@ -553,6 +639,30 @@ impl CodeGenerator {
                         }
                     }
 
+                    let has_display = if let Some(handles) = blueprint_handles.get(&name) {
+                        handles.iter().any(|h| {
+                            if let Decl::FnDecl { name: fn_name, .. } = h {
+                                fn_name == "display"
+                            } else {
+                                false
+                            }
+                        })
+                    } else {
+                        false
+                    };
+
+                    if has_display {
+                        self.emit(&format!("friend std::ostream& operator<<(std::ostream& os, const {}& obj) {{", name));
+                        self.emit(&format!("    os << const_cast<{}&>(obj).display();", name));
+                        self.emit("    return os;");
+                        self.emit("}");
+                    } else {
+                        self.emit(&format!("friend std::ostream& operator<<(std::ostream& os, const {}& obj) {{", name));
+                        self.emit(&format!("    os << \"[blueprint {}]\";", name));
+                        self.emit("    return os;");
+                        self.emit("}");
+                    }
+
                     self.indent_level -= 1;
                     self.emit("};");
                 }
@@ -569,6 +679,7 @@ impl CodeGenerator {
                 | Stmt::Declaration(Decl::StructDecl { .. })
                 | Stmt::Declaration(Decl::ArrayDecl { .. })
                 | Stmt::Declaration(Decl::CustomDecl { .. })
+                | Stmt::Declaration(Decl::MachineDecl { .. })
                 | Stmt::Declaration(Decl::EnumDecl { .. })
                 | Stmt::Declaration(Decl::FnDecl { .. })
                 | Stmt::Declaration(Decl::MicroDecl { .. })
@@ -577,18 +688,26 @@ impl CodeGenerator {
                 | Stmt::Declaration(Decl::VarDecl { .. }) => {
                     self.visit_statement(stmt);
                 }
-                Stmt::Declaration(Decl::Import { module_path, imports }) => {
-                    let cpp_namespace = if module_path.first().map(|s| s.as_str()) == Some("std") {
-                        "fast_std".to_string()
-                    } else {
-                        module_path.join("_")
-                    };
-                    if let Some(selected) = imports {
-                        for sym in selected {
-                            self.emit(&format!("using {}::{};", cpp_namespace, sym));
+                Stmt::Declaration(Decl::Import { module_path, imports, abi }) => {
+                    if abi.is_some() {
+                        self.visit_statement(stmt);
+                    } else if let Some(first) = module_path.first() {
+                        if first.ends_with(".h") || first.ends_with(".hpp") {
+                            self.visit_statement(stmt);
+                        } else {
+                            let cpp_namespace = if first == "std" {
+                                "fast_std".to_string()
+                            } else {
+                                module_path.join("_")
+                            };
+                            if let Some(selected) = imports {
+                                for sym in selected {
+                                    self.emit(&format!("using {}::{};", cpp_namespace, sym));
+                                }
+                            } else {
+                                self.emit(&format!("using namespace {};", cpp_namespace));
+                            }
                         }
-                    } else {
-                        self.emit(&format!("using namespace {};", cpp_namespace));
                     }
                 }
                 _ => {}
@@ -620,6 +739,7 @@ impl CodeGenerator {
                         | Stmt::Declaration(Decl::DestructureDecl { .. })
                         | Stmt::Declaration(Decl::BlockDecl { .. })
                         | Stmt::Declaration(Decl::CustomDecl { .. })
+                        | Stmt::Declaration(Decl::MachineDecl { .. })
                         | Stmt::Declaration(Decl::EnumDecl { .. })
                         | Stmt::Declaration(Decl::BlueprintDecl { .. })
                         | Stmt::Declaration(Decl::ImplDecl { .. })

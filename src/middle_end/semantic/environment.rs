@@ -4,14 +4,16 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BlueprintData — كل ما يتعلق بنوع مُركّب (Custom, Class, Struct, Enum)
-// يُبنى مرة واحدة من TypeMetadata أو من الـ AST Declaration
+// BlueprintData — encapsulates composite types (Custom, Class, Struct, Enum)
+// Constructed from TypeMetadata or directly from the AST Declaration
 // ─────────────────────────────────────────────────────────────────────────────
 #[derive(Debug, Clone)]
 pub struct FnSignature {
     pub name: String,
     pub params: Vec<Param>,
     pub return_type: BaseType,
+    pub is_virtual: bool,
+    pub is_abstract: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -23,6 +25,8 @@ pub struct BlueprintData {
     pub settings: HashSet<Setting>,
     pub generics: Vec<String>,
     pub params: Vec<Param>,
+    pub variants: Vec<EnumVariant>,
+    pub is_class: bool,
 }
 
 impl BlueprintData {
@@ -35,55 +39,101 @@ impl BlueprintData {
             settings: HashSet::new(),
             generics: Vec::new(),
             params: Vec::new(),
+            variants: Vec::new(),
+            is_class: false,
         }
     }
 
-    /// هل يملك هذا الـ blueprint handle معيّن؟
+    /// Checks if this blueprint defines a specific handle method
     pub fn has_handle(&self, h: HandleMethods) -> bool {
         self.handles.contains(&h)
     }
 
-    /// هل يقبل الـ handle المحدد معامل (parameter) من نوع معيّن؟
-    /// يُستخدم للتحقق من صحة الـ operator overloading
+    /// Checks if the specified handle accepts a parameter of the given type
+    /// Used to verify operator overloading compatibility
     pub fn handle_accepts_type(&self, h: HandleMethods, value_type: &str) -> bool {
         let fn_name = h.as_str();
         if let Some(sig) = self.methods.get(fn_name) {
             if sig.params.is_empty() {
-                // handle بدون params — يقبل أي شيء
+                // Handle without params accepts anything
                 return true;
             }
             let param_type = sig.params[0].type_node.as_str();
-            // لو param_type هو generic (T, U, ...) نقبل دائماً
+            // If param_type is generic (T, U, ...), accept unconditionally
             if self.generics.contains(&param_type) {
                 return true;
             }
-            // نقبل لو النوع متطابق أو مصفوفة
+            // Accept if types match or if it is an array
             if param_type == value_type {
                 return true;
             }
-            // لو الـ param هو array من نفس الـ generic
+            // If param is an array of the same generic
             if param_type.starts_with("array<") {
-                return true; // array params في handles تقبل أي array
+                return true; // array params in handles accept any array
             }
             return false;
         }
-        // لو ما وجدنا signature للـ handle — نقبل (تساهل في التحقق)
+        // If no handle signature is found, accept leniently
         true
+    }
+
+    /// Monomorphize/specialize the blueprint with concrete generic type arguments
+    pub fn specialize(&self, type_args: &[BaseType]) -> BlueprintData {
+        let mut map = HashMap::new();
+        for (g_param, g_arg) in self.generics.iter().zip(type_args.iter()) {
+            map.insert(g_param.clone(), g_arg.clone());
+        }
+        if map.is_empty() {
+            return self.clone();
+        }
+
+        let mut new_fields = HashMap::new();
+        for (f_name, f_type) in &self.fields {
+            new_fields.insert(f_name.clone(), f_type.substitute_generics(&map));
+        }
+
+        let mut new_methods = HashMap::new();
+        for (m_name, sig) in &self.methods {
+            let new_params = sig.params.iter().map(|p| Param {
+                name: p.name.clone(),
+                type_node: p.type_node.substitute_generics(&map),
+            }).collect();
+            let new_ret = sig.return_type.substitute_generics(&map);
+            new_methods.insert(m_name.clone(), FnSignature {
+                name: sig.name.clone(),
+                params: new_params,
+                return_type: new_ret,
+                is_virtual: sig.is_virtual,
+                is_abstract: sig.is_abstract,
+            });
+        }
+
+        BlueprintData {
+            name: self.name.clone(),
+            fields: new_fields,
+            methods: new_methods,
+            handles: self.handles.clone(),
+            settings: self.settings.clone(),
+            generics: Vec::new(),
+            params: self.params.clone(),
+            variants: self.variants.clone(),
+            is_class: self.is_class,
+        }
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SymbolKind — يصف نوع الـ symbol في الـ scope
+// SymbolKind — describes the type of symbol in the scope
 // ─────────────────────────────────────────────────────────────────────────────
 #[derive(Debug, Clone)]
 pub enum SymbolKind {
-    /// متغير عادي (int, float, bool, custom, etc.)
+    /// Standard variable (int, float, bool, custom, etc.)
     Variable {
         type_node: BaseType,
         editability: Editability,
         is_array: bool,
     },
-    /// دالة (fn)
+    /// Function (fn)
     Function {
         params: Vec<Param>,
         return_type: BaseType,
@@ -123,7 +173,7 @@ impl Default for SymbolInfo {
 }
 
 impl SymbolInfo {
-    /// استرجاع نوع المتغير كـ String (للتحقق من التوافق)
+    /// Retrieve variable type name as string for compatibility checks
     pub fn type_str(&self) -> String {
         match &self.kind {
             SymbolKind::Variable { type_node, is_array, .. } => {
@@ -156,7 +206,7 @@ impl SymbolInfo {
         matches!(&self.kind, SymbolKind::Variable { is_array, .. } if *is_array)
     }
 
-    // ── helpers للتوافق مع الكود القديم ──────────────────────────────────
+    // ── Compatibility Helpers ──────────────────────────────────────────
     pub fn type_node(&self) -> Option<&BaseType> {
         match &self.kind {
             SymbolKind::Variable { type_node, .. } => Some(type_node),
@@ -174,14 +224,14 @@ impl SymbolInfo {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Environment — الـ scope الحالي مع parent chain
+// Environment — current scope with parent chain for lexical scoping
 // ─────────────────────────────────────────────────────────────────────────────
 pub struct Environment {
     pub parent: Option<Rc<RefCell<Environment>>>,
     /// symbols: variables, functions, blueprints
     pub symbols: HashMap<String, SymbolInfo>,
     /// blueprints: full data for type checking (fields, methods, handles)
-    /// مستقل عن symbols عشان نفرق بين "تعريف النوع" و"متغير من هذا النوع"
+    /// Separate from symbols to distinguish between type definitions and instances
     pub blueprints: HashMap<String, BlueprintData>,
 }
 
@@ -205,7 +255,12 @@ impl Environment {
     // ── Symbol operations ─────────────────────────────────────────────────
 
     pub fn define(&mut self, name: String, info: SymbolInfo) -> Result<(), String> {
-        if self.symbols.contains_key(&name) {
+        if let Some(existing) = self.symbols.get(&name) {
+            // If both existing and incoming symbols are functions, allow function overloading
+            if matches!(existing.kind, SymbolKind::Function { .. }) && matches!(info.kind, SymbolKind::Function { .. }) {
+                self.symbols.insert(name, info);
+                return Ok(());
+            }
             return Err(format!(
                 "Semantic Error: '{}' is already defined in this scope.",
                 name
@@ -215,7 +270,7 @@ impl Environment {
         Ok(())
     }
 
-    /// تعريف أو تحديث (للـ inject operations مثل stdlib)
+    /// Define or update symbol (used for stdlib injection)
     pub fn define_or_update(&mut self, name: String, info: SymbolInfo) {
         self.symbols.insert(name, info);
     }
@@ -258,7 +313,7 @@ impl Environment {
         self.blueprints.insert(name, data);
     }
 
-    /// ابحث عن blueprint في الـ scope الحالي والـ parent scopes
+    /// Look up blueprint in current and parent scopes
     pub fn lookup_blueprint(&self, name: &str) -> Option<BlueprintData> {
         if let Some(bp) = self.blueprints.get(name) {
             return Some(bp.clone());
@@ -269,15 +324,28 @@ impl Environment {
         None
     }
 
-    /// استخرج اسم الـ blueprint من نوع مثل "custom<list>" -> "list"
-    /// أو "class<Node>" -> "Node"
+    /// Look up enum name containing a specific variant
+    pub fn lookup_enum_for_variant(&self, variant_name: &str) -> Option<String> {
+        for (name, bp) in &self.blueprints {
+            if bp.variants.iter().any(|v| v.name == variant_name) {
+                return Some(name.clone());
+            }
+        }
+        if let Some(ref parent) = self.parent {
+            return parent.borrow().lookup_enum_for_variant(variant_name);
+        }
+        None
+    }
+
+    /// Extract blueprint name from generic types like "custom<list>" -> "list"
+    /// or "class<Node>" -> "Node"
     pub fn extract_blueprint_name(type_str: &str) -> Option<&str> {
         for prefix in &["custom<", "class<", "struct<", "enum<", "blueprint<"] {
             if type_str.starts_with(prefix) {
                 return Some(type_str.trim_start_matches(prefix).trim_end_matches('>'));
             }
         }
-        // لو النوع نفسه هو الاسم (مثل "list" مباشرة)
+        // Direct type name match (e.g. "list")
         None
     }
 }

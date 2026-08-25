@@ -34,7 +34,9 @@ impl Parser {
         enabled_settings.push(Setting::Static);
         // adding allowed handles
 
-        self.consume(TokenKind::Arrow, "Expected '->' to open struct body")?;
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance();
+        }
         self.consume(TokenKind::LBrace, "Expected '{' to open struct body")?;
         // now we are the same as the one being redirected by the scope parsing fn
 

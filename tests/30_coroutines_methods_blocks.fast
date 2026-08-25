@@ -1,0 +1,46 @@
+import std::coroutine::{go};
+
+block counter -> {
+    int32 count = 0;
+    for (int32 i = 0; i < 5; i = i + 1) {
+        count = count + 1;
+        print("Counter step: ", count);
+    }
+}
+
+fn add_nums(x: int32, y: int32) -> int32 {
+    return x + y;
+}
+
+fn main() -> int32 {
+    // 1. Test method<void> and method inferred
+    method<void> hello = () -> {
+        print("hello from method");
+    };
+    hello();
+
+    method goodbye = () -> print("goodbye from inferred method");
+    goodbye();
+
+    method add = (a: int32, b: int32) -> {
+        return a + b;
+    };
+    int32 res = add(10, 20);
+    print("Method add result: ", res);
+
+    // 2. Test name<Fn<...>> function passing and calling
+    name<Fn<(int32, int32), int32>> fnRef = add_nums;
+    int32 fn_res = fnRef(15, 25);
+    print("Fn ref result: ", fn_res);
+
+    // 3. Test block scope and inspectable state
+    counter();
+    print("Final counter value: ", counter.count);
+
+    // 4. Test coroutine / go
+    go runner = new go(2);
+    runner(counter);
+    new go(counter);
+
+    return 0;
+}
