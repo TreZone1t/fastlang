@@ -1,6 +1,6 @@
-use crate::middle_end::ir::instruction::*;
+use crate::{ frontend::parser::ast::Size, middle_end::ir::instruction::* };
 use cranelift::prelude::*;
-use cranelift_jit::{JITBuilder, JITModule};
+use cranelift_jit::{ JITBuilder, JITModule };
 use cranelift_module::Module;
 use std::collections::HashMap;
 pub mod aot;
@@ -19,9 +19,7 @@ impl CraneliftBackend {
         let isa_builder = cranelift_native::builder().unwrap_or_else(|msg| {
             panic!("host machine is not supported: {}", msg);
         });
-        let isa = isa_builder
-            .finish(settings::Flags::new(flag_builder))
-            .unwrap();
+        let isa = isa_builder.finish(settings::Flags::new(flag_builder)).unwrap();
 
         let builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
         let module = JITModule::new(builder);
@@ -44,30 +42,23 @@ impl CraneliftBackend {
         // Clear the context for the new function
         self.ctx.clear();
 
-        println!(
-            "CRANELIFT: Compiling function '{}' to CLIF...",
-            ir_func.name
-        );
+        println!("CRANELIFT: Compiling function '{}' to CLIF...", ir_func.name);
 
         for (_name, ty) in &ir_func.params {
-            self.ctx
-                .func
-                .signature
-                .params
-                .push(cranelift::prelude::AbiParam::new(Self::map_type(ty)));
+            self.ctx.func.signature.params.push(
+                cranelift::prelude::AbiParam::new(Self::map_type(ty))
+            );
         }
         if ir_func.return_type != IRType::Void {
-            self.ctx
-                .func
-                .signature
-                .returns
-                .push(cranelift::prelude::AbiParam::new(Self::map_type(
-                    &ir_func.return_type,
-                )));
+            self.ctx.func.signature.returns.push(
+                cranelift::prelude::AbiParam::new(Self::map_type(&ir_func.return_type))
+            );
         }
 
-        let builder =
-            cranelift_frontend::FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
+        let builder = cranelift_frontend::FunctionBuilder::new(
+            &mut self.ctx.func,
+            &mut self.builder_context
+        );
         let mut translator = FunctionTranslator {
             builder,
             _module: &mut self.module,
@@ -78,11 +69,7 @@ impl CraneliftBackend {
 
         translator.translate(ir_func);
 
-        println!(
-            "CRANELIFT CLIF for '{}':\n{}",
-            ir_func.name,
-            self.ctx.func.display()
-        );
+        println!("CRANELIFT CLIF for '{}':\n{}", ir_func.name, self.ctx.func.display());
     }
 
     pub fn finalize(self) {
@@ -92,10 +79,10 @@ impl CraneliftBackend {
 
     fn map_type(ty: &IRType) -> Type {
         match ty {
-            IRType::Int32 => types::I32,
-            IRType::Int64 => types::I64,
-            IRType::Float32 => types::F32,
-            IRType::Float64 => types::F64,
+            IRType::Int(Size::S32) => types::I32,
+            IRType::Int(Size::S64) => types::I64,
+            IRType::Float(Size::S32) => types::F32,
+            IRType::Float(Size::S64) => types::F64,
             IRType::Bool => types::I8,
             IRType::Pointer(_) => types::I64,
             IRType::Array(_) => types::I64,
@@ -104,7 +91,7 @@ impl CraneliftBackend {
         }
     }
 }
-use cranelift_frontend::{FunctionBuilder, Variable};
+use cranelift_frontend::{ FunctionBuilder, Variable };
 
 struct FunctionTranslator<'a> {
     builder: FunctionBuilder<'a>,
@@ -124,8 +111,7 @@ impl<'a> FunctionTranslator<'a> {
 
         // 2. Setup Entry Block & Params
         let entry_block = self.blocks[&ir_func.entry_block];
-        self.builder
-            .append_block_params_for_function_params(entry_block);
+        self.builder.append_block_params_for_function_params(entry_block);
         self.builder.switch_to_block(entry_block);
         self.builder.seal_block(entry_block); // Seal if it has no predecessors (entry block usually has none)
 

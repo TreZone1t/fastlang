@@ -1,0 +1,17 @@
+// Test 58: Calling handle display directly as method should fail
+struct Vector {
+    public {
+        int32 x = 10;
+    }
+    handle -> {
+        fn display() -> char[] {
+            return "Vector";
+        }
+    }
+}
+
+fn main() -> int32 {
+    Vector v;
+    v.display() // Error: handle display cannot be called directly
+    return 0;
+}

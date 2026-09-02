@@ -1,0 +1,16 @@
+// Test 90 (Expected Failure): Attempting to double delete a variable
+class Dummy -> {
+    public -> {
+        int32 val = 1;
+    }
+    handle -> {
+        fn drop() -> void {}
+    }
+}
+
+fn main() -> int32 {
+    Dummy d = new Dummy();
+    del d;
+    del d;
+    return 0;
+}

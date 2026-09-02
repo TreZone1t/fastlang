@@ -1,4 +1,4 @@
-import std::string::{string};
+import std::string;
 
 fn main() -> int32 {
     string s;

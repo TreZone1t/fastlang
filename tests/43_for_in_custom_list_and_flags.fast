@@ -37,7 +37,7 @@ fn main() -> int32 {
     // 1. For-in loop on standard list
     list<int32> my_list -> [10, 20, 30];
     for x in my_list -> {
-        print(x);
+        println(x);
     }
     // EXPECT: 30
     // EXPECT: 20
@@ -46,7 +46,7 @@ fn main() -> int32 {
     // 2. For-in loop on custom class
     CustomCounter counter = new CustomCounter(3);
     for item in counter -> {
-        print(item);
+        println(item);
     }
     // EXPECT: 1
     // EXPECT: 2

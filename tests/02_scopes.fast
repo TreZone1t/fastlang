@@ -1,8 +1,7 @@
 // 02_scopes.fs
 // Test custom scopes, flags, settings, and constructors
-
-custom DataBuffer -> {
-    data -> 10;
+//update : we removed custom
+class DataBuffer -> {    
     private -> {
         int32 size;
         int32 capacity;

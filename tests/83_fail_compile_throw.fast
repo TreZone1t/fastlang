@@ -1,0 +1,10 @@
+// Test 83: Compile-time Error Throw via @compile::throw without parentheses
+
+fn check_environment() -> void {
+    @compile::throw new Error("Target architecture is unsupported!");
+}
+
+fn main() -> int32 {
+    check_environment();
+    return 0;
+}

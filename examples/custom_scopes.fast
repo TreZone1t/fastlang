@@ -1,6 +1,7 @@
 // FastLang Example: Custom Scopes & Operator Overloading (.fast)
-
-custom Vector2D {
+// Handles operate under the hood (e.g. handle display is invoked automatically when passed to print)
+//update : we removed custom
+class Vector2D {
     public {
         int32 x = 0;
         int32 y = 0;
@@ -23,7 +24,7 @@ custom Vector2D {
         }
 
         fn display() -> void {
-            log("Vector2D(", this.x, ", ", this.y, ")");
+            print("Vector2D(", this.x, ", ", this.y, ")");
         }
     }
 }
@@ -35,11 +36,11 @@ fn main() -> int32 {
     Vector2D sum = v1 + v2;
     Vector2D diff = v1 - v2;
 
-    log("Vector 1 + Vector 2:");
-    sum.display();
+    print("Vector 1 + Vector 2:");
+    print(sum);
 
-    log("Vector 1 - Vector 2:");
-    diff.display();
+    print("Vector 1 - Vector 2:");
+    print(diff);
 
     return 0;
 }

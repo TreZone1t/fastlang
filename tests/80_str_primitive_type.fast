@@ -1,0 +1,71 @@
+// Test 80: Native 'str' Primitive Type, Slicing, Operators & Methods
+
+fn take_str(s: str) -> void {
+    print("take_str: ", s);
+    println("");
+}
+
+fn take_char_array(arr: char[]) -> void {
+    print("take_char_array: ", arr);
+    println("");
+}
+
+fn main() -> int32 {
+    // 1. Literal and variable declaration
+    str greeting = "Hello";
+    str target = "FastLang";
+
+    // 2. Concatenation with str and char
+    str message = greeting + ", " + target + '!';
+    print("Message: ", message);
+    println("");
+
+    // 3. Index access returning char
+    char first_ch = greeting[0];
+    char last_ch = greeting[4];
+    print("greeting[0]=", first_ch, ", greeting[4]=", last_ch);
+    println("");
+
+    // 4. Methods on str from prelude impl
+    bool empty_check = message.is_empty();
+    print("is_empty: ", empty_check);
+    println("");
+
+    match (message.first()) -> {
+        Option::Some(ch) => {
+            print("first char: ", ch);
+            println("");
+        }
+        Option::None => {
+            print("empty");
+            println("");
+        }
+    }
+
+    match (message.last()) -> {
+        Option::Some(ch) => {
+            print("last char: ", ch);
+            println("");
+        }
+        Option::None => {
+            print("empty");
+            println("");
+        }
+    }
+
+    // 5. Function argument passing & char[] compatibility
+    take_str("Direct literal");
+    take_str(message);
+    take_char_array(greeting);
+
+    // 6. Equality comparison
+    str a = "test";
+    str b = "test";
+    str c = "other";
+    bool eq1 = (a == b);
+    bool eq2 = (a == c);
+    print("a == b: ", eq1, ", a == c: ", eq2);
+    println("");
+
+    return 0;
+}

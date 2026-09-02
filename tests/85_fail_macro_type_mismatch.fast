@@ -1,0 +1,10 @@
+// Test 83_fail: Macro Parameter Type Mismatch (Expected Failure)
+
+macro validate[count: int32] -> {
+}
+
+fn main() -> int32 {
+    str wrong_arg = "not an int";
+    validate wrong_arg;
+    return 0;
+}

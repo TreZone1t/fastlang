@@ -1,47 +1,64 @@
 fn main() -> int32 {
     // 1. (x,y,z) = 10,20,30
     int32 (x,y,z) = 10,20,30;
-    print(x); // EXPECT: 10
-    print(y); // EXPECT: 20
-    print(z); // EXPECT: 30
+    println(x); // EXPECT: 10
+    println(y); // EXPECT: 20
+    println(z); // EXPECT: 30
 
     // 2. (xy1,xy2),z2 = 10,20
     int32 (xy1,xy2),z2 = 10,20;
-    print(xy1); // EXPECT: 10
-    print(xy2); // EXPECT: 10
-    print(z2);  // EXPECT: 20
+    println(xy1); // EXPECT: 10
+    println(xy2); // EXPECT: 10
+    println(z2);  // EXPECT: 20
 
     // 3. multiple uninitialized
     int32 a,b,c;
     a = 1;
     b = 2;
     c = 3;
-    print(a); // EXPECT: 1
-    print(b); // EXPECT: 2
-    print(c); // EXPECT: 3
+    println(a); // EXPECT: 1
+    println(b); // EXPECT: 2
+    println(c); // EXPECT: 3
 
     // 4. d,e,f = 10
     int32 d,e,f = 10;
-    print(d); // EXPECT: 10
-    print(e); // EXPECT: 10
-    print(f); // EXPECT: 10
+    println(d); // EXPECT: 10
+    println(e); // EXPECT: 10
+    println(f); // EXPECT: 10
 
     // 5. g,(h,i) = 10,20
     int32 g,(h,i) = 10,20;
-    print(g); // EXPECT: 10
-    print(h); // EXPECT: 20
-    print(i); // EXPECT: 20
+    println(g); // EXPECT: 10
+    println(h); // EXPECT: 20
+    println(i); // EXPECT: 20
 
     // 6. j,(k,l) = 10,(20,30)
     int32 j,(k,l) = 10,(20,30);
-    print(j); // EXPECT: 10
-    print(k); // EXPECT: 20
-    print(l); // EXPECT: 30
+    println(j); // EXPECT: 10
+    println(k); // EXPECT: 20
+    println(l); // EXPECT: 30
 
     // 7. array with empty brackets from list [1,2,3,4,5]
     int32 arr[] = [1,2,3,4,5];
-    print(arr[0]); // EXPECT: 1
-    print(arr[4]); // EXPECT: 5
-
+    println(arr[0]); // EXPECT: 1
+    println(arr[4]); // EXPECT: 5
+    //we need to make a new rules
+    //stacks () can have a three element for the parent one and the nested one can have a two element in max and can have a two nested stacks
+    //the max will be like that 
+    int ((ele1,ele2),(ele3,ele4),(ele5,ele6)) = (1,2),(3,4),5;
+    println(ele1); // EXPECT: 1
+    println(ele2); // EXPECT: 2
+    println(ele3); // EXPECT: 3
+    println(ele4); // EXPECT: 4
+    println(ele5); // EXPECT: 5
+    println(ele6); // EXPECT: 5
+    int test[] = (1,2,3); 
+    int test2[][] = ((1,2),(3,4),(5,6)) //it compile right
+    println(test[0]); // EXPECT: 1
+    println(test2[0]); // EXPECT: [1, 2] 
+    println(test2[0][0]); // EXPECT: 1
+    int matrix[3][2] = [(1,2),(3,4),(4,6)];
+    println(matrix[0][1]); // EXPECT: 2
+    println(matrix[2][0]); // EXPECT: 4
     return 0;
 }

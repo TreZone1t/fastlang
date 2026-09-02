@@ -1,0 +1,6 @@
+// Fail Test 72: Cannot infer type from undefined in walrus :=
+
+fn main() -> int32 {
+    x := undefined;
+    return 0;
+}

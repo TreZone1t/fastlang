@@ -31,14 +31,12 @@ pub enum TokenKind {
     Super, // super
 
     Import, // import
-    Use, // use
-    Export, // export
     Extern, // extern
+    As, // as
+    Define, // define
     Abstract, // abstract
     Virtual, // virtual
     TypeMachine, // machine
-    AbiC, // @c
-    AbiCpp, // @cpp
     New, // new
 
     This, // this
@@ -68,9 +66,11 @@ pub enum TokenKind {
     TypeISize, // isize
     TypeFloat(u8), // float, float32, float64, float128
     TypeChar, // char
+    TypeStr, // str
     TypeBool, // bool
     TypeVoid, // void
     TypeType, // type
+    Undefined, // undefined
     Using, // using
     //the mabeuptype is removed and we will add a alternative for it as a ast node if we need it
     // but i don't think so
@@ -79,11 +79,6 @@ pub enum TokenKind {
     SizeOf, // sizeof()
     TypeOf, // typeof()
     ToString, // to_string()
-    Default, // default()
-
-    // Context Types
-    Scope, // scope    //todo we may used in a future update as a ref type like
-    TypeData, // data     //* with  array and str
 
     TypeName, // name
     TypeCopy, // copy
@@ -94,16 +89,16 @@ pub enum TokenKind {
     Impl, // impl
     //scopes types
     TypeObject, // object    //* with oop scopes and custom
-    TypeCustom, // custom
     TypeStruct, // struct
     TypeBlock, // block
     TypeMicro, // micro
+    TypeMacro, // macro
     TypeClass, // class
     TypeEnum, // enum
     TypeMethod, // method
     TypeFn, // Fn
+    TypeLambda, // lambda
     //scopes fields
-    Param, // param    //*  with  scope and fn and custom and init
     Init, // init for getting constructor   //* with  oop scopes and custom
     Flag, // flag      //* with  scope and fn and looped and block and custom
     Static, // static    //* with  oop scopes and custom
@@ -130,6 +125,7 @@ pub enum TokenKind {
     MulAssign, // *=
     DivAssign, // /=
     DotDotDot, // ...  //todo: add it
+    DotDot, //..  //todo : add it
     Mod, // %
     Underscore, // _
 
@@ -162,6 +158,7 @@ pub enum TokenKind {
     RBracket, // ]
     Colon, // :
     DoubleColon, // ::
+    Walrus, // :=
     Comma, // ,
     SemiColon, // ;
 
@@ -182,7 +179,6 @@ impl TokenKind {
             TokenKind::Const => "const",
             TokenKind::Set => "set",
             TokenKind::ToString => "to_string",
-            TokenKind::Default => "default",
             TokenKind::If => "if",
             TokenKind::Else => "else",
             TokenKind::Match => "match",
@@ -196,14 +192,13 @@ impl TokenKind {
             TokenKind::Extends => "extends",
             TokenKind::Super => "super",
             TokenKind::Import => "import",
-            TokenKind::Use => "use",
-            TokenKind::Export => "export",
             TokenKind::Extern => "extern",
+            TokenKind::As => "as",
+            TokenKind::Define => "define",
             TokenKind::Abstract => "abstract",
             TokenKind::Virtual => "virtual",
             TokenKind::TypeMachine => "machine",
-            TokenKind::AbiC => "@c",
-            TokenKind::AbiCpp => "@cpp",
+            TokenKind::TypeStr => "str",
             TokenKind::New => "new",
             TokenKind::TypeCopy => "copy",
             TokenKind::TypeModify => "modify",
@@ -219,17 +214,17 @@ impl TokenKind {
             TokenKind::Label => "label",
             TokenKind::LabelName(v) => v,
             TokenKind::TypeClass => "class",
+            TokenKind::TypeMicro => "micro",
+            TokenKind::TypeMacro => "macro",
             TokenKind::TypeEnum => "enum",
+            TokenKind::TypeLambda => "lambda",
             TokenKind::Handle => "handle",
             TokenKind::TypeName => "name",
-            TokenKind::TypeCustom => "custom",
             TokenKind::Private => "private",
             TokenKind::Public => "public",
             TokenKind::Static => "static",
             TokenKind::SizeOf => "sizeof",
-            TokenKind::TypeData => "data",
             TokenKind::Statement => "statement",
-            TokenKind::Param => "param",
             TokenKind::Init => "init",
             TokenKind::TypeBluePrint => "blueprint",
             TokenKind::Constructor => "constructor",
@@ -264,6 +259,8 @@ impl TokenKind {
             TokenKind::And => "and",
             TokenKind::Or => "or",
             TokenKind::Underscore => "_",
+            TokenKind::Walrus => ":=",
+            TokenKind::Undefined => "undefined",
             TokenKind::Comma => ",",
             TokenKind::SemiColon => ";",
             TokenKind::Error(v) => v,
@@ -283,11 +280,11 @@ impl TokenKind {
             TokenKind::TypeType => Some("type"),
             TokenKind::TypeBool => Some("bool"),
             TokenKind::TypeChar => Some("char"),
+            TokenKind::TypeStr => Some("str"),
             TokenKind::TypeVoid => Some("void"),
             TokenKind::TypeMethod => Some("method"),
             TokenKind::TypeFn => Some("Fn"),
             TokenKind::Flag => Some("flag"),
-            TokenKind::Scope => Some("scope"),
             TokenKind::TypeName => Some("name"),
             TokenKind::Using => Some("using"),
             _ => None,

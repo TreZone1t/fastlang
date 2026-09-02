@@ -1,0 +1,20 @@
+// Test 87: Nested labels should be rejected with Syntax Error
+
+machine BadMachine -> {
+    @outer -> {
+        print("In outer");
+        @inner -> {
+            print("In inner");
+        }
+    }
+
+    handle -> {
+        fn call() -> void {
+            goto @outer;
+        }
+    }
+}
+
+fn main() -> void {
+    BadMachine();
+}

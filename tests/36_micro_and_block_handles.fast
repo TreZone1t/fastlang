@@ -8,26 +8,31 @@ micro double_it = (val: int32) -> int32 {
     return val * 2;
 };
 
-custom CleanScope -> {
-    data -> 100;
+machine CleanScope -> {
+    @init -> {
+        int data = 0;
+        goto @start;
+    }
     @start -> {
         this.data -> this.data + 50;
         leave;
     }
     handle -> {
         fn call() -> int32 {
-            goto @start;
+            goto @init;
         }
         fn leave() -> int32 {
             return this.data;
         }
-        fn drop() -> void {
+        /*
+        fn drop() -> void {  //todo :we need to see if it works with del as planed
             print("CleanScope dropped cleanly");
         }
+        */
     }
 }
 
-block<int32> compute_sum -> {
+compute_sum -> int32 {
     int32 total = 0;
     for (int32 k = 1; k <= 5; k = k + 1) {
         total = total + k;
@@ -44,8 +49,8 @@ fn main() -> int32 {
     int32 doubled = double_it(21);
     print("Doubled value from micro: ", doubled);
 
-    int32 scope_res = CleanScope();
-    print("CleanScope result: ", scope_res);
+
+    print("CleanScope result: ", CleanScope());
 
     int32 block_sum = compute_sum();
     print("Block sum result: ", block_sum);

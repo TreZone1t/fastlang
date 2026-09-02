@@ -67,11 +67,8 @@ impl Scanner {
             "const" => Some(TokenKind::Const),
             "set" => Some(TokenKind::Set),
             "del" => Some(TokenKind::Del),
-
-            // built-in fn
-            "sizeof" => Some(TokenKind::SizeOf),
-            "typeof" => Some(TokenKind::TypeOf),
-            "to_string" => Some(TokenKind::ToString),
+            "as" => Some(TokenKind::As),
+            "define" => Some(TokenKind::Define),
             // func
             "fn" => Some(TokenKind::Fn),
             "return" => Some(TokenKind::Return),
@@ -94,7 +91,6 @@ impl Scanner {
             "class" => Some(TokenKind::TypeClass),
             "struct" => Some(TokenKind::TypeStruct),
             "enum" => Some(TokenKind::TypeEnum),
-            "custom" => Some(TokenKind::TypeCustom),
             "method" => Some(TokenKind::TypeMethod),
             "Fn" => Some(TokenKind::TypeFn),
 
@@ -108,6 +104,7 @@ impl Scanner {
 
             // Primitives
             "char" => Some(TokenKind::TypeChar),
+            "str" => Some(TokenKind::TypeStr),
             "int" => Some(TokenKind::TypeInt(32)),
             "int8" => Some(TokenKind::TypeInt(8)),
             "int16" => Some(TokenKind::TypeInt(16)),
@@ -130,9 +127,6 @@ impl Scanner {
             "bool" => Some(TokenKind::TypeBool),
             "using" => Some(TokenKind::Using),
 
-            // Context Types
-            "scope" => Some(TokenKind::Scope),
-            "param" => Some(TokenKind::Param),
             "init" => Some(TokenKind::Init),
             "blueprint" => Some(TokenKind::TypeBluePrint),
             "impl" => Some(TokenKind::Impl),
@@ -148,7 +142,6 @@ impl Scanner {
             "virtual" => Some(TokenKind::Virtual),
             "machine" => Some(TokenKind::TypeMachine),
 
-            "data" => Some(TokenKind::TypeData),
             // memory / instances
             "modify" => Some(TokenKind::TypeModify),
             "copy" => Some(TokenKind::TypeCopy),
@@ -174,17 +167,17 @@ impl Scanner {
             "object" => Some(TokenKind::TypeObject),
             "block" => Some(TokenKind::TypeBlock),
             "micro" => Some(TokenKind::TypeMicro),
+            "macro" => Some(TokenKind::TypeMacro),
+            "lambda" => Some(TokenKind::TypeLambda),
 
             "try" => Some(TokenKind::Try),
             "catch" => Some(TokenKind::Catch),
             "throw" => Some(TokenKind::Throw),
             "import" => Some(TokenKind::Import),
-            "use" => Some(TokenKind::Use),
-            "export" => Some(TokenKind::Export),
             "extern" => Some(TokenKind::Extern),
+            "undefined" => Some(TokenKind::Undefined),
 
             "_" => Some(TokenKind::Underscore),
-            "default" => Some(TokenKind::Default),
             _ => None,
         }
     }
@@ -204,11 +197,11 @@ impl Scanner {
         let c = self.advance().unwrap();
 
         let kind = match c {
-            'a'..='z' | 'A'..='Z' | '_' => {
+            'a'..='z' | 'A'..='Z' | '_' | '$' => {
                 let mut word = String::new();
                 word.push(c);
                 while let Some(next_c) = self.peek() {
-                    if next_c.is_alphanumeric() || next_c == '_' {
+                    if next_c.is_alphanumeric() || next_c == '_' || next_c == '$' {
                         word.push(self.advance().unwrap());
                     } else {
                         break;
@@ -230,13 +223,7 @@ impl Scanner {
                         break;
                     }
                 }
-                if word.eq_ignore_ascii_case("@c") {
-                    TokenKind::AbiC
-                } else if word.eq_ignore_ascii_case("@cpp") {
-                    TokenKind::AbiCpp
-                } else {
-                    TokenKind::LabelName(word.clone())
-                }
+                TokenKind::LabelName(word.clone())
             }
             '0'..='9' => {
                 let mut num_str = String::new();
@@ -301,9 +288,28 @@ impl Scanner {
                         terminated = true;
                         break;
                     } else if next_c == '\n' {
-                        // Strings don't span lines in v1; bail out and let the caller
-                        // decide this was unterminated rather than swallowing the newline.
                         break;
+                    } else if next_c == '\\' {
+                        self.advance(); // consume '\'
+                        if let Some(esc) = self.advance() {
+                            match esc {
+                                'n' => s.push('\n'),
+                                't' => s.push('\t'),
+                                'r' => s.push('\r'),
+                                '\\' => s.push('\\'),
+                                '"' => s.push('"'),
+                                '\'' => s.push('\''),
+                                '0' => s.push('\0'),
+                                'a' => s.push('\x07'),
+                                'b' => s.push('\x08'),
+                                'f' => s.push('\x0C'),
+                                'v' => s.push('\x0B'),
+                                other => {
+                                    s.push('\\');
+                                    s.push(other);
+                                }
+                            }
+                        }
                     } else {
                         s.push(self.advance().unwrap());
                     }
@@ -318,23 +324,34 @@ impl Scanner {
             }
 
             '\'' => {
-                // Opening quote already consumed (it was `c`). Consume exactly one
-                // character, then require the closing quote immediately after it.
-                match self.advance() {
-                    Some(inner) => {
-                        if self.peek() == Some('\'') {
-                            self.advance(); // consume closing quote
-                            TokenKind::Char(inner)
-                        } else {
-                            TokenKind::Error(
-                                format!("Invalid char literal starting at line {}: expected closing '\''", start_line)
-                            )
-                        }
-                    }
-                    None =>
-                        TokenKind::Error(
-                            format!("Unterminated char literal at line {}: unexpected EOF", start_line)
-                        ),
+                // Opening quote already consumed (it was `c`).
+                let inner = match self.advance() {
+                    Some('\\') => match self.advance() {
+                        Some('n') => '\n',
+                        Some('t') => '\t',
+                        Some('r') => '\r',
+                        Some('\\') => '\\',
+                        Some('\'') => '\'',
+                        Some('"') => '"',
+                        Some('0') => '\0',
+                        Some('a') => '\x07',
+                        Some('b') => '\x08',
+                        Some('f') => '\x0C',
+                        Some('v') => '\x0B',
+                        Some(c) => c,
+                        None => '\0',
+                    },
+                    Some(c) => c,
+                    None => '\0',
+                };
+
+                if self.peek() == Some('\'') {
+                    self.advance(); // consume closing quote
+                    TokenKind::Char(inner)
+                } else {
+                    TokenKind::Error(
+                        format!("Invalid char literal starting at line {}: expected closing '\''", start_line)
+                    )
                 }
             }
 
@@ -386,13 +403,28 @@ impl Scanner {
                 if let Some(':') = self.peek() {
                     self.advance();
                     TokenKind::DoubleColon
+                } else if let Some('=') = self.peek() {
+                    self.advance();
+                    TokenKind::Walrus
                 } else {
                     TokenKind::Colon
                 }
             }
             ';' => TokenKind::SemiColon,
             ',' => TokenKind::Comma,
-            '.' => TokenKind::Dot,
+            '.' => {
+                if let Some('.') = self.peek() {
+                    self.advance();
+                    if let Some('.') = self.peek() {
+                        self.advance();
+                        TokenKind::DotDotDot
+                    } else {
+                        TokenKind::DotDot
+                    }
+                } else {
+                    TokenKind::Dot
+                }
+            }
             '+' => {
                 if let Some('+') = self.peek() {
                     self.advance();

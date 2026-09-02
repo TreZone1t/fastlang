@@ -68,6 +68,7 @@ impl ProjectLoader {
                 module_path,
                 imports,
                 abi,
+                ..
             }) = stmt
             {
                 if abi.is_some() || module_path.first().map_or(false, |p| p.ends_with(".h") || p.ends_with(".hpp")) {

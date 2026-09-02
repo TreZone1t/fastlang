@@ -1,6 +1,9 @@
-custom NoIndex -> {
-    enable [ handle];
+class NoIndex -> {
 handle -> {
+    fn call() -> void{
+        //i do nothing
+        return;
+    }
 }
 }
 fn main() -> int32 {

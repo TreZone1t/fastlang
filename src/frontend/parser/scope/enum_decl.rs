@@ -97,14 +97,12 @@ impl Parser {
         }
         let mut meta = TypeMetadata {
             name: name.clone(),
+            ty: BaseType::Enum { name: name.clone(), variants: variants.clone(), methods: Box::new(std::collections::HashMap::new()), generics: generics.clone() },
             fields: std::collections::HashMap::new(),
             constructor: None,
-            params: Vec::new(),
-            generics: generics.clone(),
             methods: std::collections::HashMap::new(),
             handles: Vec::new(),
             vars: std::collections::HashMap::new(),
-            is_enum: true,
             variants: Some(variants.clone()),
         };
         for variant in &variants {
@@ -118,7 +116,7 @@ impl Parser {
         }
 
         Ok(Decl::EnumDecl {
-            is_exported: false,
+            visibility: Visibility::Private,
             name,
             generics,
             handles: Vec::new(),

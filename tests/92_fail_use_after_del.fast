@@ -1,0 +1,16 @@
+// Test 92 (Expected Failure): Attempting to use a variable after deletion
+class Thing -> {
+    public -> {
+        int32 val = 10;
+    }
+    handle -> {
+        fn drop() -> void {}
+    }
+}
+
+fn main() -> int32 {
+    Thing t = new Thing();
+    del t;
+    print(t.val);
+    return 0;
+}

@@ -1,0 +1,675 @@
+public micro todo = (msg := "unimplemented") ->{ // we will add it as a way to set a default value
+// also we will use it as a easier way to make variables like in line 6
+    throw new Error("todo: "msg"/n"); // like in c for ex will you have a two string connected it will treated as one 
+    // we will do that but also i will work with char variables at least for now
+}
+test := 1; // test will have the type int32 (the default type for it and if bigger we will use a bigger type automatically)
+// we can use test as usual like other normal initialized vars
+test = 2; // will update test as planed  
+// ( note ) : ':=' is only to assign a new var we will reassign normally 
+// also we will use it as a way to set a default value for all calls (call handle , fn , micro , method)
+// also we will have a const version as well
+const best := "best"; // that will create a constant array<char> variable named best
+
+// also we need to separated and gather vars in params
+// also a cool feature we need is to allow the fn to have it own generic it will be calculated in compiler time for each arg if the type is ..
+// also we need to add ..T for all generics
+fn print<..T>(..args:..T){
+    for arg in args {
+    if(typeof(arg).printable){  // that is only to explaining the .. part
+    // we will handle the printable part in the compiler
+    // also actually we will allow the user to code some thing like (typeof(arg).printable) 
+    // witch will update in compiler time if the user add the display handle in the code for the arg
+    fast_print(arg);
+    }else{
+     throw new Error("there is non printable type in the args : ("arg")");
+     continue;
+    }
+}
+}
+try{  // also only for print only we will not need try and catch because it will be a compile type error 
+// also i think we can to the same with all other ops happen in compiler time
+// so when user have a compile type error will happen when he forget about it 
+// but to do it i thick we may add a new flag for all the ops happen in compile type (compilable for ex)
+// we can make a new error inherit from the main one but have the flag compilable enabled 
+// we will make the compiler calculate if there is a compilable throwable error will happen
+// add that type of error will not have it own handle 
+// because it will be shown as a normal compile time error happen 
+// we also plan to inject the line and the column to the Error when being created
+
+print("hallo:",IAmNotPrintable,"."); // hallo:. // as you can see we only  provide the args not the types of generics
+}catch(e)->{
+    print(e.message);
+}
+// to separate an array we will do that
+print(..."hallo") // as you know we treat "" string liter as a array<char>
+print(...[1,2,3,4,5]) // that will work normally
+int arr[3] = [1, 2, 3];
+print(...arr) // that will work normally because the type of arr is array<int32>
+// also we will add a handle for it so for ex: list will have a handle for separating (we will choose the now in future)
+// the compile will check if the type is array or have that handle in it
+list<int32> li -> [1,2,3,4,5,6];
+print(...li) //will work if the type list has the need it handle
+// then what if we have a (separateable type)/list/array of non printable element what we check first
+// so it will be logical of course to check if it separateable first 
+// then we will see if the first element is printable or not (if not we will throw a compile type error for sure)
+// we don't need to check for every element because we only for now support one typed array 
+// but that only for array 
+// so for other it is deferent it depend on if we support ..T or not so if we supported ..T for all data type 
+// we may have a situation with a deferent type for every type we call the separation handle
+// that will be very bad then i think it will be better to allow it only with fn and micro and method 
+
+
+// also for .. i think anther feature it can do it will be like in rust when we trying to fill an array or a fn call 
+int arr8[11] = [0..10];// [0,1,2,3,4,5,6,7,8,9,10]
+int arr9[101] = [0..100] // [0,1,..,99,100]
+int arr10[10] = [10..100] // [10,20,30,40,50,60,70,80,90,100]
+// i think we can do it with chars also 
+char arr11[4] = ['a'..'d'] //['a','b','c','d']
+// anther cool idea we can add is
+// to allow to add a () in the end of (block , fn , method , micro) with indeed the needed params for (fn , method , micro)
+// ex:
+method hello = () -> {
+    print("hello from method");
+}(); // that will call the method hello 
+// also we will allow to ... the return and the return type
+fn i_used_in_arrays() -> ...int[] { 
+    int arr[3] = [1, 2, 3];
+    return ...arr;
+};
+// then we can use it in array
+int arr2[3] = [i_used_in_arrays()]; // we only can call fn with ... return type in a [] we can make a BaseType for it
+// also for any scope that can be called and return an array we can ... it call also we can comma and add other element
+fn i_return_array() -> int[] { 
+    int arr[3] = [1, 2, 3];
+    return arr;
+};
+int arr3[7] = [...i_return_array(),...i_return_array(),10];
+// when the last two or three feature combine we can do this or that
+// but also we can add anther cool feature is to be able to create ghost fn that will be deleted if it don't have a ref to it 
+// but in this case we call it before we deleted it
+int arr4[3] = [
+    fn() -> ...int[] { 
+    int arr[3] = [1, 2, 3];
+    return ...arr;
+    }()
+];
+int arr5[3] = [
+    ...fn() -> int[] { 
+    int arr[3] = [1, 2, 3];
+    return arr;
+    }()
+];
+// of course it will support adding anther element after the fn 
+// that is why we removed ; in the end because you will use , instead
+int arr6[4] = [
+    ...fn() -> int[] { 
+    int arr[3] = [1, 2, 3];
+    return arr;
+    }(),
+    10
+];
+
+// also we need to update the stack initialization way for vars to support ...
+// so what we support for now is all of what in 'tests\25_complex_destructuring.fast'
+// so we need to make sure the stacks when assigned to one vars translated into an array or an array<array>
+// so for the var test2 in line 56 in 'tests\25_complex_destructuring.fast'  when we try to print it elements
+// print(test2[0][0]); //that will give an error
+// we have an compile time error in the analyzer 
+// (Semantic Error: Type 'int32' does not support index access (make a index_access handle for it).)
+// that error mean the analyzer think that test2[0] has the type int32 which is not right 
+// so we need to solve this bug also there is a bug 
+// happen when we try to done this 
+int matrix[3][2] = [(1,2),(3,4),(4,6)];
+// error: Syntax Error: Expected ')' to close grouped expression ( 
+// that point at the first , after 1 that means the compiler think it is a additional () are around 1 the element
+// so we need to make sure the array and the grouped vars work right that mean we need to tight everything up
+// to make sure () and [] are work in a similar way to each other so we also will add some future to the () based initialization
+// so we will can ... an array in a () 
+// also a thing it every frustrating is the nissaty of [] or [][] after the name of an array 
+// if we already knew the len way we need that we are not c or cpp
+// but of course when we don't initialized with a value we need [] to set the len
+// the way we set the type in the side that when we see [] we make it an array so
+// i think it will be better if we allow to assign (and only assign) a array<type> val to a type var
+// and update the type of var
+// also i have the deut that  matrix[3][2] have the type of array<int32> not array<array<int32>> 
+// and if that true that is a bug need a fix
+// also we need to make sure it will work with other matrix also i mean with more nested arrays 
+// matrix[][][] i think we can do like what we did with the () stacks 
+// so we will show a warning if the user nested more than 3 arrays
+
+
+// we have default() to assign the default value to var and to use it use must do that
+int x = default(); //that will be the default int val = 0
+// what i think will we good if we not have to right default at all so we will right only ()
+// it similar to {} in c and cpp we can use {} if we with to stick with similarity
+
+// as you can see we trying to simple the stuff out so anther thing we can do is
+// to remove export and use public instead
+// it will work the same 
+// also we will remove use we now use import any way
+
+// also we need to make sure we can leave the return type after the ->  empty 
+// and we will get it from the return Stmt 
+// but when we have  two (and the max is two) routes we will have a Option wrapper
+// or if we have a Some() or None return type
+// and when one of them is Ok and the other is Err is will Result (we still don't implement it but we will)
+// if we have more than two cases return we will throw an error
+// also we need to fix some stuff
+// i tried to remove ErrorData and only depend on Error 
+// but it was not able to being generated right so 
+// it throw an error 
+// tests\build\output.cpp:544:5: error: invalid constructor; you probably meant 'fast_std::Error (const fast_std::Error&)'
+// so we need to fix it 
+// also a cool thing we need to allow with other types
+// like we done with blueprint as you see in 'tests\26_blueprint_destructure.fast'
+// in the line 6 
+// see we allow to make a new blueprint in that way 
+// but also i think it will be cool to make sure it work with all types
+// also in line 26 in the same file we allow to construct a new blueprint with that future
+// so we need to at least to add this to struct 
+// i think we can do it also with class but it will need new before it
+// also i think we may allow to leave some field empty 
+// but to do that we need add a new type or a value to be clear so what i mean is undefine
+// so we have default but some time the user need to leave some field empty or vars
+// and if he try to print or done and op with an undefine var we will throw an error 
+// the error will say : trying to do 'op' with a empty var
+// we will add a flag for that 
+// and we will not need a  handle for that because if an empty is the user fault only
+// so now we will be able to done this :
+Point p = Point { x = 50 }; // p.x = 50 , p.y = undefine
+// also a cool thing to add up the default value for type will be void
+type x = default(); // or of course type x = (); or {} not important
+type x = (); // that is way now 
+// typeof(x) == type<void>
+// i think we need to add a new base node for type
+// also a cool feature we have is we can initialize a new field in any thing has this in it allowed
+// like 'tests\29_custom_scope_v2.fast' line '27'
+// we create this feature for machine in the first place but it is suppose to work with other also
+// so what i think will be cool also
+// first we add the this {} to add away to create a new field in the state machine but now 
+// we will support that also 
+// this.field := 10; to create a new field also we will allow that
+// int this.field;
+// we need to set the rules for using this. assigning 
+// it will only be allowed in side of the scope and the call handle for now
+// also we will allow to update the field of this through the same way this {} 
+// for ex:
+// first to assign a new field we have four ways now or six to be exact
+int this.x = 0;
+this.y := 0;
+this {
+   int z = 0;
+}
+this {
+  v := 0;
+}
+int a = 0; // that will only work in a OOP block (static,private,public) or in a (fn,method,block)
+b :=  0; // like 'a' only will work in a OOP block , fn , method and block
+// to update a field you have only  or done a op (+= , -= , *= , ..) we only have three ways
+this.x = 1;
+this {
+  y += 1;  
+}
+z = 1; // we can only done this if there is no param with the same name
+
+// cool changing we will make for block :
+// to assign a new one you had to do this
+block x {}; 
+// but now we will remove block we will only need to write the name and one a block {} like this
+x {};
+// also we will treat a export (now public) block as a module
+// also as you know all of the block contains are public
+//  but now we will make it private for default
+// and to make it public you will need to add public before it
+// also we will allow the block scope to have a public block in it
+// also we allowed the handle call back then for the block handle now we will remove it
+// so we was planing to add it as a way for blocks to have params 
+// but after thinking it is better to leave it as it is 
+// also we will also a nameless block and of course you can use it with modify to save it like the ghost fns
+// so the most simple way to write a "hello, world !" block scope will be like that
+{print("hello, world !")}(); 
+
+// also a cool thing i think we need to have especially for machine scopes
+// is to allow to set how many time a certain label can run
+// ex: that machine will apply some of the need it updates
+machine<int32> counter {
+    @init[1] {
+        local := 10;
+        this {
+            count := 0;
+        }
+        goto -> @step;
+    }
+
+    @step[max_limit + 1] {
+        count = count + 1;
+        if (count >= max_limit) {
+            print(@init::local);
+            goto -> @finish;
+        }
+        @init::local += 10;
+        goto -> @step;
+    }
+
+    @finish {
+        leave;
+    }
+
+    handle -> {
+        fn call(max_limit: int32) -> int32 {
+            this.max_limit := max_limit;
+            goto -> @init;
+        }
+        fn leave() -> int32 {
+            return this.count;
+        }
+    }
+}
+// so as you see by adding the usage in the [] 
+// so for init if we try to run it again that will give an error also we can set a default value
+// for ex any label with the name init or finish will have a one usage only
+// for the step it will decrease the value of the usage i put [max_limit + 1]
+// but i think there is a better way to done it 
+// i think it will help some  but after thinking 
+// i think we can leave it as it is and leave it for the dev but for init or finish 
+// we will apply the usage rule
+
+// we need to improve the handles but first we need to categorize them 
+// the best way to do so first we need to categorize the scopes (types) also 
+// we will categorize them as blocks and blueprints (objects def)
+// block is the most basic excitable block but it have some unique treats
+// block it one of the ter 1 scope 
+// so block can define other ter 1 scopes (class , struct , blueprint , block) in it but other blocks cannot
+// so (fn , method , micro  , machine) are ter 2 ; it cannot have ter one define it only block but they well consider a ter 2 
+// so every ter 1 defined inside any thing else consider ter 2
+// blueprint is the basic object def so you can have it in ter 2 scope
+// first the micro don't have a handle also we will apply that for method 
+// so for micro to handle it you 
+// only need to call it in a scope that have a handle for the ops done in the micro
+// as you know we inject the micro in where it been called
+// for method what happen in side it only will be handled by the parent scope
+// so we need to set some behaver for the ops like (leave , yield , return ,..) in what it will do if the parent scope is the global scope
+// also i think it will be cool if we have some default handle we can override
+// but first we need to decide what work with what
+// (fn , machine , (Objects def but for the method and fn it have)) they will have ones for the ops like (leave , yield , return ,..) 
+// (machine , Objects def)  will have a call handle
+// the call handle work when we use () after the name and it works after we define a new object
+// i mean if we call the name of the type of the object (the blueprint itself (class, struct)) (the object def)
+//so if we have :
+/*
+class X {};
+X(); // that call the contractor not the call handle
+X x = new X();
+x(); // that call the call handle
+*/
+// but for machine we done have a contractor so we only have call 
+// objects def have drop handle and blocks can have is_done handle
+// in the default is_done handle we will drop every thing in the block (fn ,..) so the is_done happen after the return 
+// i think to allow to only make some changes in the is_done handle we need to have a built-in drop() micro 
+// that we can call it to make the is_done work as default so it will delete every thing in the fn memo in this call 
+// is_done return void f course 
+// drop() will generate a del for every var in the fn needed to be deleted 
+// i think it better to make drop() used default at the end in every scope i mean the is_done don't need to drop() every thing
+// but also it need to restore some thing to the initialized values so i think we only will make drop() happen under the hood in every in of a scope
+// after return but before is_done 
+// after thinking we don't need is_done handle that much , we only need the flag is_done 
+// so actually we need to set the drop rules to manage the data dropped
+// so the drop() micro is like a default drop() to automatically del the ptrs or call the drop handle from the Objects in the scope
+
+// now we need to improve the yield handle or we will make a default one for it like what we will do with other handles
+// so what the yield handle will do is handle when the user use yield 
+// if he write only yield; that will freeze the whole scope
+// but if he write yield var; that will only freeze that var and the yield handle will take name type with the default value this
+// i mean the yield will take a ref from were it used with the ref for the whole scope or only for the var
+// if we call the block that have yield in it add it yielded it will return the value that return from the yield handle if there one
+// and freeze some var values as it is
+// and then it will go to the first of the block again, but it will not reset the freezed vars
+// but i think to make freezing vars are easy we will make a built-in freeze() micro 
+// that will take the name ref for the var and freezed and we will make it work under the hood
+// ex:
+machine counter2 {
+    @init {
+        this {
+            count := 0;
+        }
+        goto -> @step;
+    }
+
+    @step {
+        count = count + 1;
+        if (count >= max_limit) {
+            goto -> @finish;
+        }
+        yield count;
+        goto -> @step;
+    }
+
+    @finish {
+        leave;
+    }
+
+    handle -> {
+        fn call(max_limit: int32) -> int32 {
+            this.max_limit := max_limit;
+            goto -> @init;
+        }
+        fn yield(v : name) -> name{
+            freeze(v);
+            return v;
+        }
+        fn leave() -> int32 {
+            return this.count;
+        }
+    }
+}
+//we need that to work
+counter2(10);
+while(!counter2.is_done) {
+    print(counter2()); 
+}
+//________________________________________________________________________
+// an important thing we need to have is impl type 
+// i mean by that we can code the behaver of each type inside the std.fast
+// so we can set the handles and the method for each type 
+// ex : i only write the name for some needed method and some hardcode handles we can code it
+impl array<T> {
+    fn map() -> T[]{};
+    fn filter() -> T[]{};
+    fn find() -> bool{};
+    fn foreach() -> T[]{}; // to use it : char[] cat = "cat".foreach(|c| c.toUpperCase()); // see line 383 to 386
+    handle {
+      fn iterator() -> void {}
+      fn next() -> Option<copy<T>> {}
+      fn display() -> char[] {}
+    }
+}
+// also for (filter and find) we need to add a new small lambda or same something
+// so it is the smallest way to write a lambda fn so the BaseType or the Type will be like that
+// lambda<(<params type>),<return type>>; like the other blocks that takes params
+if ("cat".find(|s| s == 'c')) print("it have c in it"); 
+
+// also we need to add a way to pass a full Expr for a micro
+// so actually now we have a way 
+// first as you no micro inject its code were it been called
+// so we can done this
+micro try_in_me = (bl :name<block>) -> {
+    try {
+        bl();
+    }catch (e) -> {
+        print("catch e : " ,e.massage);
+    }
+}
+try_in_me({
+// we here in a nameless block will be passed in the try_in_me micro to wrapped with try & catch
+throw new Error("hi from in side out")
+});
+// this is very cool to be fair
+
+// but we need to update some thing in method and micro 
+// and also the way we set types for names ref
+// for block it only can take a return type so we can do this name<block<int32>>
+// for micro it only take the params types but in will be in () so name<micro(int32,int32)>
+// for method it will stay as it is like fn name<method<(par),ret>>
+// now we need to update the syntax 
+// so first there is something off happened in the std.fast
+// we have a stop micro it was written like that
+public micro stop{
+    break;
+}
+// witch is totally wrong and it is in cpp "#define stop break" 
+// witch is totally wrong so the micro is like a compile time replacement or wrapper or something
+// ( compile time replacement is of course not the best way to do it)
+// so for stop it was made to been return and injected and be run in side the for in to stop it
+// i don't know what is the best way to generate it in cpp but of course it not "#define"
+// so what is wrong in the syntax is we suppose to do it like that  
+public micro stop = ()-> {
+    break;
+} 
+// because micro can have params
+// like in 'tests\36_micro_and_block_handles.fast' for the double_it micro and Ilooped micro 
+// they in cpp are 
+/*
+inline void Ilooped(fastlang_modify<int32_t> i) {
+    i -= 1;
+}
+inline int32_t double_it(int32_t val) {
+    return (val * 2);
+}
+*/
+// so i think stop is hardcode it
+// also to explain how the stop suppose to work
+impl array {
+    fn iterator() -> void {
+        this.count := 0;
+    }
+      fn next() -> modify<T,micro> { 
+        if(this.count >= this.length) return stop; // i think the con is wrong but you get it
+         this.count += 1;
+          return array[this.count - 1];
+      }
+}
+int arr7 = [1,2,3,4];
+// under the hood for in will extract the T or the micro 
+// and if the type is micro it will run it in side the for in loop
+for ele in arr7 {
+    print(ele)
+}
+// what is look like under the hood
+for ele in arr7 {
+    if (typeof(ele) == micro) ele();
+    print(ele);
+}
+// but after thinking we have to change the way we show the type of the micro 
+// i said earlier that we will store it like that micro(<params>) 
+// but to do this we need to remove the return 
+// so micro it like a replacement fn 
+// so this is eq to 'x:=10*2;' so i think it will be better to remove the return
+ micro double_it = (val: int32) -> {
+     val * 2;
+};
+x := double_it(10); 
+// but also i think that will be wrong because we might need to replace a return so like that
+ micro print_return<T> = (val: T) -> { //we also will add the ability to have generics <T>  like fn for all blocks with params
+     print(val);
+     return val;
+};
+fn add_print_ret( val: int32 , val2: int32) -> int32 {
+    res := val + val2;
+    print_return(res); //that will be replaced with : " print(res);\n return res;"
+}
+// so i think it better to change the way we store the types in general so first
+// blocks
+// block and machine will only take a return type and if it don't have one will be take all (block or machine) scopes
+// so name<block> // will take any block regard of the return type same with machine
+// to set a return type name<block<<return type>>> ex : name<block<int32>>
+// micro and method and lambda and fn 
+// will be name<<block type><(<params types>),<return type>>> ex :  name<fn<(int32,int32),int32>>
+// but when it be name<<block type>>
+// with no set <(<params types>),<return type>> it will take a block typed scope regard of other types (par ty,ret ty)
+// and for name<<block type>><(<params types>)> it will take a block typed (with the set params) scope regard of other types (ret ty)
+// and for name<<block type>><<return type>> it will take a block typed (with the set return) scope regard of other types (par ty)
+// that is all it
+// Object 
+// so we need to add a new way to so
+// so i think we will allow two write the name of the Object  def after a ::
+// ex name<class::X> x = new X();
+// that will allow us to override Object Def
+// and i think that will be enough setting for Objects and their Defs
+// also i think the ability to set a certain def need it in Blocks
+// first what we have the ability to override is fns and methods and micro and lambda 
+// no other think are allowed for now at least
+// so we allow the ability to override them because they can take a deferent <(<params types>),<return type>>
+// also i think we can allow the ability to override the type so fn version and method version but they must be have deferent <(<params types>),<return type>>
+// i think we can even allow the ability to compactly override the type so even with the same <(<params types>),<return type>>
+// and to call it you will select the type first that of course will happen if there if a two func with the same  <(<params types>),<return type>> and name
+// so in this specific case if you write this <name>(); and there is two func with the same name but deferent type
+// that will throw an error that say "there is more than one of <name> with deferent type so to \n use it you need first to set the type : <type>::<name>();"
+// so to use a overridden func has more one implementation in deferent types
+// you will do this : <type>::<name>();
+// that give us the ability to know what we need to i think also maybe 
+// if we can set a selected fn or what ever 
+// so if we have some thing like that
+// name<fn::double> double_ref; // that will be a ref for all the fn double version
+// so: double_ref(10);// will work
+// and : double_ref(10.0);// will work also
+// we also will allow to set the <(<params types>),<return type>> by add them after the name
+// like this name<fn::double<(float32)>>
+// why we need name<<type>::<name><(<params types>),<return type>>>
+// first i made that to fix modify<T,micro>
+// so  modify<T,micro> is one of two expected for for in next handle
+// but what will happen if T == micro 
+// that will destroy every think so now it will be like that 
+// modify<T,micro::stop<(()),()>> or modify<T,micro::stop<(void),void>> or modify<T,micro::stop<(),>>
+// so we will make when we add () or leave the params empty () mean void
+// to make it easy to explain
+// adding <(),> after the type or the name will take only the  func(method, micro, fn , lambda) that don't have  params and a return
+// why we need that because when we only say the type or the name that will make it take all version of that name or any func fom that type
+// also <(()),()> witch mean <(void),void> will work the same way
+impl array {
+    fn iterator() -> void {
+        this.count := 0;
+    }
+      fn next() -> modify<T,micro::stop<(),>> { //now it will only take the expected micro stop
+        if(this.count >= this.length) return stop; // i think the con is wrong but you get it
+         this.count += 1;
+          return array[this.count - 1];
+      }
+}
+name arr12 = [1,2,3,4];
+// what is look like under the hood now
+for ele in arr7 {
+    if (typeof(ele) == micro::stop<(),>) ele(); // now it more safe
+    print(ele);
+}
+// to allow this and make it work
+// so first after examining BaseType enum
+// i don't found Micro that mean we don't store it safely
+// i think also that mean we need to update the fn_meta to be block_meta or something
+// so we will store other blocks as will
+// so what i will add :
+// a name field in Fn and Method and all other BaseType that will need that
+// i will add Micro and Lambda and they will be the same as Fn and Method
+// also i think it better to remove all of the int and UInt and Float
+// and make it only one version that store size in it  as a enum
+// that will be much better 
+// so i made some changes but they are bad but now we store the fn name
+
+// in the end that a ex for a nameless fn will executed and then removed write away
+fn(msg:char[])->void{
+print(msg);
+}("fun is ended here for some time;");
+// so i actually i was trying to make a recursive fns  , i made it in 'tests\62_recursive_fn.fast'
+// i take some time for it to work but now it working
+// the problem is return Stmt always expected a return val after it but in case of void return
+// you will write 'return;' it not a problem but recursion but i fixed it any way
+// now it fully working
+// some recap additions
+// so i think we need to set something up
+// first :=
+// we will allow it with with class and struct and blueprint (objects) 
+// so that will be like that
+// class X {
+//     int x;
+//     int y;
+// constructor {
+//     init(x:int,y:int) -> {
+// this { x = x ; y = y; }
+//}
+// }
+// }
+//  x := new X(10,20);
+// blueprint Z = { int x; int y; };
+// z := Z{}; || z := Z{x=10,y=20};
+// struct Y { int x; int y; };
+// y := Y{}; || y := Y{x=10,y=20};
+// so also it will work this stacks
+// (x,y) := (10,20);
+
+// also we need to set the setting of th drop micro and freeze micro
+// first : drop micro
+// it will drop all the vars in the scope like rust drop
+// so we will delete the ptrs and the names (smart ptrs) and we will call the drop handle for the objects
+// so in a block like this
+//  xb {
+//     int* x = new int(10);
+//     int y = 20;
+// modify xz = new X(10,20);
+// return x + y;
+// }
+// when we call the block it will drop the ptrs and the names after the return 
+// int res =  xb(); // that will drop the ptrs and the names
+// so first also we need to set how the names are dropped
+// the name is ref that not increase the ref count
+// but modify is ref that increase the ref count
+// and copy create a new modify ref that increase the ref count (1 ref)
+// so when we try to drop a modify ref it will decrease the ref count
+// and when we try to drop a copy ref it will decrease the ref count
+// and when we try to drop a name ref it will be not allowed 
+// so actually we will built name and modify and copy impl in std.fast as the other types
+// and they will have drop handle
+// but the way we store their data will need to be set how we will know the Rc and that stuff
+// that all for the drop micro
+// for the freeze micro
+// it will take a name ref and freeze it 
+// and it will work under the hood or we will actually make it in the std.fast
+// also i think we need to enhance the iterator handle and the next handle
+// so first iterator is very long name so it be iter not iterator like python
+// also i what to make a iter handle return a name ref to a Object that have ({ data , next() , is_done })
+// for that Obj we may make it using blueprints and their impl
+// so we can do this
+ micro iter<T> = (arr: name<T>) -> name<T> {
+    return arr.iterator();
+ };
+ // and to use it we will do this
+itr := iter(arr7);
+ while(!itr.is_done) {
+    print(itr.next());
+ }
+
+// or that will work also
+ for ele in iter(arr7) {
+    print(ele)
+ }
+// also there is some things we need to make sure it clear
+// so machine is not a state machine for now at least
+// in the future we may make it a state machine i am not sure
+// also i may allow label in blocks and fn in future updates but they will be a state machine
+
+// we will add a compile time block to be able to do this
+@compile {
+    // also we will allow to create a macro like throw 
+    // that will be like that
+    // every thing we we by set or new
+    // so to create a macro we will do this
+    new $throw[e:Error] -> {
+        throw e;
+    }
+    // []  means what comes after the macro name
+    // like this
+    // @compile::throw new Error("hi from compile time");
+    // but to use a @compile block we to make sure every thing is compile time
+    set $throw[e:Error] -> {
+        throw e;
+    }
+    // we may use $ or # or ~ or `name` we need to decide
+}
+// so this an example of compile time error
+@compile::throw new Error("hi from compile time");
+// and this an example of compile time check type in print
+fn print<...T>(...args:...T){
+    for arg in args {
+    if(typeof(arg).printable){  // that is only to explaining the .. part
+
+    fast_print(arg);
+    }else{
+     @compile::throw new Error("there is non printable type in the args : ("arg")");
+    }
+}
+}
+print("hallo:",IAmNotPrintable,".");
+// compile time error will not be caught by the error handle or the try catch blocks
+// we may add a @compile::try and @compile::catch to be able to catch compile time error
+// but anyway we will stop the compiling after the first error 
+// so when we add a @compile Macro or func that make the scope that @compile run in a compilable scope 
+// and we will add a flag for that

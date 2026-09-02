@@ -26,10 +26,10 @@ class CustomService extends BaseService -> {
 
 fn main() -> int32 {
     BaseService b = new BaseService();
-    print(b.display());
+    print(b);
 
     CustomService c = new CustomService();
-    print(c.display());
+    print(c);
 
     return 0;
 }

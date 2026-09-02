@@ -7,16 +7,17 @@ impl Parser {
     // or loop N -> scope_name() / loop -> scope_name()
     pub(crate) fn parse_loop_stmt(&mut self) -> Result<Stmt, String> {
         self.advance(); // 'loop'
-        let count = if self.peek().kind == TokenKind::Arrow {
+        let count = if
+            self.peek().kind == TokenKind::LBrace ||
+            self.peek().kind == TokenKind::Arrow
+        {
             None
         } else {
             Some(self.parse_expression()?)
         };
-
-        self.consume(
-            TokenKind::Arrow,
-            "Expected '->' after loop count (use: loop N -> { } or loop N -> scope())"
-        )?;
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance();
+        }
 
         let body = if self.peek().kind == TokenKind::LBrace {
             self.advance(); // '{'
@@ -41,10 +42,9 @@ impl Parser {
         let condition = self.parse_expression()?;
         self.consume(TokenKind::RParen, "Expected ')' after while condition")?;
 
-        self.consume(
-            TokenKind::Arrow,
-            "Expected '->' after while condition (use: while (cond) -> { } or while (cond) -> scope())"
-        )?;
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance(); // consume '->'
+        }
 
         let body = if self.peek().kind == TokenKind::LBrace {
             self.advance(); // '{'
@@ -226,8 +226,9 @@ impl Parser {
         if has_paren {
             self.consume(TokenKind::RParen, "Expected ')' after for-in clauses")?;
         }
-        self.consume(TokenKind::Arrow, "Expected '->' after 'for-in' clauses")?;
-
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance(); // consume '->'
+        }
         let body = if self.peek().kind == TokenKind::LBrace {
             self.advance();
             let stmts = self.parse_block("for-in".to_string())?;

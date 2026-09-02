@@ -1,0 +1,17 @@
+// Test 83: Macro Declaration and Command-style / Paren-less Invocation
+
+macro custom_log[tag: str, code: int32] -> {
+    print("[", tag, "] Code: ", code);
+    println("");
+}
+
+fn main() -> int32 {
+    str tag = "INFO";
+    int32 code = 200;
+    
+    // Command-style macro invocation without parentheses:
+     custom_log tag , code; //Semantic Error: 'tag' is already defined in this scope.
+     custom_log "STATUS", 204; 
+
+    return 0;
+}

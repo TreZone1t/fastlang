@@ -1,0 +1,130 @@
+// FastLang Standard Library: Range Functions
+public fn range(s: int) -> int[] {
+    int arr[] = new int[](s);
+    int i = 0;
+    while (i < s) {
+        arr[i] = i + 1;
+        i++;
+    }
+    return arr;
+}
+
+public fn range(start: int, end: int) -> int[] {
+    int s = end - start;
+    if (s < 0) {
+        s = 0;
+    }
+    int arr[] = new int[](s);
+    int i = 0;
+    while (i < s) {
+        arr[i] = start + i;
+        i++;
+    }
+    return arr;
+}
+
+public fn range(start: int, end: int, step: int) -> int[] {
+    if (step <= 0) {
+        return new int[](0);
+    }
+    int diff = end - start;
+    if (diff < 0) {
+        return new int[](0);
+    }
+    int s = (diff + step - 1) / step;
+    int arr[] = new int[](s);
+    int i = 0;
+    int cur = start;
+    while (i < s) {
+        arr[i] = cur;
+        cur = cur + step;
+        i++;
+    }
+    return arr;
+}
+
+public fn range(start: char, end: char) -> char[] {
+    int s = 0;
+    char c = start;
+    while (c <= end) {
+        s++;
+        c++;
+    }
+    char arr[] = new char[](s);
+    int i = 0;
+    c = start;
+    while (i < s) {
+        arr[i] = c;
+        c++;
+        i++;
+    }
+    return arr;
+}
+
+public fn range(start: char, end: char, step: int) -> char[] {
+    if (step <= 0) {
+        return new char[](0);
+    }
+    int s = 0;
+    char c = start;
+    while (c <= end) {
+        s++;
+        int k = 0;
+        while (k < step) {
+            c++;
+            k++;
+        }
+    }
+    char arr[] = new char[](s);
+    int i = 0;
+    c = start;
+    while (i < s) {
+        arr[i] = c;
+        int k = 0;
+        while (k < step) {
+            c++;
+            k++;
+        }
+        i++;
+    }
+    return arr;
+}
+
+public fn range(start: float64, end: float64) -> float64[] {
+    int s = 0;
+    float64 cur = start;
+    while (cur < end) {
+        s++;
+        cur = cur + 1.0;
+    }
+    float64 arr[] = new float64[](s);
+    int i = 0;
+    cur = start;
+    while (i < s) {
+        arr[i] = cur;
+        cur = cur + 1.0;
+        i++;
+    }
+    return arr;
+}
+
+public fn range(start: float64, end: float64, step: float64) -> float64[] {
+    if (step <= 0.0) {
+        return new float64[](0);
+    }
+    int s = 0;
+    float64 cur = start;
+    while (cur < end) {
+        s++;
+        cur = cur + step;
+    }
+    float64 arr[] = new float64[](s);
+    int i = 0;
+    cur = start;
+    while (i < s) {
+        arr[i] = cur;
+        cur = cur + step;
+        i++;
+    }
+    return arr;
+}

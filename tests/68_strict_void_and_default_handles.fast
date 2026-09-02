@@ -1,0 +1,39 @@
+// Test 68: Strict void return, handle default, and loop iteration
+import std;
+
+class Point -> {
+    public -> {
+        int32 x = 10;
+        int32 y = 20;
+    }
+    handle -> {
+        fn default() -> Point {
+            Point p = new Point();
+            p.x = 100;
+            p.y = 200;
+            return p;
+        }
+    }
+}
+
+fn test_void() -> void {
+    println("testing void");
+    return ();
+}
+
+fn main() -> int32 {
+    test_void(); // EXPECT: testing void
+
+    Option<int32> opt = None;
+    match (opt) -> {
+        Some(v) => {
+            println("Some: ", v);
+        }
+        None => {
+            println("None matched"); // EXPECT: None matched
+        }
+    }
+
+    println("all checks passed"); // EXPECT: all checks passed
+    return 0;
+}

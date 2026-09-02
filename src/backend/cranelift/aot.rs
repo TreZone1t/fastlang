@@ -1,6 +1,6 @@
-use crate::middle_end::ir::instruction::*;
+use crate::{ frontend::parser::ast::Size, middle_end::ir::instruction::* };
 use cranelift::prelude::*;
-use cranelift_module::{Linkage, Module};
+use cranelift_module::{ Linkage, Module };
 use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
@@ -20,16 +20,11 @@ impl CraneliftAotBackend {
         let isa_builder = cranelift_native::builder().unwrap_or_else(|msg| {
             panic!("host machine is not supported: {}", msg);
         });
-        let isa = isa_builder
-            .finish(settings::Flags::new(flag_builder))
-            .unwrap();
+        let isa = isa_builder.finish(settings::Flags::new(flag_builder)).unwrap();
 
-        let builder = cranelift_object::ObjectBuilder::new(
-            isa,
-            "fast_lang_module",
-            cranelift_module::default_libcall_names(),
-        )
-        .unwrap();
+        let builder = cranelift_object::ObjectBuilder
+            ::new(isa, "fast_lang_module", cranelift_module::default_libcall_names())
+            .unwrap();
         let module = ObjectModule::new(builder);
         let ctx = module.make_context();
 
@@ -48,35 +43,34 @@ impl CraneliftAotBackend {
             let mut sig = self.module.make_signature();
             sig.call_conv = default_conv;
             for (_name, ty) in &func.params {
-                sig.params
-                    .push(cranelift::prelude::AbiParam::new(Self::map_type(ty)));
+                sig.params.push(cranelift::prelude::AbiParam::new(Self::map_type(ty)));
             }
             if func.return_type != IRType::Void {
-                sig.returns
-                    .push(cranelift::prelude::AbiParam::new(Self::map_type(
-                        &func.return_type,
-                    )));
+                sig.returns.push(
+                    cranelift::prelude::AbiParam::new(Self::map_type(&func.return_type))
+                );
             }
-            let linkage = if func.is_extern {
-                Linkage::Import
-            } else {
-                Linkage::Export
-            };
-            let func_id = self
-                .module
-                .declare_function(&func.name, linkage, &sig)
-                .unwrap();
+            let linkage = if func.is_extern { Linkage::Import } else { Linkage::Export };
+            let func_id = self.module.declare_function(&func.name, linkage, &sig).unwrap();
             self.funcs.insert(func.name.clone(), func_id);
         }
+
+        // Declare C runtime helpers: printf
+        let mut printf_sig = self.module.make_signature();
+        printf_sig.call_conv = default_conv;
+        printf_sig.params.push(cranelift::prelude::AbiParam::new(types::I64)); // format string
+        printf_sig.returns.push(cranelift::prelude::AbiParam::new(types::I32));
+        let printf_id = self.module
+            .declare_function("printf", Linkage::Import, &printf_sig)
+            .unwrap();
+        self.funcs.insert("printf".to_string(), printf_id);
 
         // 2. Define all non-extern functions
         let funcs_clone = self.funcs.clone();
         for func in &ir_module.functions {
             if !func.is_extern {
                 self.compile_function(func, &funcs_clone, ir_module);
-                self.module
-                    .define_function(funcs_clone[&func.name], &mut self.ctx)
-                    .unwrap();
+                self.module.define_function(funcs_clone[&func.name], &mut self.ctx).unwrap();
             }
         }
     }
@@ -85,38 +79,29 @@ impl CraneliftAotBackend {
         &mut self,
         ir_func: &IRFunction,
         cl_funcs: &HashMap<String, cranelift_module::FuncId>,
-        ir_structs: &IRModule,
+        ir_structs: &IRModule
     ) {
         self.ctx.clear();
         self.builder_context = FunctionBuilderContext::new();
-
-        println!(
-            "CRANELIFT: Compiling function '{}' to CLIF...",
-            ir_func.name
-        );
 
         let default_conv = self.module.target_config().default_call_conv;
         self.ctx.func.signature.call_conv = default_conv;
 
         for (_name, ty) in &ir_func.params {
-            self.ctx
-                .func
-                .signature
-                .params
-                .push(cranelift::prelude::AbiParam::new(Self::map_type(ty)));
+            self.ctx.func.signature.params.push(
+                cranelift::prelude::AbiParam::new(Self::map_type(ty))
+            );
         }
         if ir_func.return_type != IRType::Void {
-            self.ctx
-                .func
-                .signature
-                .returns
-                .push(cranelift::prelude::AbiParam::new(Self::map_type(
-                    &ir_func.return_type,
-                )));
+            self.ctx.func.signature.returns.push(
+                cranelift::prelude::AbiParam::new(Self::map_type(&ir_func.return_type))
+            );
         }
 
-        let builder =
-            cranelift_frontend::FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
+        let builder = cranelift_frontend::FunctionBuilder::new(
+            &mut self.ctx.func,
+            &mut self.builder_context
+        );
         let mut translator = FunctionTranslator {
             builder,
             module: &mut self.module,
@@ -128,38 +113,36 @@ impl CraneliftAotBackend {
         };
 
         translator.translate(ir_func);
-
-        println!(
-            "CRANELIFT CLIF for '{}':\n{}",
-            ir_func.name,
-            self.ctx.func.display()
-        );
     }
 
     pub fn finalize(self, out_path: &str) {
         let obj = self.module.finish();
         std::fs::write(out_path, obj.emit().unwrap()).unwrap();
-        println!(
-            "CRANELIFT AOT: Object file '{}' generated successfully.",
-            out_path
-        );
     }
 
     fn map_type(ty: &IRType) -> Type {
         match ty {
-            IRType::Int32 => types::I32,
-            IRType::Int64 => types::I64,
-            IRType::Float32 => types::F32,
-            IRType::Float64 => types::F64,
-            IRType::Bool => types::I8,
-            IRType::Pointer(_) => types::I64,
-            IRType::Array(_) => types::I64,
-            IRType::Object(_) | IRType::CustomScope(_) => types::I64, // Pointers to objects
-            _ => types::I64,
+            IRType::Int(Size::S8) | IRType::UInt(Size::S8) | IRType::Bool | IRType::Byte =>
+                types::I8,
+            IRType::Int(Size::S16) | IRType::UInt(Size::S16) => types::I16,
+            IRType::Int(Size::S32) | IRType::UInt(Size::S32) | IRType::Char | IRType::Type =>
+                types::I32,
+            | IRType::Int(Size::S64 | Size::S128)
+            | IRType::UInt(Size::S64 | Size::S128)
+            | IRType::USize
+            | IRType::ISize => types::I64,
+            IRType::Float(Size::S32 | Size::S16 | Size::S8) => types::F32,
+            IRType::Float(Size::S64 | Size::S128) => types::F64,
+            | IRType::Pointer(_)
+            | IRType::Array(_)
+            | IRType::Object(_)
+            | IRType::CustomScope(_)
+            | IRType::Generic(_) => types::I64,
+            IRType::Void => types::I32,
         }
     }
 }
-use cranelift_frontend::{FunctionBuilder, Variable};
+use cranelift_frontend::{ FunctionBuilder, Variable };
 
 struct FunctionTranslator<'a> {
     builder: FunctionBuilder<'a>,
@@ -181,8 +164,7 @@ impl<'a> FunctionTranslator<'a> {
 
         // 2. Setup Entry Block & Params
         let entry_block = self.blocks[&ir_func.entry_block];
-        self.builder
-            .append_block_params_for_function_params(entry_block);
+        self.builder.append_block_params_for_function_params(entry_block);
 
         // 3. Translate Instructions
         let mut sorted_blocks: Vec<&BlockID> = ir_func.blocks.keys().collect();
@@ -213,14 +195,29 @@ impl<'a> FunctionTranslator<'a> {
                             cranelift::prelude::StackSlotData::new(
                                 cranelift::prelude::StackSlotKind::ExplicitSlot,
                                 ir_struct.size as u32,
-                                0, // align_shift
-                            ),
+                                0 // align_shift
+                            )
                         );
                         let ptr_val = self.builder.ins().stack_addr(types::I64, slot, 0);
                         self.builder.def_var(var, ptr_val);
                     }
                 }
                 None
+            }
+            IROp::AllocArray { elem_ty: _, size } => {
+                let var = self.builder.declare_var(types::I64);
+                self.variables.insert(inst.id.unwrap(), var);
+
+                let slot = self.builder.create_sized_stack_slot(
+                    cranelift::prelude::StackSlotData::new(
+                        cranelift::prelude::StackSlotKind::ExplicitSlot,
+                        *size as u32,
+                        0
+                    )
+                );
+                let ptr_val = self.builder.ins().stack_addr(types::I64, slot, 0);
+                self.builder.def_var(var, ptr_val);
+                Some(ptr_val)
             }
             IROp::StoreParam { param_idx, ptr } => {
                 let var = self.variables[ptr];
@@ -230,7 +227,11 @@ impl<'a> FunctionTranslator<'a> {
             }
             IROp::ConstInt32(v) => Some(self.builder.ins().iconst(types::I32, *v as i64)),
             IROp::ConstInt64(v) => Some(self.builder.ins().iconst(types::I64, *v)),
-            IROp::ConstBool(b) => Some(self.builder.ins().iconst(types::I8, if *b { 1 } else { 0 })),
+            IROp::ConstFloat32(f) => Some(self.builder.ins().f32const(*f)),
+            IROp::ConstFloat64(f) => Some(self.builder.ins().f64const(*f)),
+            IROp::ConstBool(b) =>
+                Some(self.builder.ins().iconst(types::I8, if *b { 1 } else { 0 })),
+            IROp::ConstTypeID(id) => Some(self.builder.ins().iconst(types::I32, *id as i64)),
             IROp::ConstString(s) => {
                 use cranelift_module::DataDescription;
                 let mut data_desc = DataDescription::new();
@@ -261,25 +262,32 @@ impl<'a> FunctionTranslator<'a> {
                 };
                 Some(self.builder.ins().iadd_imm_s(base_ptr_val, *offset as i64))
             }
+            IROp::GetElementPtr { base_ptr, index, elem_size } => {
+                let base_ptr_val = if let Some(&var) = self.variables.get(base_ptr) {
+                    self.builder.use_var(var)
+                } else {
+                    self.values[base_ptr]
+                };
+                let idx_val = self.values[index];
+                let idx_i64 = self.builder.ins().uextend(types::I64, idx_val);
+                let offset = self.builder.ins().imul_imm_s(idx_i64, *elem_size as i64);
+                Some(self.builder.ins().iadd(base_ptr_val, offset))
+            }
             IROp::LoadMemory { ptr, ty } => {
                 let cl_ty = CraneliftAotBackend::map_type(ty);
                 let ptr_val = self.values[ptr];
-                Some(self.builder.ins().load(
-                    cl_ty,
-                    cranelift_codegen::ir::MemFlagsData::new(),
-                    ptr_val,
-                    0,
-                ))
+                Some(
+                    self.builder
+                        .ins()
+                        .load(cl_ty, cranelift_codegen::ir::MemFlagsData::new(), ptr_val, 0)
+                )
             }
             IROp::StoreMemory { ptr, value } => {
                 let ptr_val = self.values[ptr];
                 let val = self.values[value];
-                self.builder.ins().store(
-                    cranelift_codegen::ir::MemFlagsData::new(),
-                    val,
-                    ptr_val,
-                    0,
-                );
+                self.builder
+                    .ins()
+                    .store(cranelift_codegen::ir::MemFlagsData::new(), val, ptr_val, 0);
                 None
             }
             IROp::Add(l, r) => Some(self.builder.ins().iadd(self.values[l], self.values[r])),
@@ -288,12 +296,32 @@ impl<'a> FunctionTranslator<'a> {
             IROp::Div(l, r) => Some(self.builder.ins().sdiv(self.values[l], self.values[r])),
             IROp::Mod(l, r) => Some(self.builder.ins().srem(self.values[l], self.values[r])),
             IROp::Neg(v) => Some(self.builder.ins().ineg(self.values[v])),
-            IROp::Eq(l, r) => Some(self.builder.ins().icmp(IntCC::Equal, self.values[l], self.values[r])),
-            IROp::Neq(l, r) => Some(self.builder.ins().icmp(IntCC::NotEqual, self.values[l], self.values[r])),
-            IROp::Lt(l, r) => Some(self.builder.ins().icmp(IntCC::SignedLessThan, self.values[l], self.values[r])),
-            IROp::Le(l, r) => Some(self.builder.ins().icmp(IntCC::SignedLessThanOrEqual, self.values[l], self.values[r])),
-            IROp::Gt(l, r) => Some(self.builder.ins().icmp(IntCC::SignedGreaterThan, self.values[l], self.values[r])),
-            IROp::Ge(l, r) => Some(self.builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, self.values[l], self.values[r])),
+            IROp::Eq(l, r) =>
+                Some(self.builder.ins().icmp(IntCC::Equal, self.values[l], self.values[r])),
+            IROp::Neq(l, r) =>
+                Some(self.builder.ins().icmp(IntCC::NotEqual, self.values[l], self.values[r])),
+            IROp::Lt(l, r) =>
+                Some(
+                    self.builder.ins().icmp(IntCC::SignedLessThan, self.values[l], self.values[r])
+                ),
+            IROp::Le(l, r) =>
+                Some(
+                    self.builder
+                        .ins()
+                        .icmp(IntCC::SignedLessThanOrEqual, self.values[l], self.values[r])
+                ),
+            IROp::Gt(l, r) =>
+                Some(
+                    self.builder
+                        .ins()
+                        .icmp(IntCC::SignedGreaterThan, self.values[l], self.values[r])
+                ),
+            IROp::Ge(l, r) =>
+                Some(
+                    self.builder
+                        .ins()
+                        .icmp(IntCC::SignedGreaterThanOrEqual, self.values[l], self.values[r])
+                ),
             IROp::And(l, r) => Some(self.builder.ins().band(self.values[l], self.values[r])),
             IROp::Or(l, r) => Some(self.builder.ins().bor(self.values[l], self.values[r])),
             IROp::Not(v) => Some(self.builder.ins().bnot(self.values[v])),
@@ -309,45 +337,55 @@ impl<'a> FunctionTranslator<'a> {
                 self.builder.ins().jump(self.blocks[b_id], &[]);
                 None
             }
-            IROp::BranchIf {
-                cond,
-                true_block,
-                false_block,
-            } => {
+            IROp::BranchIf { cond, true_block, false_block } => {
                 let cond_val = self.values[cond];
-                self.builder.ins().brif(
-                    cond_val,
-                    self.blocks[true_block],
-                    &[],
-                    self.blocks[false_block],
-                    &[],
-                );
+                self.builder
+                    .ins()
+                    .brif(cond_val, self.blocks[true_block], &[], self.blocks[false_block], &[]);
                 None
             }
             IROp::Call { func, args } => {
-                let func_id = self.funcs[func];
-                let local_func = self.module.declare_func_in_func(func_id, self.builder.func);
-                let arg_vals: Vec<Value> = args
-                    .iter()
-                    .map(|a| {
-                        if let Some(&var) = self.variables.get(a) {
+                if let Some(&func_id) = self.funcs.get(func) {
+                    let local_func = self.module.declare_func_in_func(func_id, self.builder.func);
+                    let sig_ref = self.builder.func.dfg.ext_funcs[local_func].signature;
+                    let expected_params = self.builder.func.dfg.signatures[sig_ref].params.clone();
+                    let mut arg_vals = Vec::new();
+                    for (idx, a) in args.iter().enumerate() {
+                        let val = if let Some(&var) = self.variables.get(a) {
                             self.builder.use_var(var)
                         } else {
                             self.values[a]
-                        }
-                    })
-                    .collect();
-                let call = self.builder.ins().call(local_func, &arg_vals);
-                let results = self.builder.inst_results(call);
-                if results.is_empty() {
-                    None
+                        };
+                        let val_ty = self.builder.func.dfg.value_type(val);
+                        let coerced_val = if let Some(param) = expected_params.get(idx) {
+                            if param.value_type == types::I64 && val_ty == types::I32 {
+                                self.builder.ins().sextend(types::I64, val)
+                            } else if
+                                param.value_type == types::I32 &&
+                                (val_ty == types::I8 || val_ty == types::I16)
+                            {
+                                self.builder.ins().sextend(types::I32, val)
+                            } else if param.value_type == types::F64 && val_ty == types::F32 {
+                                self.builder.ins().fpromote(types::F64, val)
+                            } else {
+                                val
+                            }
+                        } else {
+                            val
+                        };
+                        arg_vals.push(coerced_val);
+                    }
+                    let call = self.builder.ins().call(local_func, &arg_vals);
+                    let results = self.builder.inst_results(call);
+                    if results.is_empty() {
+                        None
+                    } else {
+                        Some(results[0])
+                    }
                 } else {
-                    Some(results[0])
+                    println!("CRANELIFT: Undefined function '{}'", func);
+                    None
                 }
-            }
-            _ => {
-                println!("CRANELIFT: Unimplemented op {:?}", inst.op);
-                None
             }
         };
 

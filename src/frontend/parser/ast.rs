@@ -15,23 +15,34 @@ pub enum Editability {
     NotEditable,
 }
 #[derive(Debug, Clone, PartialEq)]
+pub enum Size {
+    S8,
+    S16,
+    S32,
+    S64,
+    S128,
+}
+impl Size {
+    pub fn as_str(&self) -> String {
+        match self {
+            Self::S8 => "8".to_string(),
+            Self::S16 => "16".to_string(),
+            Self::S32 => "32".to_string(),
+            Self::S64 => "64".to_string(),
+            Self::S128 => "128".to_string(),
+            // _ => "unreachable".to_string(),
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq)]
 pub enum BaseType {
-    Int8,
-    Int16,
-    Int32,
-    Int64,
-    Int128,
-    UInt8,
-    UInt16,
-    UInt32,
-    UInt64,
-    UInt128,
+    Int(Size),
+    UInt(Size),
     USize,
     ISize,
-    Float32,
-    Float64,
-    Float128,
+    Float(Size),
     Char,
+    Str,
     Bool,
     Void,
     //It will contain a Generic BaseType
@@ -43,14 +54,6 @@ pub enum BaseType {
     Array {
         base_type: Box<BaseType>,
         size: Box<Option<Expr>>,
-    },
-
-    Custom {
-        name: String,
-        fields: Box<HashMap<String, BaseType>>,
-        methods: Box<HashMap<String, FnType>>,
-        generics: Vec<BaseType>,
-        params: Vec<Param>,
     },
     Struct {
         name: String,
@@ -77,17 +80,44 @@ pub enum BaseType {
         methods: Box<HashMap<String, FnType>>,
         generics: Vec<BaseType>,
     },
+    Block {
+        name: String,
+        methods: Box<HashMap<String, FnType>>,
+        return_type: Box<BaseType>,
+    },
+    Machine {
+        name: String,
+        fields: Box<HashMap<String, BaseType>>,
+        methods: Box<HashMap<String, FnType>>,
+        labels: Vec<String>,
+    },
 
     Method {
+        name: Option<String>,
         params: Vec<BaseType>,
         return_type: Box<BaseType>,
     },
     Fn {
+        name: Option<String>,
+        params: Vec<BaseType>,
+        return_type: Box<BaseType>,
+    },
+    Micro {
+        name: Option<String>,
+        params: Vec<BaseType>,
+        return_type: Box<BaseType>,
+    },
+    Macro {
+        name: Option<String>,
+        params: Vec<BaseType>,
+        return_type: Box<BaseType>,
+    },
+    Lambda {
+        name: Option<String>,
         params: Vec<BaseType>,
         return_type: Box<BaseType>,
     },
     Flag,
-    Scope(Box<BaseType>),
     Generic(Vec<BaseType>),
     GenericParam(String),
 
@@ -101,39 +131,26 @@ impl BaseType {
             BaseType::Blueprint { name, .. } => name.clone(),
             BaseType::Struct { name, .. } => name.clone(),
             BaseType::Class { name, .. } => name.clone(),
-            BaseType::Custom { name, .. } => name.clone(),
             BaseType::Enum { name, .. } => name.clone(),
+            BaseType::Block { name, .. } => name.clone(),
+            BaseType::Machine { name, .. } => name.clone(),
             _ => self.as_str(),
         }
     }
 
     pub fn as_str(&self) -> String {
         match self {
-            BaseType::Int8 => "int8".to_string(),
-            BaseType::Int16 => "int16".to_string(),
-            BaseType::Int32 => "int32".to_string(),
-            BaseType::Int64 => "int64".to_string(),
-            BaseType::Int128 => "int128".to_string(),
-            BaseType::UInt8 => "uint8".to_string(),
-            BaseType::UInt16 => "uint16".to_string(),
-            BaseType::UInt32 => "uint32".to_string(),
-            BaseType::UInt64 => "uint64".to_string(),
-            BaseType::UInt128 => "uint128".to_string(),
+            BaseType::Int(s) => format!("int{}", s.as_str()),
+            BaseType::UInt(s) => format!("uint{}", s.as_str()),
             BaseType::USize => "usize".to_string(),
             BaseType::ISize => "isize".to_string(),
-            BaseType::Float32 => "float32".to_string(),
-            BaseType::Float64 => "float64".to_string(),
-            BaseType::Float128 => "float128".to_string(),
+            BaseType::Float(s) => format!("float{}", s.as_str()),
             BaseType::Char => "char".to_string(),
+            BaseType::Str => "str".to_string(),
             BaseType::Bool => "bool".to_string(),
             BaseType::Flag => "flag".to_string(),
-            BaseType::Scope(t) => {
-                if matches!(**t, BaseType::Unknown) {
-                    "scope".to_string()
-                } else {
-                    format!("scope<{}>", t.as_str())
-                }
-            }
+            BaseType::Block { name, .. } => format!("block<{}>", name),
+            BaseType::Machine { name, .. } => format!("machine<{}>", name),
             BaseType::Void => "void".to_string(),
             BaseType::Modify(t) => format!("modify<{}>", t.as_str()),
             BaseType::Copy(t) => format!("copy<{}>", t.as_str()),
@@ -147,19 +164,14 @@ impl BaseType {
                     format!("array<{}>", base_type.as_str())
                 }
             }
-            BaseType::Custom { name, generics, .. } => {
-                if generics.is_empty() {
-                    format!("custom<{}>", name)
-                } else {
-                    let g_strs: Vec<String> = generics.iter().map(|g| g.as_str()).collect();
-                    format!("custom<{}<{}>>", name, g_strs.join(", "))
-                }
-            }
             BaseType::Struct { name, generics, .. } => {
                 if generics.is_empty() {
                     format!("struct<{}>", name)
                 } else {
-                    let g_strs: Vec<String> = generics.iter().map(|g| g.as_str()).collect();
+                    let g_strs: Vec<String> = generics
+                        .iter()
+                        .map(|g| g.as_str())
+                        .collect();
                     format!("struct<{}<{}> >", name, g_strs.join(", "))
                 }
             }
@@ -167,7 +179,10 @@ impl BaseType {
                 if generics.is_empty() {
                     format!("class<{}>", name)
                 } else {
-                    let g_strs: Vec<String> = generics.iter().map(|g| g.as_str()).collect();
+                    let g_strs: Vec<String> = generics
+                        .iter()
+                        .map(|g| g.as_str())
+                        .collect();
                     format!("class<{}<{}> >", name, g_strs.join(", "))
                 }
             }
@@ -175,7 +190,10 @@ impl BaseType {
                 if generics.is_empty() {
                     format!("enum<{}>", name)
                 } else {
-                    let g_strs: Vec<String> = generics.iter().map(|g| g.as_str()).collect();
+                    let g_strs: Vec<String> = generics
+                        .iter()
+                        .map(|g| g.as_str())
+                        .collect();
                     format!("enum<{}<{}> >", name, g_strs.join(", "))
                 }
             }
@@ -183,14 +201,92 @@ impl BaseType {
                 if generics.is_empty() {
                     format!("blueprint<{}>", name)
                 } else {
-                    let g_strs: Vec<String> = generics.iter().map(|g| g.as_str()).collect();
+                    let g_strs: Vec<String> = generics
+                        .iter()
+                        .map(|g| g.as_str())
+                        .collect();
                     format!("blueprint<{}<{}> >", name, g_strs.join(", "))
                 }
             }
-            BaseType::Method { .. } => "method".to_string(),
-            BaseType::Fn { params, return_type } => {
-                let p_strs: Vec<String> = params.iter().map(|p| p.as_str()).collect();
-                format!("Fn<({}), {}>", p_strs.join(", "), return_type.as_str())
+            BaseType::Method { name, params, return_type } => {
+                let p_strs: Vec<String> = params
+                    .iter()
+                    .map(|p| p.as_str())
+                    .collect();
+                if name.clone().is_none() {
+                    format!("Method<({}), {}>", p_strs.join(", "), return_type.as_str())
+                } else {
+                    format!(
+                        "Method::{}<({}), {}>",
+                        name.as_ref().unwrap().as_str(),
+                        p_strs.join(", "),
+                        return_type.as_str()
+                    )
+                }
+            }
+            BaseType::Micro { name, params, return_type } => {
+                let p_strs: Vec<String> = params
+                    .iter()
+                    .map(|p| p.as_str())
+                    .collect();
+                if name.clone().is_none() {
+                    format!("Micro<({}), {}>", p_strs.join(", "), return_type.as_str())
+                } else {
+                    format!(
+                        "Micro::{}<({}), {}>",
+                        name.as_ref().unwrap().as_str(),
+                        p_strs.join(", "),
+                        return_type.as_str()
+                    )
+                }
+            }
+            BaseType::Macro { name, params, return_type } => {
+                let p_strs: Vec<String> = params
+                    .iter()
+                    .map(|p| p.as_str())
+                    .collect();
+                if name.is_none() {
+                    format!("Macro<({}), {}>", p_strs.join(", "), return_type.as_str())
+                } else {
+                    format!(
+                        "Macro::{}<({}), {}>",
+                        name.as_ref().unwrap().as_str(),
+                        p_strs.join(", "),
+                        return_type.as_str()
+                    )
+                }
+            }
+            BaseType::Lambda { name, params, return_type } => {
+                let p_strs: Vec<String> = params
+                    .iter()
+                    .map(|p| p.as_str())
+                    .collect();
+                if name.clone().is_none() {
+                    format!("Lambda<({}), {}>", p_strs.join(", "), return_type.as_str())
+                } else {
+                    format!(
+                        "Lambda::{}<({}), {}>",
+                        name.as_ref().unwrap().as_str(),
+                        p_strs.join(", "),
+                        return_type.as_str()
+                    )
+                }
+            }
+            BaseType::Fn { name, params, return_type } => {
+                let p_strs: Vec<String> = params
+                    .iter()
+                    .map(|p| p.as_str())
+                    .collect();
+                if name.is_none() {
+                    format!("Fn<({}), {}>", p_strs.join(", "), return_type.as_str())
+                } else {
+                    format!(
+                        "Fn::{}<({}), {}>",
+                        name.as_ref().unwrap().as_str(),
+                        p_strs.join(", "),
+                        return_type.as_str()
+                    )
+                }
             }
             BaseType::GenericParam(name) => name.clone(),
             BaseType::Generic(inner_vec) => {
@@ -207,37 +303,41 @@ impl BaseType {
     }
     pub fn from_str(s: &str) -> Self {
         match s {
-            "int8" => BaseType::Int8,
-            "int16" => BaseType::Int16,
-            "int32" | "int" => BaseType::Int32,
-            "int64" => BaseType::Int64,
-            "int128" => BaseType::Int128,
-            "uint8" | "byte" => BaseType::UInt8,
-            "uint16" => BaseType::UInt16,
-            "uint32" | "uint" => BaseType::UInt32,
-            "uint64" => BaseType::UInt64,
-            "uint128" => BaseType::UInt128,
+            "int8" => BaseType::Int(Size::S8),
+            "int16" => BaseType::Int(Size::S16),
+            "int32" | "int" => BaseType::Int(Size::S32),
+            "int64" => BaseType::Int(Size::S64),
+            "int128" => BaseType::Int(Size::S128),
+            "uint8" | "byte" => BaseType::UInt(Size::S8),
+            "uint16" => BaseType::UInt(Size::S16),
+            "uint32" | "uint" => BaseType::UInt(Size::S32),
+            "uint64" => BaseType::UInt(Size::S64),
+            "uint128" => BaseType::UInt(Size::S128),
             "usize" => BaseType::USize,
             "isize" => BaseType::ISize,
-            "float32" | "float" => BaseType::Float32,
-            "float64" => BaseType::Float64,
-            "float128" => BaseType::Float128,
+            "float32" | "float" => BaseType::Float(Size::S32),
+            "float64" => BaseType::Float(Size::S64),
+            "float128" => BaseType::Float(Size::S128),
             "char" => BaseType::Char,
+            "str" => BaseType::Str,
             "bool" => BaseType::Bool,
             "void" => BaseType::Void,
-            "scope" => BaseType::Scope(Box::new(BaseType::Unknown)),
             "name" => BaseType::Name(Box::new(BaseType::Generic(Vec::new()))), // name<T,T2,T3> //T , T2 , T3 are the expected types for the name but after
             "modify" => BaseType::Modify(Box::new(BaseType::Unknown)),
             "copy" => BaseType::Copy(Box::new(BaseType::Unknown)),
             "pointer" => BaseType::Pointer(Box::new(BaseType::Unknown)),
             "type" => BaseType::Type(Box::new(BaseType::Unknown)),
+            "macro" => BaseType::Macro { name: None, params: vec![], return_type: Box::new(BaseType::Void) },
             "unknown" => BaseType::Unknown,
             "error" => BaseType::Error,
             _ => BaseType::Unknown,
         }
     }
 
-    pub fn substitute_generics(&self, map: &std::collections::HashMap<String, BaseType>) -> BaseType {
+    pub fn substitute_generics(
+        &self,
+        map: &std::collections::HashMap<String, BaseType>
+    ) -> BaseType {
         match self {
             BaseType::GenericParam(name) => {
                 if let Some(concrete) = map.get(name) {
@@ -246,41 +346,64 @@ impl BaseType {
                     BaseType::GenericParam(name.clone())
                 }
             }
-            BaseType::Custom { name, fields, methods, generics, params } => {
-                if let Some(concrete) = map.get(name) {
-                    concrete.clone()
-                } else {
-                    let substituted_generics = generics.iter().map(|g| g.substitute_generics(map)).collect();
-                    BaseType::Custom {
-                        name: name.clone(),
-                        fields: fields.clone(),
-                        methods: methods.clone(),
-                        generics: substituted_generics,
-                        params: params.clone(),
-                    }
-                }
-            }
             BaseType::Name(inner) => BaseType::Name(Box::new(inner.substitute_generics(map))),
             BaseType::Modify(inner) => BaseType::Modify(Box::new(inner.substitute_generics(map))),
             BaseType::Copy(inner) => BaseType::Copy(Box::new(inner.substitute_generics(map))),
             BaseType::Pointer(inner) => BaseType::Pointer(Box::new(inner.substitute_generics(map))),
             BaseType::Type(inner) => BaseType::Type(Box::new(inner.substitute_generics(map))),
-            BaseType::Scope(inner) => BaseType::Scope(Box::new(inner.substitute_generics(map))),
-            BaseType::Array { base_type, size } => BaseType::Array {
-                base_type: Box::new(base_type.substitute_generics(map)),
-                size: size.clone(),
-            },
-            BaseType::Generic(vec) => BaseType::Generic(vec.iter().map(|t| t.substitute_generics(map)).collect()),
-            BaseType::Fn { params, return_type } => BaseType::Fn {
-                params: params.iter().map(|p| p.substitute_generics(map)).collect(),
-                return_type: Box::new(return_type.substitute_generics(map)),
-            },
-            BaseType::Method { params, return_type } => BaseType::Method {
-                params: params.iter().map(|p| p.substitute_generics(map)).collect(),
-                return_type: Box::new(return_type.substitute_generics(map)),
-            },
+            BaseType::Array { base_type, size } =>
+                BaseType::Array {
+                    base_type: Box::new(base_type.substitute_generics(map)),
+                    size: size.clone(),
+                },
+            BaseType::Generic(vec) =>
+                BaseType::Generic(
+                    vec
+                        .iter()
+                        .map(|t| t.substitute_generics(map))
+                        .collect()
+                ),
+            BaseType::Fn { name, params, return_type } =>
+                BaseType::Fn {
+                    name: name.clone(),
+                    params: params
+                        .iter()
+                        .map(|p| p.substitute_generics(map))
+                        .collect(),
+                    return_type: Box::new(return_type.substitute_generics(map)),
+                },
+            BaseType::Micro { name, params, return_type } =>
+                BaseType::Micro {
+                    name: name.clone(),
+                    params: params
+                        .iter()
+                        .map(|p| p.substitute_generics(map))
+                        .collect(),
+                    return_type: Box::new(return_type.substitute_generics(map)),
+                },
+            BaseType::Macro { name, params, return_type } =>
+                BaseType::Macro {
+                    name: name.clone(),
+                    params: params
+                        .iter()
+                        .map(|p| p.substitute_generics(map))
+                        .collect(),
+                    return_type: Box::new(return_type.substitute_generics(map)),
+                },
+            BaseType::Method { name, params, return_type } =>
+                BaseType::Method {
+                    name: name.clone(),
+                    params: params
+                        .iter()
+                        .map(|p| p.substitute_generics(map))
+                        .collect(),
+                    return_type: Box::new(return_type.substitute_generics(map)),
+                },
             BaseType::Class { name, fields, methods, constructor, generics } => {
-                let substituted_generics = generics.iter().map(|g| g.substitute_generics(map)).collect();
+                let substituted_generics = generics
+                    .iter()
+                    .map(|g| g.substitute_generics(map))
+                    .collect();
                 BaseType::Class {
                     name: name.clone(),
                     fields: fields.clone(),
@@ -290,7 +413,10 @@ impl BaseType {
                 }
             }
             BaseType::Struct { name, fields, methods, generics } => {
-                let substituted_generics = generics.iter().map(|g| g.substitute_generics(map)).collect();
+                let substituted_generics = generics
+                    .iter()
+                    .map(|g| g.substitute_generics(map))
+                    .collect();
                 BaseType::Struct {
                     name: name.clone(),
                     fields: fields.clone(),
@@ -299,7 +425,10 @@ impl BaseType {
                 }
             }
             BaseType::Enum { name, variants, methods, generics } => {
-                let substituted_generics = generics.iter().map(|g| g.substitute_generics(map)).collect();
+                let substituted_generics = generics
+                    .iter()
+                    .map(|g| g.substitute_generics(map))
+                    .collect();
                 BaseType::Enum {
                     name: name.clone(),
                     variants: variants.clone(),
@@ -308,7 +437,10 @@ impl BaseType {
                 }
             }
             BaseType::Blueprint { name, fields, methods, generics } => {
-                let substituted_generics = generics.iter().map(|g| g.substitute_generics(map)).collect();
+                let substituted_generics = generics
+                    .iter()
+                    .map(|g| g.substitute_generics(map))
+                    .collect();
                 BaseType::Blueprint {
                     name: name.clone(),
                     fields: fields.clone(),
@@ -323,6 +455,12 @@ impl BaseType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnType {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub return_type: BaseType,
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct MacroType {
     pub name: String,
     pub params: Vec<Param>,
     pub return_type: BaseType,
@@ -344,23 +482,22 @@ pub struct VarMetadata {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeMetadata {
     pub name: String, // "Node"
+    pub ty: BaseType,
     pub fields: HashMap<String, BaseType>, // {"data": Int, "next": UserType("Node")}
     pub constructor: Option<Vec<ConstructorType>>,
-    pub params: Vec<Param>, // {"value": Int}
-    pub generics: Vec<BaseType>, // {"T": UserType("Type")}
     pub methods: HashMap<String, FnType>, // {"set_next": Node.set_next -> void}
     pub handles: Vec<HandleMethods>,
     pub vars: HashMap<String, VarMetadata>,
-    pub is_enum: bool,
     pub variants: Option<Vec<EnumVariant>>,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScopeType {
+    //todo : improve it or remove it
     Fn,
     Block,
     Class,
     Struct,
-    Custom,
+    Blueprint,
     Impl,
     Enum,
     Case,
@@ -370,8 +507,8 @@ pub enum ScopeType {
     Label,
     Handle,
     Method,
-    Macro,
-    Coroutine,
+    Machine,
+    Micro,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
@@ -379,147 +516,184 @@ pub struct Param {
     pub type_node: BaseType,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Flag {
+    // Traits & Type capabilities (Compile-time and Runtime access)
+    Compilable,
+    Printable,
+    Throwable,
+
+    // Scope capabilities
     HasReturn,
+    HasYield,
     HasBreak,
+    HasContinue,
     HasThrow,
+    HasLeave,
+    HasExit,
+    HasCall,
     HasError,
     HasSwitch,
-    HasExit,
+
+    // Runtime execution states
+    Yielded,
+    IsDone,
+    Broken,
+    Continued,
+    Returned,
+    Leaved,
+
     Custom(String),
 }
 
 impl Flag {
     pub fn from_str(s: &str) -> Self {
         match s {
+            "compilable" | "is_compilable" => Flag::Compilable,
+            "printable" | "is_printable" => Flag::Printable,
+            "throwable" | "is_throwable" => Flag::Throwable,
             "has_return" => Flag::HasReturn,
+            "has_yield" => Flag::HasYield,
             "has_break" => Flag::HasBreak,
+            "has_continue" => Flag::HasContinue,
             "has_throw" => Flag::HasThrow,
-            "has_switch" => Flag::HasSwitch,
-            "has_error" => Flag::HasError,
+            "has_leave" => Flag::HasLeave,
             "has_exit" => Flag::HasExit,
+            "has_call" => Flag::HasCall,
+            "has_error" => Flag::HasError,
+            "has_switch" => Flag::HasSwitch,
+            "yielded" => Flag::Yielded,
+            "is_done" => Flag::IsDone,
+            "broken" => Flag::Broken,
+            "continued" => Flag::Continued,
+            "returned" => Flag::Returned,
+            "leaved" => Flag::Leaved,
             _ => Flag::Custom(s.to_string()),
         }
     }
 
     pub fn as_str(&self) -> String {
         match self {
+            Flag::Compilable => "compilable".to_string(),
+            Flag::Printable => "printable".to_string(),
+            Flag::Throwable => "throwable".to_string(),
             Flag::HasReturn => "has_return".to_string(),
+            Flag::HasYield => "has_yield".to_string(),
             Flag::HasBreak => "has_break".to_string(),
+            Flag::HasContinue => "has_continue".to_string(),
             Flag::HasThrow => "has_throw".to_string(),
+            Flag::HasLeave => "has_leave".to_string(),
+            Flag::HasExit => "has_exit".to_string(),
+            Flag::HasCall => "has_call".to_string(),
             Flag::HasError => "has_error".to_string(),
             Flag::HasSwitch => "has_switch".to_string(),
-            Flag::HasExit => "has_exit".to_string(),
+            Flag::Yielded => "yielded".to_string(),
+            Flag::IsDone => "is_done".to_string(),
+            Flag::Broken => "broken".to_string(),
+            Flag::Continued => "continued".to_string(),
+            Flag::Returned => "returned".to_string(),
+            Flag::Leaved => "leaved".to_string(),
             Flag::Custom(s) => s.clone(),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Setting {
-    All,
-    OOP,
-    Function,
+pub enum ScopeSection {
     Constructor,
-    Private,
     Public,
+    Private,
     Static,
     Extends,
-    Label,
-    Data,
     Handle,
+    Data,
+    Label,
     NotFound,
 }
 
-impl Setting {
+pub type Setting = ScopeSection;
+
+impl ScopeSection {
     pub fn from_str(s: &str) -> Self {
         match s {
-            "all" => Setting::All,
-            "oop" => Setting::OOP,
-            "function" => Setting::Function,
-            "constructor" | "init" => Setting::Constructor,
-            "private" => Setting::Private,
-            "public" => Setting::Public,
-            "static" => Setting::Static,
-            "extends" => Setting::Extends,
-            "label" => Setting::Label,
-            "data" => Setting::Data,
-            "handle" => Setting::Handle,
-            _ => Setting::NotFound,
+            "constructor" | "init" => ScopeSection::Constructor,
+            "private" => ScopeSection::Private,
+            "public" => ScopeSection::Public,
+            "static" => ScopeSection::Static,
+            "extends" => ScopeSection::Extends,
+            "handle" => ScopeSection::Handle,
+            "data" => ScopeSection::Data,
+            "label" => ScopeSection::Label,
+            _ => ScopeSection::NotFound,
         }
     }
 
     pub fn as_str(&self) -> String {
         match self {
-            Setting::All => "all".to_string(),
-            Setting::OOP => "oop".to_string(),
-            Setting::Function => "function".to_string(),
-            Setting::Private => "private".to_string(),
-            Setting::Public => "public".to_string(),
-            Setting::Static => "static".to_string(),
-            Setting::Extends => "extends".to_string(),
-            Setting::Constructor => "constructor".to_string(),
-            Setting::Label => "label".to_string(),
-            Setting::Data => "data".to_string(),
-            Setting::Handle => "handle".to_string(),
-            Setting::NotFound => "not_found".to_string(),
+            ScopeSection::Constructor => "constructor".to_string(),
+            ScopeSection::Private => "private".to_string(),
+            ScopeSection::Public => "public".to_string(),
+            ScopeSection::Static => "static".to_string(),
+            ScopeSection::Extends => "extends".to_string(),
+            ScopeSection::Handle => "handle".to_string(),
+            ScopeSection::Data => "data".to_string(),
+            ScopeSection::Label => "label".to_string(),
+            ScopeSection::NotFound => "not_found".to_string(),
         }
     }
+
     pub fn from_token(t: TokenKind) -> Self {
         let s = TokenKind::as_str(&t);
-        Setting::from_str(s)
+        ScopeSection::from_str(s)
     }
 }
 #[derive(Debug, Clone, PartialEq, Copy, Eq, Hash)]
 pub enum HandleMethods {
     IndexAccess,
-    IndexAssign,
-    IndexIncrement,
-    IndexDecrement,
-    IndexPreIncrement,
-    IndexPreDecrement,
-    IndexAdd,
-    IndexSub,
-    IndexMul,
-    IndexDiv,
-    IndexMod,
-    Display, // display()
-    Add, // add
+    Display, // display() to make it printable
+
     Increment,
     Decrement,
     PreIncrement,
     PreDecrement,
+
+    Add, // add
     Sub, // sub
     Mul, // mul
     Div, // div
     Mod, // mod
-    Not,
-    Negate,
+
+    Not, // !
+    Negate, //-
+
+    And, // and &&
+    Or, // or ||
+
     Arrow,
     ArrowAssign,
     FatArrow,
     Equal,
-    PartialEqual,
-    NotEqual,
-    GreaterThan,
-    LessThan,
-    GreaterThanEqual,
-    LessThanEqual,
-    And,
-    Or,
-    Iterator, // iterator()
+
+    PartialEqual, // ==
+    NotEqual, // !=
+    GreaterThan, // >
+    LessThan, // <
+    GreaterThanEqual, // >=
+    LessThanEqual, // <=
+
+    Iterator, // iter() or iterator()
     Next, // next()
+
+    Copy, // copy()
     Call,
     Leave,
     Yield,
-    Data,
     Break, // break
     Continue, // continue
     Return, // return
     Error, // handle error(e: Error) (receiver/catcher)
     Throw, // handle throw() -> Error (throwable capability)
-    Exit,
+    //Exit,
     Drop,
     IsDone,
     Default,
@@ -529,16 +703,6 @@ impl HandleMethods {
     pub fn from_str(s: &str) -> Self {
         match s {
             "index_access" => HandleMethods::IndexAccess,
-            "index_assign" => HandleMethods::IndexAssign,
-            "index_increment" => HandleMethods::IndexIncrement,
-            "index_decrement" => HandleMethods::IndexDecrement,
-            "index_pre_increment" => HandleMethods::IndexPreIncrement,
-            "index_pre_decrement" => HandleMethods::IndexPreDecrement,
-            "index_add" => HandleMethods::IndexAdd,
-            "index_sub" => HandleMethods::IndexSub,
-            "index_mul" => HandleMethods::IndexMul,
-            "index_div" => HandleMethods::IndexDiv,
-            "index_mod" => HandleMethods::IndexMod,
             "display" => HandleMethods::Display,
             "add" => HandleMethods::Add,
             "increment" => HandleMethods::Increment,
@@ -563,12 +727,12 @@ impl HandleMethods {
             "less_than_equal" => HandleMethods::LessThanEqual,
             "and" => HandleMethods::And,
             "or" => HandleMethods::Or,
-            "iterator" => HandleMethods::Iterator,
+            "iterator" | "iter" => HandleMethods::Iterator,
             "next" => HandleMethods::Next,
+            "copy" => HandleMethods::Copy,
             "call" => HandleMethods::Call,
             "leave" => HandleMethods::Leave,
             "yield" => HandleMethods::Yield,
-            "data" => HandleMethods::Data,
             "error" => HandleMethods::Error,
             "throw" => HandleMethods::Throw,
             "break" => HandleMethods::Break,
@@ -576,7 +740,7 @@ impl HandleMethods {
             "return" => HandleMethods::Return,
             "drop" => HandleMethods::Drop,
             "is_done" => HandleMethods::IsDone,
-            "exit" => HandleMethods::Exit,
+            // "exit" => HandleMethods::Exit,
             "default" => HandleMethods::Default,
             _ => HandleMethods::NotFound,
         }
@@ -584,19 +748,10 @@ impl HandleMethods {
     pub fn as_str(&self) -> &str {
         match self {
             HandleMethods::IndexAccess => "index_access",
-            HandleMethods::IndexAssign => "index_assign",
-            HandleMethods::IndexIncrement => "index_increment",
-            HandleMethods::IndexDecrement => "index_decrement",
-            HandleMethods::IndexPreIncrement => "index_pre_increment",
-            HandleMethods::IndexPreDecrement => "index_pre_decrement",
-            HandleMethods::IndexAdd => "index_add",
-            HandleMethods::IndexSub => "index_sub",
-            HandleMethods::IndexMul => "index_mul",
-            HandleMethods::IndexDiv => "index_div",
-            HandleMethods::IndexMod => "index_mod",
             HandleMethods::Display => "display",
-            HandleMethods::Iterator => "iterator",
+            HandleMethods::Iterator => "iter",
             HandleMethods::Next => "next",
+            HandleMethods::Copy => "copy",
             HandleMethods::Add => "add",
             HandleMethods::Increment => "increment",
             HandleMethods::Decrement => "decrement",
@@ -623,7 +778,7 @@ impl HandleMethods {
             HandleMethods::Or => "or",
             HandleMethods::Drop => "drop",
             HandleMethods::IsDone => "is_done",
-            HandleMethods::Exit => "exit",
+            //HandleMethods::Exit => "exit",
             HandleMethods::Break => "break",
             HandleMethods::Continue => "continue",
             HandleMethods::Return => "return",
@@ -631,7 +786,6 @@ impl HandleMethods {
             HandleMethods::Error => "error",
             HandleMethods::Throw => "throw",
             HandleMethods::Yield => "yield",
-            HandleMethods::Data => "data",
             HandleMethods::Call => "call",
             HandleMethods::Default => "default",
             HandleMethods::NotFound => "not_found",
@@ -646,7 +800,9 @@ pub enum Expr {
     LiteralBool(bool),
     LiteralChar(char),
     LiteralVoid,
+    LiteralUndefined,
     ArrayLiteral(Vec<Expr>),
+    Spread(Box<Expr>),
     Identifier(String),
     Super,
     This,
@@ -688,6 +844,11 @@ pub enum Expr {
     },
 
     Call {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+    },
+
+    MacroCall {
         callee: Box<Expr>,
         args: Vec<Expr>,
     },
@@ -739,6 +900,7 @@ impl Expr {
                 }
                 format!("[{}]", elems_code.join(", "))
             }
+            Expr::Spread(operand) => format!("...{}", operand.as_str()),
             Expr::ObjectLiteral(_stmts) => "unimplemented".to_string(),
             Expr::Identifier(name) => format!("{}", name),
             Expr::This => "this".to_string(),
@@ -750,7 +912,10 @@ impl Expr {
             Expr::Lambda { .. } => "lambda".to_string(),
             Expr::UnaryOp { operator, operand } => format!("{}{}", operator, operand.as_str()),
             Expr::IndexAccess { object, indices } => {
-                let idxs: Vec<String> = indices.iter().map(|i| i.as_str()).collect();
+                let idxs: Vec<String> = indices
+                    .iter()
+                    .map(|i| i.as_str())
+                    .collect();
                 format!("{}[{}]", object.as_str(), idxs.join(", "))
             }
             Expr::Call { callee, args } =>
@@ -824,6 +989,7 @@ pub enum Decl {
     ObjectDestructureDecl {
         visibility: Visibility,
         editability: Editability,
+        type_name: Option<String>,
         fields: Vec<(BaseType, String)>,
         rhs: Expr,
     },
@@ -837,13 +1003,13 @@ pub enum Decl {
         value: Expr,
     },
     BlockDecl {
-        is_exported: bool,
+        visibility: Visibility,
         name: String,
         return_type: Option<BaseType>,
         statements: Vec<Stmt>,
     },
     MicroDecl {
-        is_exported: bool,
+        visibility: Visibility,
         name: String,
         generics: Option<Vec<String>>,
         params: Vec<Param>,
@@ -851,26 +1017,12 @@ pub enum Decl {
         body: Vec<Stmt>,
     },
     ObjectDecl {
-        is_exported: bool,
+        visibility: Visibility,
         name: String,
         fields: Vec<ObjectField>,
     },
-    CustomDecl {
-        is_exported: bool,
-        name: String,
-        settings: Option<Vec<Setting>>,
-        handles: Option<Vec<HandleMethods>>,
-        data: Option<Expr>,
-        public_block: Option<Vec<Decl>>,
-        private_block: Option<Vec<Decl>>,
-        static_block: Option<Vec<Decl>>,
-        labels: Option<HashMap<String, Decl>>,
-        handle_block: Option<Vec<Decl>>,
-        constructor: Option<Vec<ConstructorDecl>>,
-    },
-
     ClassDecl {
-        is_exported: bool,
+        visibility: Visibility,
         name: String,
         extends: Option<String>,
         handles: Vec<HandleMethods>,
@@ -882,20 +1034,21 @@ pub enum Decl {
         constructor: Option<Vec<ConstructorDecl>>,
     },
     BlueprintDecl {
-        is_exported: bool,
+        visibility: Visibility,
         name: String,
         generics: Vec<BaseType>,
         definition: BlueprintDef,
     },
     ImplDecl {
         target: String,
+        target_generics: Vec<BaseType>,
         is_handle_impl: bool,
         methods: Vec<Decl>,
         handle_block: Vec<Decl>,
     },
 
     StructDecl {
-        is_exported: bool,
+        visibility: Visibility,
         name: String,
         handles: Vec<HandleMethods>,
         public_block: Vec<Decl>,
@@ -906,7 +1059,7 @@ pub enum Decl {
     },
 
     EnumDecl {
-        is_exported: bool,
+        visibility: Visibility,
         name: String,
         generics: Vec<BaseType>,
         handles: Vec<HandleMethods>,
@@ -914,7 +1067,7 @@ pub enum Decl {
         variants: Vec<EnumVariant>,
     },
     FnDecl {
-        is_exported: bool,
+        visibility: Visibility,
         is_virtual: bool,
         is_abstract: bool,
         name: String,
@@ -927,6 +1080,7 @@ pub enum Decl {
         name: String,
         params: Vec<Param>,
         return_type: BaseType,
+        alias: Option<String>,
     },
     ExternBlockDecl {
         abi: String,
@@ -940,22 +1094,42 @@ pub enum Decl {
         module_path: Vec<String>,
         imports: Option<Vec<String>>,
         abi: Option<String>,
+        alias: Option<String>,
     },
 
     /// `machine Name -> { @label -> { ... } ... handle -> { fn call() ... fn leave() ... } }`
     /// Pure state machine: @init label runs once, other labels are states,
     /// data is stored as `this.field` assignments within labels.
     MachineDecl {
-        is_exported: bool,
+        visibility: Visibility,
         name: String,
-        labels: HashMap<String, Decl>,
+        return_type: BaseType,
+        labels: Vec<Decl>,
         handle_block: Vec<Decl>,
+    },
+    DefineDecl {
+        visibility: Visibility,
+        name: String,
+        type_alias: Option<BaseType>,
+        value: Option<Expr>,
+    },
+    MacroDecl {
+        visibility: Visibility,
+        name: String,
+        params: Vec<Param>,
+        body: Vec<Stmt>,
+    },
+    CompileDecl {
+        name: String,
+        decls: Vec<Decl>,
     },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Declaration(Decl),
+    Block(Vec<Stmt>),
+    ThisBlock(Vec<Stmt>),
 
     CaseStmt {
         option: Expr,
@@ -967,7 +1141,7 @@ pub enum Stmt {
         condition: Expr,
         cases: Vec<Stmt>,
     },
-    ReturnStmt(Expr),
+    ReturnStmt(Option<Expr>),
     ForIn {
         item_decl: Box<Stmt>,
         iterable: Expr,
@@ -986,7 +1160,7 @@ pub enum Stmt {
         catch_param: String,
         catch_block: Vec<Stmt>,
     },
-    EnableStmt(String), // enable <flag> or enable all
+
     // ── Control Flow ──────────────────────────────────────────
     // set name -> value;
     // set obj.field -> value;   (property chain reassignment)

@@ -137,6 +137,13 @@ pub enum SymbolKind {
     Function {
         params: Vec<Param>,
         return_type: BaseType,
+        body: Option<Vec<Stmt>>,
+    },
+    /// Macro (macro)
+    Macro {
+        params: Vec<Param>,
+        return_type: BaseType,
+        body: Vec<Stmt>,
     },
     /// blueprint definition (class, struct, custom, enum)
     Blueprint,
@@ -153,6 +160,8 @@ pub struct SymbolInfo {
     pub dependencies: Vec<String>,
     pub is_used: bool,
     pub is_param: bool,
+    pub is_uninitialized: bool,
+    pub is_compilable: bool,
 }
 
 impl Default for SymbolInfo {
@@ -168,6 +177,8 @@ impl Default for SymbolInfo {
             dependencies: vec![],
             is_used: false,
             is_param: false,
+            is_uninitialized: false,
+            is_compilable: false,
         }
     }
 }
@@ -187,6 +198,10 @@ impl SymbolInfo {
             SymbolKind::Function { params, return_type, .. } => {
                 let p_strs: Vec<String> = params.iter().map(|p| p.type_node.as_str()).collect();
                 format!("Fn<({}), {}>", p_strs.join(", "), return_type.as_str())
+            }
+            SymbolKind::Macro { params, return_type, .. } => {
+                let p_strs: Vec<String> = params.iter().map(|p| p.type_node.as_str()).collect();
+                format!("Macro<({}), {}>", p_strs.join(", "), return_type.as_str())
             }
             SymbolKind::Blueprint => "blueprint".to_string(),
             SymbolKind::Label => "label".to_string(),
@@ -211,6 +226,7 @@ impl SymbolInfo {
         match &self.kind {
             SymbolKind::Variable { type_node, .. } => Some(type_node),
             SymbolKind::Function { return_type, .. } => Some(return_type),
+            SymbolKind::Macro { return_type, .. } => Some(return_type),
             _ => None,
         }
     }
@@ -303,6 +319,17 @@ impl Environment {
         }
         if let Some(ref parent) = self.parent {
             return parent.borrow_mut().mark_used(name);
+        }
+        false
+    }
+
+    pub fn mark_initialized(&mut self, name: &str) -> bool {
+        if let Some(info) = self.symbols.get_mut(name) {
+            info.is_uninitialized = false;
+            return true;
+        }
+        if let Some(ref parent) = self.parent {
+            return parent.borrow_mut().mark_initialized(name);
         }
         false
     }

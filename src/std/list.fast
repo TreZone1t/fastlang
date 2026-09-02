@@ -1,7 +1,7 @@
 // Standard Library: List utilities
 // using the scope system to define behavior
 
-export class node<T> -> {
+public class node<T> -> {
     private -> {
         T value;
         Option<name<node<T>>> next = None;
@@ -29,7 +29,7 @@ export class node<T> -> {
     }
 }
 
-export class list<T> -> {
+public class list<T> -> {
     private -> {
         Option<name<node<T>>> head = None;
         Option<name<node<T>>> current = None;
@@ -57,7 +57,7 @@ export class list<T> -> {
           }
         }
       }
-      fn pop() -> copy<T> {
+      fn pop() -> Option<copy<T>> {
         match (this.head) -> {
           Some(h) => {
             modify<node<T>> temp = h;
@@ -65,10 +65,10 @@ export class list<T> -> {
             copy<T> val = temp.get_value();
             del temp;
             this.length = this.length - 1;
-            return val;
+            return Some(val);
           }
           None => {
-            return default();
+            return None;
           }
         }
       }

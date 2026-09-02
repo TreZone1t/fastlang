@@ -42,12 +42,11 @@ impl Parser {
             // Parse FromExistingObject or FromTemporaryObject
             // Not needed for the current test, but let's implement later if needed.
             return Err(
-                "Syntax Error: Only explicit blueprint definitions are currently supported."
-                    .to_string(),
+                "Syntax Error: Only explicit blueprint definitions are currently supported.".to_string()
             );
         } else {
             return Err(
-                "Syntax Error: Expected '{' after '->' in blueprint definition.".to_string(),
+                "Syntax Error: Expected '{' after '->' in blueprint definition.".to_string()
             );
         };
 
@@ -58,56 +57,149 @@ impl Parser {
 
         let mut meta = TypeMetadata {
             name: name.clone(),
+            ty: BaseType::Blueprint {
+                name: name.clone(),
+                fields: Box::new(std::collections::HashMap::new()),
+                methods: Box::new(std::collections::HashMap::new()),
+                generics: vec![],
+            },
             fields: std::collections::HashMap::new(),
             constructor: None,
-            params: Vec::new(),
-            generics: Vec::new(),
             methods: std::collections::HashMap::new(),
             handles: Vec::new(),
             vars: std::collections::HashMap::new(),
-            is_enum: false,
             variants: None,
         };
 
         if let BlueprintDef::Explicit(ref fields) = definition {
             for field in fields {
-                meta.fields
-                    .insert(field.name.clone(), field.type_node.clone());
+                meta.fields.insert(field.name.clone(), field.type_node.clone());
             }
         }
         self.metadata.insert(name.clone(), meta);
 
         Ok(Decl::BlueprintDecl {
-            is_exported: false,
+            visibility: Visibility::Private,
             name,
             generics,
             definition,
         })
     }
 
+    fn parse_impl_target_name(&mut self) -> Result<String, String> {
+        match &self.peek().kind {
+            TokenKind::Identifier(name) => {
+                let s = name.clone();
+                self.advance();
+                Ok(s)
+            }
+            TokenKind::TypeChar => {
+                self.advance();
+                Ok("char".to_string())
+            }
+            TokenKind::TypeStr => {
+                self.advance();
+                Ok("str".to_string())
+            }
+            TokenKind::TypeBool | TokenKind::Flag => {
+                self.advance();
+                Ok("bool".to_string())
+            }
+            TokenKind::TypeUSize => {
+                self.advance();
+                Ok("usize".to_string())
+            }
+            TokenKind::TypeISize => {
+                self.advance();
+                Ok("isize".to_string())
+            }
+            TokenKind::TypeInt(sz) => {
+                let s = format!("int{}", sz);
+                self.advance();
+                Ok(s)
+            }
+            TokenKind::TypeUInt(sz) => {
+                let s = format!("uint{}", sz);
+                self.advance();
+                Ok(s)
+            }
+            TokenKind::TypeFloat(sz) => {
+                let s = format!("float{}", sz);
+                self.advance();
+                Ok(s)
+            }
+            _ => self.get_identifier("Expected target name for impl block"),
+        }
+    }
+
     pub(crate) fn parse_impl_decl(&mut self) -> Result<Decl, String> {
         self.consume(TokenKind::Impl, "Expected 'impl'")?;
 
-        if self.peek().kind == TokenKind::Handle {
+        let is_handle_impl = if self.peek().kind == TokenKind::Handle {
             self.advance(); // consume 'handle'
             self.consume(TokenKind::For, "Expected 'for' after 'handle' in 'impl handle for'")?;
-            let target = self.get_identifier("Expected target name")?;
+            true
+        } else {
+            false
+        };
 
+        let target = self.parse_impl_target_name()?;
+        let mut target_generics = Vec::new();
+        if self.peek().kind == TokenKind::Less {
+            self.parse_generics(&mut target_generics)?;
+        }
+
+        let target_type = if target == "array" {
+            BaseType::Array {
+                base_type: Box::new(if target_generics.is_empty() { BaseType::Unknown } else { target_generics[0].clone() }),
+                size: Box::new(None),
+            }
+        } else if target == "char" {
+            BaseType::Char
+        } else if target == "bool" || target == "flag" {
+            BaseType::Bool
+        } else if target.starts_with("int") {
+            BaseType::Int(Size::S32)
+        } else if target.starts_with("uint") {
+            BaseType::UInt(Size::S32)
+        } else if target.starts_with("float") {
+            BaseType::Float(Size::S64)
+        } else if let Some(meta) = self.metadata.get(&target) {
+            meta.ty.clone()
+        } else if self.fn_metadata.contains_key(&target) {
+            BaseType::Fn {
+                name: Some(target.clone()),
+                params: vec![],
+                return_type: Box::new(BaseType::Unknown),
+            }
+        } else {
+            BaseType::Blueprint {
+                name: target.clone(),
+                fields: Box::new(std::collections::HashMap::new()),
+                methods: Box::new(std::collections::HashMap::new()),
+                generics: target_generics.clone(),
+            }
+        };
+
+        if is_handle_impl {
             let mut used_methods = Vec::new();
-            let handle_block = self.parse_handle_body(&mut used_methods)?;
+            let allowed = self.get_allowed_handle(&target_type)?;
+            let handle_block = self.parse_handle_body(&mut used_methods, allowed)?;
             if self.peek().kind == TokenKind::SemiColon {
                 self.consume(TokenKind::SemiColon, "Expected ';'")?;
             }
             return Ok(Decl::ImplDecl {
                 target,
+                target_generics,
                 is_handle_impl: true,
                 methods: Vec::new(),
                 handle_block,
             });
         }
 
-        let target = self.get_identifier("Expected target name")?;
-        self.consume(TokenKind::Arrow, "Expected '->'")?;
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance();
+        }
         self.consume(TokenKind::LBrace, "Expected '{'")?;
 
         let mut methods: Vec<Decl> = Vec::new();
@@ -117,7 +209,8 @@ impl Parser {
             if self.peek().kind == TokenKind::Handle {
                 self.advance(); // consume 'handle'
                 let mut used_handles = Vec::new();
-                let hdls = self.parse_handle_body(&mut used_handles)?;
+                let allowed = self.get_allowed_handle(&target_type)?;
+                let hdls = self.parse_handle_body(&mut used_handles, allowed)?;
                 handle_block.extend(hdls);
             } else {
                 let stmt = self.parse_statement(ScopeType::Impl)?;
@@ -129,13 +222,42 @@ impl Parser {
             }
         }
         self.consume(TokenKind::RBrace, "Expected '}'")?;
-
         if self.peek().kind == TokenKind::SemiColon {
             self.consume(TokenKind::SemiColon, "Expected ';'")?;
         }
 
+        let entry = self.metadata.entry(target.clone()).or_insert_with(|| TypeMetadata {
+            name: target.clone(),
+            ty: target_type.clone(),
+            methods: std::collections::HashMap::new(),
+            fields: std::collections::HashMap::new(),
+            constructor: None,
+            handles: vec![],
+            vars: std::collections::HashMap::new(),
+            variants: None,
+        });
+        for m in &methods {
+            if let Decl::FnDecl { name, params, return_type, .. } = m {
+                entry.methods.insert(name.clone(), FnType {
+                    name: name.clone(),
+                    params: params.clone(),
+                    return_type: return_type.clone(),
+                });
+            }
+        }
+        for h in &handle_block {
+            if let Decl::FnDecl { name, params, return_type, .. } = h {
+                entry.methods.insert(name.clone(), FnType {
+                    name: name.clone(),
+                    params: params.clone(),
+                    return_type: return_type.clone(),
+                });
+            }
+        }
+
         Ok(Decl::ImplDecl {
             target,
+            target_generics,
             is_handle_impl: false,
             methods,
             handle_block,

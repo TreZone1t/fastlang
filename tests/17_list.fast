@@ -10,7 +10,13 @@ fn main() -> void {
     len = li.size();
     print("length : ", len);  // length : 7
     for (int32 i = 0; i < len; i = i + 1) -> {
-        int32 val = li.pop();
-        print("popped value : ", val);
+        match (li.pop()) -> {
+            Some(val) => {
+                print("popped value : ", val);
+            }
+            None => {
+                print("list is empty!");
+            }
+        }
     }
 }

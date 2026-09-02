@@ -3,7 +3,6 @@ use crate::frontend::parser::ast::*;
 use crate::frontend::parser::parser::Parser;
 
 impl Parser {
-
     pub(crate) fn parse_label_decl(&mut self, _scope: ScopeType) -> Result<Decl, String> {
         let label_name = if let TokenKind::LabelName(name) = self.peek().kind.clone() {
             self.advance();
@@ -21,6 +20,12 @@ impl Parser {
         if self.peek().kind == TokenKind::LBrace {
             self.advance(); // consume '{'
             while self.peek().kind != TokenKind::RBrace && self.peek().kind != TokenKind::EOF {
+                if let TokenKind::LabelName(ref nested_name) = self.peek().kind {
+                    return Err(format!(
+                        "Syntax Error: Nested labels are strictly forbidden. Found '{}' inside label '{}' at line {}.",
+                        nested_name, label_name, self.peek().line
+                    ));
+                }
                 if let Some(stmt) = self.parse_statement(ScopeType::Label)? {
                     body.push(stmt);
                 }
@@ -90,24 +95,128 @@ impl Parser {
         self.consume(TokenKind::Greater, "Expected '>' to close generic block")?;
         Ok(())
     }
+    pub(crate) fn get_allowed_handle(
+        &mut self,
+        base_type: &BaseType
+    ) -> Result<Vec<HandleMethods>, String> {
+        let mut allowed_handle: Vec<HandleMethods> = Vec::new();
+        match base_type {
+            BaseType::Class { .. } | BaseType::Enum { .. } | BaseType::Struct { .. } | BaseType::Blueprint { .. }
+            | BaseType::Array { .. } | BaseType::Char | BaseType::Int(_) | BaseType::UInt(_) | BaseType::Float(_) | BaseType::Bool | BaseType::USize | BaseType::ISize => {
+                allowed_handle.push(HandleMethods::Add);
+                allowed_handle.push(HandleMethods::Mod);
+                allowed_handle.push(HandleMethods::Mul);
+                allowed_handle.push(HandleMethods::Sub);
+                allowed_handle.push(HandleMethods::Div);
 
+                allowed_handle.push(HandleMethods::PreDecrement);
+                allowed_handle.push(HandleMethods::PreIncrement);
+                allowed_handle.push(HandleMethods::Decrement);
+                allowed_handle.push(HandleMethods::Increment);
+
+                allowed_handle.push(HandleMethods::Not);
+                allowed_handle.push(HandleMethods::Negate);
+                allowed_handle.push(HandleMethods::And);
+                allowed_handle.push(HandleMethods::Or);
+
+                allowed_handle.push(HandleMethods::PartialEqual);
+                allowed_handle.push(HandleMethods::NotEqual);
+                allowed_handle.push(HandleMethods::GreaterThan);
+                allowed_handle.push(HandleMethods::GreaterThanEqual);
+                allowed_handle.push(HandleMethods::LessThan);
+                allowed_handle.push(HandleMethods::LessThanEqual);
+
+                allowed_handle.push(HandleMethods::Equal);
+                allowed_handle.push(HandleMethods::Arrow);
+                allowed_handle.push(HandleMethods::ArrowAssign);
+                allowed_handle.push(HandleMethods::FatArrow);
+
+                allowed_handle.push(HandleMethods::Call);
+
+                allowed_handle.push(HandleMethods::Default);
+
+                allowed_handle.push(HandleMethods::IndexAccess);
+
+                allowed_handle.push(HandleMethods::Iterator);
+                allowed_handle.push(HandleMethods::Next);
+
+                allowed_handle.push(HandleMethods::Display);
+                allowed_handle.push(HandleMethods::Throw);
+
+                allowed_handle.push(HandleMethods::Drop);
+                allowed_handle.push(HandleMethods::Copy);
+            }
+            BaseType::Block { .. } | BaseType::Machine { .. } => {
+                allowed_handle.push(HandleMethods::Call);
+
+                allowed_handle.push(HandleMethods::Break);
+                allowed_handle.push(HandleMethods::Continue);
+
+                allowed_handle.push(HandleMethods::Display);
+
+                allowed_handle.push(HandleMethods::Throw);
+
+                allowed_handle.push(HandleMethods::Error);
+
+                allowed_handle.push(HandleMethods::Leave);
+                allowed_handle.push(HandleMethods::Yield);
+
+                allowed_handle.push(HandleMethods::Drop);
+                allowed_handle.push(HandleMethods::Return);
+                allowed_handle.push(HandleMethods::IsDone);
+            }
+            BaseType::Fn { .. } | BaseType::Method { .. } => {
+                allowed_handle.push(HandleMethods::Break);
+                allowed_handle.push(HandleMethods::Continue);
+
+                allowed_handle.push(HandleMethods::Display);
+
+                allowed_handle.push(HandleMethods::Throw);
+
+                allowed_handle.push(HandleMethods::Error);
+
+                allowed_handle.push(HandleMethods::Leave);
+                allowed_handle.push(HandleMethods::Yield);
+
+                allowed_handle.push(HandleMethods::Return);
+                allowed_handle.push(HandleMethods::IsDone);
+            }
+            _ => {
+                return Err(format!("No handles allowed for type {:?}", base_type));
+            }
+        }
+        Ok(allowed_handle)
+    }
     pub(crate) fn parse_handle_body(
         &mut self,
-        used_methods: &mut Vec<HandleMethods>
+        used_methods: &mut Vec<HandleMethods>,
+        allowed_methods: Vec<HandleMethods>
     ) -> Result<Vec<Decl>, String> {
         let mut handle_fn: Vec<Decl> = vec![];
-        self.consume(TokenKind::Arrow, "Expected '->' after 'handle'")?;
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance();
+        }
         self.consume(TokenKind::LBrace, "Expected '{' to open handle block")?;
 
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
             if self.peek().kind == TokenKind::Fn {
                 self.advance();
-                let method_name = self.get_identifier("Expected handle method name")?;
+                let method_name = self.get_handle_identifier("Expected handle method name")?;
                 let handle_kind = HandleMethods::from_str(&method_name);
                 if handle_kind == HandleMethods::NotFound {
                     return Err(
                         format!(
                             "Syntax Error: '{}' is not a valid allowed handle method at line {}, column {}",
+                            method_name,
+                            self.peek().line,
+                            self.peek().column
+                        )
+                    );
+                }
+                if !allowed_methods.contains(&handle_kind) {
+                    return Err(
+                        format!(
+                            "Syntax Error: '{}' is not a allowed handle method for this scope type at line {}, column {}",
                             method_name,
                             self.peek().line,
                             self.peek().column
@@ -135,7 +244,17 @@ impl Parser {
                     self.consume(TokenKind::RParen, "Expected ')' after handle method parameters")?;
                 }
 
-                if matches!(handle_kind, HandleMethods::Display | HandleMethods::Iterator | HandleMethods::Next | HandleMethods::Break | HandleMethods::Continue) {
+                if
+                    matches!(
+                        handle_kind,
+                        HandleMethods::Display |
+                            HandleMethods::Iterator |
+                            HandleMethods::Next |
+                            HandleMethods::Break |
+                            HandleMethods::Continue |
+                            HandleMethods::Copy
+                    )
+                {
                     if !method_params.is_empty() {
                         return Err(
                             format!(
@@ -148,7 +267,7 @@ impl Parser {
                     }
                 }
 
-                let default_ret = if handle_kind == HandleMethods::Display {
+                let default_ret: BaseType = if handle_kind == HandleMethods::Display {
                     BaseType::Array {
                         base_type: Box::new(BaseType::Char),
                         size: Box::new(None),
@@ -173,7 +292,7 @@ impl Parser {
                 self.consume(TokenKind::RBrace, "Expected '}' to close handle method body")?;
 
                 handle_fn.push(Decl::FnDecl {
-                    is_exported: false,
+                    visibility: Visibility::Private,
                     is_virtual: true,
                     is_abstract: false,
                     name: method_name,
@@ -201,7 +320,9 @@ impl Parser {
         meta: &mut TypeMetadata
     ) -> Result<Option<Vec<ConstructorDecl>>, String> {
         self.advance(); // 'constructor'
-        self.consume(TokenKind::Arrow, "Expected '->' after 'constructor'")?;
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance();
+        }
         self.consume(TokenKind::LBrace, "Expected '{' to open constructor block")?;
         let mut constructor_list = Vec::new();
 
@@ -243,28 +364,12 @@ impl Parser {
                 }
                 self.consume(TokenKind::LBrace, "Expected '{' for constructor body")?;
                 let mut body = Vec::new();
-                loop {
-                    //we have only fn decl and var decl so we will not use the parse_statement ever here
-                    let token = self.peek().kind.clone();
-                    if matches!(token, TokenKind::Identifier(_)) || token == TokenKind::This {
-                        let stmt = self.parse_statement(ScopeType::Fn)?;
-                        if stmt.is_none() {
-                            return Err(
-                                "Syntax Error: Expected statement inside constructor block".to_string()
-                            );
-                        }
-                        body.push(stmt.unwrap());
-                    } else {
-                        return Err(
-                            "Syntax Error: Expected only reassignment inside constructor block".to_string()
-                        );
-                    }
-
-                    if self.peek().kind == TokenKind::RBrace {
-                        self.advance();
-                        break;
+                while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                    if let Some(stmt) = self.parse_statement(ScopeType::Fn)? {
+                        body.push(stmt);
                     }
                 }
+                self.consume(TokenKind::RBrace, "Expected '}' for constructor body")?;
                 constructor_list.push(ConstructorDecl {
                     expected_types: Vec::new(), // will be populated in analyzer or later
                     params: param.clone(),

@@ -14,21 +14,21 @@ struct User {
 }
 
 fn main() -> int32 {
-    log("=== 1. Heap Allocation with new ===");
+    print("=== 1. Heap Allocation with new ===");
     name<User> user_ptr = new User(1, "Abdulhakim");
-    log("User ID: ", user_ptr.id);
-    log("User Name: ", user_ptr.name);
+    print("User ID: ", user_ptr.id);
+    print("User Name: ", user_ptr.name);
 
-    log("=== 2. Mutable Borrow (modify<T>) ===");
+    print("=== 2. Mutable Borrow (modify<T>) ===");
     modify<User> editable_user = user_ptr;
     editable_user.name = "Hakim";
-    log("Updated name: ", user_ptr.name);
+    print("Updated name: ", user_ptr.name);
 
-    log("=== 3. Read-Only Copy (copy<T>) ===");
+    print("=== 3. Read-Only Copy (copy<T>) ===");
     copy<int32> snapshot = user_ptr.id;
-    log("Snapshot value: ", snapshot);
+    print("Snapshot value: ", snapshot);
 
-    log("=== 4. Dynamic Cleanup with del ===");
+    print("=== 4. Dynamic Cleanup with del ===");
     del user_ptr;
 
     return 0;

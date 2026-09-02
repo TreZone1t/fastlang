@@ -1,0 +1,7 @@
+// Fail Test 71: Cannot redeclare variable in same scope with walrus :=
+
+fn main() -> int32 {
+    x := 10;
+    x := 20;
+    return x;
+}

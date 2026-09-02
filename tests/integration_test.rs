@@ -1,17 +1,26 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 #[test]
 fn run_all_fs_tests() {
+    let backend = std::env::var("FASTLANG_BACKEND").unwrap_or_else(|_| "cpp".to_string());
+    run_tests_with_backend(&backend);
+}
+
+#[test]
+fn run_cranelift_aot_tests() {
+    run_tests_with_backend("cranelift");
+}
+
+fn run_tests_with_backend(backend: &str) {
     let test_dir = Path::new("tests");
     if !test_dir.exists() {
         println!("No tests directory found.");
         return;
     }
 
-    let mut entries = fs
-        ::read_dir(test_dir)
+    let mut entries = fs::read_dir(test_dir)
         .expect("failed to read tests directory")
         .map(|res| res.map(|e| e.path()))
         .collect::<Result<Vec<_>, std::io::Error>>()
@@ -19,126 +28,201 @@ fn run_all_fs_tests() {
 
     entries.sort();
 
-    let mut failed_tests = 0;
-    let mut passed_tests = 0;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
 
-    for path in entries {
-        let ext = path.extension().and_then(|s| s.to_str());
-        if path.is_file() && (ext == Some("fast") || ext == Some("fs")) {
-            let filename = path.file_name().unwrap().to_str().unwrap();
-            let should_fail =
-                filename.starts_with("fail_") ||
-                filename.contains("_fail_") ||
-                filename.contains("fail");
+    let passed_tests = Arc::new(Mutex::new(0));
+    let failed_tests = Arc::new(Mutex::new(0));
+    let logs = Arc::new(Mutex::new(String::new()));
 
-            let parent = path.parent().unwrap_or(Path::new(""));
-            let build_exe = parent.join("build").join(if cfg!(windows) { "app.exe" } else { "app" });
-            let root_exe = PathBuf::from(if cfg!(windows) { "./app.exe" } else { "./app" });
-            if build_exe.exists() {
+    // Limit concurrency to chunks of 8.
+    for chunk in entries.chunks(8) {
+        let mut chunk_handles = vec![];
+        for path in chunk {
+            let path = path.clone();
+            let ext = path.extension().and_then(|s| s.to_str());
+            if !path.is_file() || (ext != Some("fast") && ext != Some("fs")) {
+                continue;
+            }
+
+            let backend = backend.to_string();
+            let passed = Arc::clone(&passed_tests);
+            let failed = Arc::clone(&failed_tests);
+            let logs_arc = Arc::clone(&logs);
+
+            chunk_handles.push(thread::spawn(move || {
+                let filename = path.file_name().unwrap().to_str().unwrap().to_string();
+                let should_fail = filename.starts_with("fail_")
+                    || filename.contains("_fail_")
+                    || filename.contains("fail");
+
+                let parent = path.parent().unwrap_or(Path::new(""));
+                let build_dir = parent.join("build");
+                let base_name = filename.strip_suffix(".fast").or_else(|| filename.strip_suffix(".fs")).unwrap_or(&filename);
+                let build_exe = build_dir.join(if cfg!(windows) {
+                    format!("{}.exe", base_name)
+                } else {
+                    format!("{}", base_name)
+                });
+                let build_cpp = build_dir.join(format!("{}.cpp", base_name));
                 let _ = fs::remove_file(&build_exe);
-            }
-            if root_exe.exists() {
-                let _ = fs::remove_file(&root_exe);
-            }
+                let _ = fs::remove_file(&build_cpp);
 
-            println!("--------------------------------------------------");
-            println!("Running test: {}", filename);
-            let output = Command::new(env!("CARGO_BIN_EXE_fast_lang"))
-                .arg(path.to_str().unwrap())
-                .output()
-                .expect("failed to execute process");
-
-            if should_fail {
-                if output.status.success() {
-                    println!("❌ FAILED: Test {} was expected to fail but succeeded (Analyzer missed the error)!", filename);
-                    println!("Stdout: {}", String::from_utf8_lossy(&output.stdout));
-                    failed_tests += 1;
-                } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    println!("✅ PASSED (Expected Failure): {}", filename);
-                    println!("Analyzer Error Output:\n{}", stderr.trim());
-                    passed_tests += 1;
+                let mut cmd = Command::new(env!("CARGO_BIN_EXE_fast_lang"));
+                cmd.arg(path.to_str().unwrap());
+                cmd.arg("-o").arg(build_exe.to_str().unwrap());
+                if backend == "cranelift" || backend == "native" {
+                    cmd.arg("--backend").arg("cranelift").arg("--aot");
                 }
-            } else {
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    println!("❌ FAILED (Unexpected Failure): {}", filename);
-                    println!("Stdout:\n{}", stdout.trim());
-                    println!("Stderr:\n{}", stderr.trim());
-                    failed_tests += 1;
-                } else {
-                    let content = fs::read_to_string(&path).unwrap();
-                    let mut expected_lines = Vec::new();
-                    for line in content.lines() {
-                        if let Some(idx) = line.find("// EXPECT:") {
-                            let expected = line[idx + 10..].trim();
-                            expected_lines.push(expected.to_string());
-                        }
+
+                let output = cmd.output().expect("failed to execute process");
+
+                let mut local_log = String::new();
+                let mut is_success = true;
+
+                if should_fail {
+                    if output.status.success() {
+                        local_log.push_str(&format!(
+                            "
+❌ FAILED: Test {} was expected to fail but succeeded!
+Stdout: {}
+",
+                            filename,
+                            String::from_utf8_lossy(&output.stdout)
+                        ));
+                        is_success = false;
+                    } else {
+                        local_log.push_str(&format!(
+                            "✅ PASSED (Expected Failure): {}
+",
+                            filename
+                        ));
                     }
-
-                    let exe_to_run = if build_exe.exists() {
-                        build_exe.clone()
+                } else {
+                    if !output.status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        local_log.push_str(&format!(
+                            "
+❌ FAILED (Unexpected Failure): {}
+Stdout:
+{}
+Stderr:
+{}
+",
+                            filename,
+                            stdout.trim(),
+                            stderr.trim()
+                        ));
+                        is_success = false;
                     } else {
-                        root_exe.clone()
-                    };
-
-                    if !exe_to_run.exists() {
-                        println!("❌ FAILED (Executable Not Found): {} was expected to compile to executable {:?} (or {:?}) but was not found. Stdout:\n{}", filename, build_exe, root_exe, String::from_utf8_lossy(&output.stdout));
-                        failed_tests += 1;
-                    } else {
-                        let app_output = Command::new(&exe_to_run)
-                            .output()
-                            .expect("failed to execute compiled app");
-
-                        if !app_output.status.success() {
-                            let app_stderr = String::from_utf8_lossy(&app_output.stderr);
-                            let app_stdout = String::from_utf8_lossy(&app_output.stdout);
-                            println!("❌ FAILED (Execution Error): {} exited with non-zero exit code: {:?}", filename, app_output.status.code());
-                            println!("Stdout:\n{}", app_stdout.trim());
-                            println!("Stderr:\n{}", app_stderr.trim());
-                            failed_tests += 1;
-                        } else if !expected_lines.is_empty() {
-                            let app_stdout = String::from_utf8_lossy(&app_output.stdout);
-                            let actual_lines: Vec<&str> = app_stdout
-                                .lines()
-                                .map(|s| s.trim())
-                                .filter(|s| !s.is_empty())
-                                .collect();
-
-                            let mut expected_idx = 0;
-                            for actual in actual_lines {
-                                if
-                                    expected_idx < expected_lines.len() &&
-                                    actual == expected_lines[expected_idx]
-                                {
-                                    expected_idx += 1;
-                                }
+                        let content = fs::read_to_string(&path).unwrap();
+                        let mut expected_lines = Vec::new();
+                        for line in content.lines() {
+                            if let Some(idx) = line.find("// EXPECT:") {
+                                expected_lines.push(line[idx + 10..].trim().to_string());
                             }
+                        }
 
-                            if expected_idx < expected_lines.len() {
-                                println!("❌ FAILED (Output Mismatch): {}", filename);
-                                println!("Expected to find: '{}'", expected_lines[expected_idx]);
-                                println!("Actual Output:\n{}", app_stdout);
-                                failed_tests += 1;
-                            } else {
-                                println!("✅ PASSED: {}", filename);
-                                passed_tests += 1;
-                            }
+                        if !build_exe.exists() {
+                            local_log.push_str(&format!(
+                                "
+❌ FAILED (Executable Not Found): {} (expected {:?})
+",
+                                filename, build_exe
+                            ));
+                            is_success = false;
                         } else {
-                            println!("✅ PASSED: {}", filename);
-                            passed_tests += 1;
+                            let app_output = Command::new(&build_exe)
+                                .output()
+                                .expect("failed to execute compiled app");
+                            if !app_output.status.success() {
+                                let app_stderr = String::from_utf8_lossy(&app_output.stderr);
+                                let app_stdout = String::from_utf8_lossy(&app_output.stdout);
+                                local_log.push_str(&format!(
+                                    "
+❌ FAILED (Execution Error): {} exited with code {:?}
+Stdout:
+{}
+Stderr:
+{}
+",
+                                    filename,
+                                    app_output.status.code(),
+                                    app_stdout.trim(),
+                                    app_stderr.trim()
+                                ));
+                                is_success = false;
+                            } else if !expected_lines.is_empty() {
+                                let app_stdout = String::from_utf8_lossy(&app_output.stdout);
+                                let actual_lines: Vec<&str> = app_stdout
+                                    .lines()
+                                    .map(|s| s.trim())
+                                    .filter(|s| !s.is_empty())
+                                    .collect();
+                                let mut expected_idx = 0;
+                                for actual in actual_lines {
+                                    if expected_idx < expected_lines.len()
+                                        && actual == expected_lines[expected_idx]
+                                    {
+                                        expected_idx += 1;
+                                    }
+                                }
+                                if expected_idx < expected_lines.len() {
+                                    local_log.push_str(&format!(
+                                        "
+❌ FAILED (Output Mismatch): {}
+Expected to find: '{}'
+Actual Output:
+{}
+",
+                                        filename, expected_lines[expected_idx], app_stdout
+                                    ));
+                                    is_success = false;
+                                } else {
+                                    local_log.push_str(&format!(
+                                        "✅ PASSED: {}
+",
+                                        filename
+                                    ));
+                                }
+                            } else {
+                                local_log.push_str(&format!(
+                                    "✅ PASSED: {}
+",
+                                    filename
+                                ));
+                            }
                         }
                     }
                 }
-            }
+
+                let _ = fs::remove_file(&build_exe); // Cleanup
+                let _ = fs::remove_file(&build_cpp); // Cleanup
+
+                let mut logs_lock = logs_arc.lock().unwrap();
+                logs_lock.push_str(&local_log);
+                print!("{}", local_log);
+
+                if is_success {
+                    *passed.lock().unwrap() += 1;
+                } else {
+                    *failed.lock().unwrap() += 1;
+                }
+            }));
+        }
+        for h in chunk_handles {
+            h.join().unwrap();
         }
     }
 
-    println!("==================================================");
-    println!("Test Run Complete: {} Passed, {} Failed", passed_tests, failed_tests);
+    let passed = *passed_tests.lock().unwrap();
+    let failed = *failed_tests.lock().unwrap();
 
-    if failed_tests > 0 {
-        panic!("{} tests failed! Check the logs above.", failed_tests);
+    println!("==================================================");
+    println!("Test Run Complete: {} Passed, {} Failed", passed, failed);
+
+    if failed > 0 {
+        panic!("{} tests failed! Check the logs above.", failed);
     }
 }

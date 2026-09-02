@@ -1,0 +1,12 @@
+// Test 91 (Expected Failure): Attempting to delete a struct without a drop handle
+struct PlainStruct -> {
+    public -> {
+        int32 x = 5;
+    }
+}
+
+fn main() -> int32 {
+    PlainStruct ps;
+    del ps;
+    return 0;
+}

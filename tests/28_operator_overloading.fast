@@ -60,39 +60,39 @@ class ComplexNumber -> {
 fn main() -> int32 {
     // 1. arrow_assign (declaration init)
     ComplexNumber c1 -> [3, 4];
-    print(c1[0]); // EXPECT: 3
-    print(c1[1]); // EXPECT: 4
+    println(c1[0]); // EXPECT: 3
+    println(c1[1]); // EXPECT: 4
 
     // 2. arrow (re-assignment)
     ComplexNumber c2;
     c2 -> [1, 2];
-    print(c2[0]); // EXPECT: 1
-    print(c2[1]); // EXPECT: 2
+    println(c2[0]); // EXPECT: 1
+    println(c2[1]); // EXPECT: 2
 
     // 3. add (+)
     ComplexNumber sum = c1 + c2;
-    print(sum[0]); // EXPECT: 4
-    print(sum[1]); // EXPECT: 6
+    println(sum[0]); // EXPECT: 4
+    println(sum[1]); // EXPECT: 6
 
     // 4. sub (-)
     ComplexNumber diff = c1 - c2;
-    print(diff[0]); // EXPECT: 2
-    print(diff[1]); // EXPECT: 2
+    println(diff[0]); // EXPECT: 2
+    println(diff[1]); // EXPECT: 2
 
     // 5. mul (*)
     ComplexNumber prod = c1 * c2;
-    print(prod[0]); // EXPECT: -5
-    print(prod[1]); // EXPECT: 10
+    println(prod[0]); // EXPECT: -5
+    println(prod[1]); // EXPECT: 10
 
     // 6. equal (==) and not_equal (!=)
     bool is_eq = (c1 == c2);
-    print(is_eq); // EXPECT: false
+    println(is_eq); // EXPECT: false
 
     bool is_neq = (c1 != c2);
-    print(is_neq); // EXPECT: true
+    println(is_neq); // EXPECT: true
 
     // 7. display
-    print(sum); // EXPECT: 10
+    println(sum); // EXPECT: 10
 
     return 0;
 }

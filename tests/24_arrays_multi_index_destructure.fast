@@ -1,6 +1,14 @@
-custom Matrix -> {
-    data -> 42;
+class Matrix -> {
+    constructor -> {
+        init() -> {
+            //default
+        }
+    }
+//todo :Invalid field found : fn , that is not allow in the array typed scope to use it
     handle -> {
+        fn display() -> {
+            return "Matrix"
+        }
         fn index_access(r: int32, c: int32) -> int32 {
             return r * 10 + c;
         }
@@ -13,21 +21,21 @@ fn sum_pair(arr: int32[]) -> int32 {
 
 fn main() -> int32 {
     int32 nums[] = [10, 20, 30];
-    print(nums[0]);
-    print(nums[1]);
-    print(nums[2]);
+    println(nums[0]);
+    println(nums[1]);
+    println(nums[2]);
 
     int32 [first, second, third] = [100, 200, 300];
-    print(first);
-    print(second);
-    print(third);
+    println(first);
+    println(second);
+    println(third);
 
     Matrix mat = new Matrix();
     int32 val = mat[3, 7];
-    print(val);
+    println(val);
 
     int32 pair_sum = sum_pair([5, 15]);
-    print(pair_sum);
+    println(pair_sum);
 
     return 0;
 }

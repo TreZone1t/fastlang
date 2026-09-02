@@ -1,6 +1,6 @@
 // Test 21: Structured Error Handling & Throw Mechanism
 
-custom IHaveThrow {
+machine IHaveThrow {
     @start -> {
         throw new Error("this is an error using handle");
     }

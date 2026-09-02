@@ -1,5 +1,6 @@
 // FastLang Standard Library: coroutine
-export class go -> {
+
+public class go -> {
     public -> {
         int32 capacity = 10;
     }
@@ -9,16 +10,27 @@ export class go -> {
             this.capacity = cap;
         }
         init(task: method<void>) -> {
-            task();
+            while(!task.is_done){
+                task();
+            }
+            this.is_done = true;
         }
     }
 
     handle -> {
         fn call(task: method<void>) -> void {
-            task();
+            while(!task.is_done){
+                task();
+            }
+            this.is_done = true;
         }
         fn call(task: method<int32>) -> int32 {
-            return task();
+             int32 res;
+            while(!task.is_done){
+                res = task();
+            }
+            this.is_done = true;
+            return res;
         }
     }
 }

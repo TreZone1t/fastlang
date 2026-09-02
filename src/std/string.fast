@@ -1,5 +1,5 @@
 // FastLang Standard Library: string
-export class string -> {
+public class string -> {
     private -> {
         char[] buffer = []; //we will use list in future not array.
         int32 length = 0;

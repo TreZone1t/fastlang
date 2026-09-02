@@ -1,0 +1,15 @@
+fn i_can_me(c:int)->void{
+    if (c == 0) return;
+    print("counter : ",c ," .\n");
+    c -= 1;
+    i_can_me(c);
+}
+fn fib(n:int) -> int {
+    if (n == 0) return 1;
+    return n * fib(n - 1);
+}
+fn main () -> int {
+ i_can_me(10);
+ print("fib :" ,fib(3),".\n")
+ return 0;
+}

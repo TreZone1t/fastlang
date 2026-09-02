@@ -21,6 +21,7 @@
 
 # Ignore all files in the "build" directory
 build/*
+tests/build/*
 !build/build.rs
 !build/main.rs
 !build/Cargo.toml

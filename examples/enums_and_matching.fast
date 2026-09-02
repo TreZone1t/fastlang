@@ -11,17 +11,17 @@ enum Status {
 fn process_status(s: Status) -> void {
     match (s) -> {
         Idle => {
-            log("State: System is idle.");
+            print("State: System is idle.");
         }
         Running(progress) => {
-            log("State: In progress: ", progress);
+            print("State: In progress: ", progress);
         }
         Success(msg) => {
-            log("State: Success! ", msg);
+            print("State: Success! ", msg);
         }
         Failed(err_code, reason) => {
-            log("State: Failed with code ", err_code);
-            log("Reason: ", reason);
+            print("State: Failed with code ", err_code);
+            print("Reason: ", reason);
         }
     }
 }

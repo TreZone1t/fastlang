@@ -2,12 +2,12 @@
 import @c "stdio.h";
 
 extern @c {
-    fn printf(format: string, a: int32, b: int32, c: int32) -> int32;
-    fn puts(s: string) -> int32;
+    fn printf(format: string, a: int32, b: int32, c: int32) -> int32 as c_printf;
+    fn puts(s: string) -> int32 as c_puts;
 }
 
 fn main() -> int32 {
-    printf("Hello from stdio printf: %d + %d = %d\n", 10, 20, 30);
-    puts("Hello from stdio puts!");
+    c_printf("Hello from stdio printf: %d + %d = %d\n", 10, 20, 30);
+    c_puts("Hello from stdio puts!");
     return 0;
 }

@@ -1,14 +1,18 @@
-use crate::frontend::parser::ast::BaseType;
+use crate::frontend::parser::ast::*;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum IRType {
     Void,
-    Int32,
-    Int64,
-    Float32,
-    Float64,
+    Int(Size),
+    UInt(Size),
+    Float(Size),
     Bool,
+    Char,
+    Byte,
+    USize,
+    ISize,
+    Type,
     Pointer(Box<IRType>),
     Array(Box<IRType>),
     Object(String),
@@ -19,16 +23,20 @@ pub enum IRType {
 impl IRType {
     pub fn from_ast(tn: &BaseType) -> Self {
         match tn {
-            BaseType::Int8 | BaseType::Int16 | BaseType::Int32 => IRType::Int32,
-            BaseType::Int64 | BaseType::Int128 => IRType::Int64,
-            BaseType::Float32 => IRType::Float32,
-            BaseType::Float64 => IRType::Float64,
+            BaseType::Int(s) => IRType::Int(s.clone()),
+            BaseType::Char => IRType::Char,
+            BaseType::UInt(s) => IRType::UInt(s.clone()),
+            BaseType::USize => IRType::USize,
+            BaseType::ISize => IRType::ISize,
+            BaseType::Float(s) => IRType::Float(s.clone()),
             BaseType::Bool => IRType::Bool,
-            BaseType::Char => IRType::Int32,
+            BaseType::Type(_) => IRType::Type,
             BaseType::Void => IRType::Void,
-            BaseType::Array { base_type, .. } => IRType::from_ast(base_type.as_ref()),
-
-            BaseType::Custom { name, .. } => IRType::CustomScope(name.clone()),
+            BaseType::Array { base_type, .. } =>
+                IRType::Array(Box::new(IRType::from_ast(base_type.as_ref()))),
+            BaseType::Pointer(inner) => IRType::Pointer(Box::new(IRType::from_ast(inner.as_ref()))),
+            BaseType::Block { name, .. } | BaseType::Machine { name, .. } =>
+                IRType::CustomScope(name.clone()),
             BaseType::Struct { name, .. } => IRType::CustomScope(name.clone()),
             BaseType::Class { name, .. } => IRType::CustomScope(name.clone()),
             BaseType::Enum { name, .. } => IRType::CustomScope(name.clone()),
@@ -41,11 +49,22 @@ impl IRType {
     pub fn size_in_bytes(&self) -> usize {
         match self {
             IRType::Void => 0,
-            IRType::Bool => 1,
-            IRType::Int32 | IRType::Float32 => 4,
-            IRType::Int64 | IRType::Float64 => 8,
+            IRType::Bool | IRType::Int(Size::S8) | IRType::UInt(Size::S8) | IRType::Byte => 1,
+            IRType::Int(Size::S16) | IRType::UInt(Size::S16) => 2,
+            | IRType::Int(Size::S32)
+            | IRType::UInt(Size::S32)
+            | IRType::Float(Size::S32)
+            | IRType::Char
+            | IRType::Type => 4,
+            | IRType::Int(Size::S64)
+            | IRType::UInt(Size::S64)
+            | IRType::Float(Size::S64)
+            | IRType::USize
+            | IRType::ISize => 8,
+            IRType::Int(Size::S128) | IRType::UInt(Size::S128) | IRType::Float(Size::S128) => 8,
             IRType::Pointer(_) | IRType::Array(_) | IRType::Object(_) | IRType::CustomScope(_) => 8,
             IRType::Generic(_) => 8,
+            _ => 8, // todo : that is bad
         }
     }
 }
@@ -59,6 +78,10 @@ pub enum IROp {
     Alloc {
         ty: IRType,
     }, // Returns Pointer
+    AllocArray {
+        elem_ty: IRType,
+        size: usize,
+    },
     Load {
         ptr: IRValue,
         ty: IRType,
@@ -82,6 +105,7 @@ pub enum IROp {
     ConstFloat64(f64),
     ConstBool(bool),
     ConstString(String),
+    ConstTypeID(u32),
 
     // Logic / Comparisons
     Eq(IRValue, IRValue),
@@ -114,6 +138,11 @@ pub enum IROp {
     GetFieldPtr {
         ptr: IRValue,
         offset: i32,
+    },
+    GetElementPtr {
+        base_ptr: IRValue,
+        index: IRValue,
+        elem_size: usize,
     },
     LoadMemory {
         ptr: IRValue,
@@ -163,13 +192,10 @@ impl IRFunction {
             next_block_id: 1,
             is_extern: false,
         };
-        func.blocks.insert(
-            0,
-            BasicBlock {
-                id: 0,
-                instructions: Vec::new(),
-            },
-        );
+        func.blocks.insert(0, BasicBlock {
+            id: 0,
+            instructions: Vec::new(),
+        });
         func
     }
 
@@ -195,13 +221,10 @@ impl IRFunction {
     pub fn new_block(&mut self) -> BlockID {
         let b = self.next_block_id;
         self.next_block_id += 1;
-        self.blocks.insert(
-            b,
-            BasicBlock {
-                id: b,
-                instructions: Vec::new(),
-            },
-        );
+        self.blocks.insert(b, BasicBlock {
+            id: b,
+            instructions: Vec::new(),
+        });
         b
     }
 
@@ -245,11 +268,39 @@ impl fmt::Display for IRType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             IRType::Void => write!(f, "void"),
-            IRType::Int32 => write!(f, "i32"),
-            IRType::Int64 => write!(f, "i64"),
-            IRType::Float32 => write!(f, "f32"),
-            IRType::Float64 => write!(f, "f64"),
+            IRType::Int(s) => {
+                match s {
+                    Size::S8 => write!(f, "i8"),
+                    Size::S16 => write!(f, "i16"),
+                    Size::S32 => write!(f, "i32"),
+                    Size::S64 => write!(f, "i64"),
+                    Size::S128 => write!(f, "i128"),
+                }
+            }
+            IRType::UInt(s) => {
+                match s {
+                    Size::S8 => write!(f, "u8"),
+                    Size::S16 => write!(f, "u16"),
+                    Size::S32 => write!(f, "u32"),
+                    Size::S64 => write!(f, "u64"),
+                    Size::S128 => write!(f, "u128"),
+                }
+            }
+            IRType::Float(s) => {
+                match s {
+                    Size::S8 => write!(f, "f8"), // unhappening
+                    Size::S16 => write!(f, "f16"), // unhappening
+                    Size::S32 => write!(f, "f32"),
+                    Size::S64 => write!(f, "f64"),
+                    Size::S128 => write!(f, "f128"),
+                }
+            }
             IRType::Bool => write!(f, "bool"),
+            IRType::Char => write!(f, "char"),
+            IRType::Byte => write!(f, "byte"),
+            IRType::USize => write!(f, "usize"),
+            IRType::ISize => write!(f, "isize"),
+            IRType::Type => write!(f, "type"),
             IRType::Pointer(inner) => write!(f, "ptr<{}>", inner),
             IRType::Array(inner) => write!(f, "array<{}>", inner),
             IRType::Object(name) => write!(f, "obj<{}>", name),
@@ -263,6 +314,8 @@ impl fmt::Display for IROp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             IROp::Alloc { ty } => write!(f, "alloc {}", ty),
+            IROp::AllocArray { elem_ty, size } =>
+                write!(f, "alloc_array {} ({} bytes)", elem_ty, size),
             IROp::Load { ptr, ty } => write!(f, "load v{} as {}", ptr, ty),
             IROp::Store { ptr, value } => write!(f, "store v{} -> [v{}]", value, ptr),
             IROp::Add(l, r) => write!(f, "add v{}, v{}", l, r),
@@ -276,6 +329,7 @@ impl fmt::Display for IROp {
             IROp::ConstFloat64(v) => write!(f, "const.f64 {}", v),
             IROp::ConstBool(v) => write!(f, "const.bool {}", v),
             IROp::ConstString(v) => write!(f, "const.str \"{}\"", v),
+            IROp::ConstTypeID(v) => write!(f, "const.type_id {}", v),
             IROp::Eq(l, r) => write!(f, "eq v{}, v{}", l, r),
             IROp::Neq(l, r) => write!(f, "neq v{}, v{}", l, r),
             IROp::Lt(l, r) => write!(f, "lt v{}, v{}", l, r),
@@ -297,17 +351,13 @@ impl fmt::Display for IROp {
             IROp::Return(Some(v)) => write!(f, "ret v{}", v),
             IROp::Return(None) => write!(f, "ret"),
             IROp::Jump(b) => write!(f, "jmp block_{}", b),
-            IROp::BranchIf {
-                cond,
-                true_block,
-                false_block,
-            } => write!(
-                f,
-                "br_if v{}, block_{}, block_{}",
-                cond, true_block, false_block
-            ),
-            IROp::StoreParam { param_idx, ptr } => write!(f, "store_param #{} -> [v{}]", param_idx, ptr),
+            IROp::BranchIf { cond, true_block, false_block } =>
+                write!(f, "br_if v{}, block_{}, block_{}", cond, true_block, false_block),
+            IROp::StoreParam { param_idx, ptr } =>
+                write!(f, "store_param #{} -> [v{}]", param_idx, ptr),
             IROp::GetFieldPtr { ptr, offset } => write!(f, "get_field_ptr [v{}] + {}", ptr, offset),
+            IROp::GetElementPtr { base_ptr, index, elem_size } =>
+                write!(f, "get_elem_ptr [v{}] + (v{} * {})", base_ptr, index, elem_size),
             IROp::LoadMemory { ptr, ty } => write!(f, "load_mem [v{}] as {}", ptr, ty),
             IROp::StoreMemory { ptr, value } => write!(f, "store_mem v{} -> [v{}]", value, ptr),
             IROp::Not(v) => write!(f, "not v{}", v),

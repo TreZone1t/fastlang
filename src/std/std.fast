@@ -1,65 +1,97 @@
 // FastLang Standard Library: Core Prelude, Option & Error
 import std::string;
+import std::range;
 import @c "clib/io.h";
 
 extern @c {
-    fn printf(format: string) -> int32;
-    fn puts(s: string) -> int32;
-    fn fast_println(s: string) -> void;
+    fn fast_print_str(s: str) -> void;
+    fn fast_println(s: str) -> void;
     fn fast_print_int(val: int64) -> void;
     fn fast_print_double(val: float64) -> void;
+    fn fast_print_char(val: int32) -> void;
+    fn fast_print_bool(val: int32) -> void;
 }
 
-export fn print(s: string) -> void {
-    fast_println(s);
+public fn print(s: str) -> void {
+    fast_print_str(s);
 }
 
-export fn print(n: int32) -> void {
+public fn print(n: int32) -> void {
     fast_print_int(n);
 }
 
-export fn print(n: int64) -> void {
+public fn print(n: int64) -> void {
     fast_print_int(n);
 }
 
-export fn print(f: float64) -> void {
+public fn print(f: float64) -> void {
     fast_print_double(f);
 }
 
-export fn print(b: bool) -> void {
-    if (b) {
-        fast_println("true");
-    } else {
-        fast_println("false");
-    }
+public fn print(c: char) -> void {
+    fast_print_char(c);
 }
 
-export enum Option<T> -> {
+public fn print(b: bool) -> void {
+    fast_print_bool(b);
+}
+
+public fn println(s: str) -> void {
+    fast_println(s);
+}
+
+public fn println(n: int32) -> void {
+    fast_print_int(n);
+    fast_println("");
+}
+
+public fn println(n: int64) -> void {
+    fast_print_int(n);
+    fast_println("");
+}
+
+public fn println(f: float64) -> void {
+    fast_print_double(f);
+    fast_println("");
+}
+
+public fn println(c: char) -> void {
+    fast_print_char(c);
+    fast_println("");
+}
+
+public fn println(b: bool) -> void {
+    fast_print_bool(b);
+    fast_println("");
+}
+
+public enum Option<T> -> {
     Some(T),
     None,
 }
 
-export micro stop -> {
+impl handle for Option -> {
+    fn default() -> Option<T> {
+        return Option::None;
+    }
+}
+
+public micro stop = ()-> {
     break;
 }
 
-export blueprint ErrorData -> {
-    string message;
-    int32 code;
-};
-
-export class Error -> {
+public class Error -> {
     public -> {
-        string message = "";
+        str message = "";
         int32 code = 0;
     }
 
     constructor -> {
-        init(err_data: ErrorData) -> {
-            this.message = err_data.message;
-            this.code = err_data.code;
+        init(err: Error) -> {
+            this.message = err.message;
+            this.code = err.code;
         }
-        init(msg: string) -> {
+        init(msg: str) -> {
             this.message = msg;
             this.code = 0;
         }
@@ -67,18 +99,93 @@ export class Error -> {
             this.message = "Error happened with code";
             this.code = code;
         }
-        init(msg: string, code: int32) -> {
+        init(msg: str, code: int32) -> {
             this.message = msg;
             this.code = code;
         }
     }
 
     handle -> {
-        fn throw() -> ErrorData {
-            return ErrorData {
-                message = this.message,
-                code = this.code,
-            };
+        fn $throw() -> Error {
+            return this;
         }
+    }
+}
+
+public @compile -> {
+    macro $throw[e: Error] -> {
+        throw e;
+    }
+}
+
+public impl str -> {
+    fn is_empty() -> bool {
+        return this.len == 0;
+    }
+
+    fn first() -> Option<char> {
+        if (this.len == 0) {
+            return None;
+        }
+        return Some(this[0]);
+    }
+
+    fn last() -> Option<char> {
+        if (this.len == 0) {
+            return None;
+        }
+        return Some(this[this.len - 1]);
+    }
+}
+
+public impl char -> {
+    fn is_digit() -> bool {
+        return this >= '0' && this <= '9';
+    }
+
+    fn is_alpha() -> bool {
+        return (this >= 'a' && this <= 'z') || (this >= 'A' && this <= 'Z');
+    }
+
+    fn is_alphanumeric() -> bool {
+        return (this >= 'a' && this <= 'z') || (this >= 'A' && this <= 'Z') || (this >= '0' && this <= '9');
+    }
+
+    fn is_whitespace() -> bool {
+        return this == ' ' || this == '\t' || this == '\n' || this == '\r';
+    }
+
+    fn to_upper() -> char {
+        if (this >= 'a' && this <= 'z') {
+            return this - 'a' + 'A';
+        }
+        return this;
+    }
+
+    fn to_lower() -> char {
+        if (this >= 'A' && this <= 'Z') {
+            return this - 'A' + 'a';
+        }
+        return this;
+    }
+}
+
+public impl array<T> -> {
+    fn is_empty() -> bool {
+        return this.len == 0;
+    }
+
+    fn first() -> Option<T> {
+        if (this.len == 0) {
+            return None;
+        }
+        return Some(this[0]);
+    }
+
+    fn last() -> Option<T> {
+        if (this.len == 0) {
+            return None;
+        }
+        return Some(this[this.len - 1]);
     }
 }

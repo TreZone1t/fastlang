@@ -19,14 +19,12 @@ impl Parser {
 
         let mut meta = TypeMetadata {
             name: name.clone(), //[*]
+            ty: BaseType::Struct { name: name.clone(), fields: Box::new(HashMap::new()), methods: Box::new(HashMap::new()), generics: vec![] },
             fields: HashMap::new(), //[*] we will add all of variables in the struct
             constructor: None, //[*]
-            params: Vec::new(), //[*]
-            generics: Vec::new(), //[*]
             methods: HashMap::new(), //[*]
             handles: Vec::new(), //[*]
             vars: HashMap::new(), //[]
-            is_enum: false,
             variants: None,
         };
         enabled_settings.push(Setting::Private);
@@ -89,7 +87,8 @@ impl Parser {
                     } else {
                         used_settings.push(Setting::Handle);
                         self.advance(); // consume 'handle'
-                        handle_block = self.parse_handle_body(&mut used_handles)?;
+                        let allowed = self.get_allowed_handle(&meta.ty)?;
+                        handle_block = self.parse_handle_body(&mut used_handles, allowed)?;
                         continue;
                     }
                 }
@@ -166,10 +165,11 @@ impl Parser {
             }
         }
         self.consume(TokenKind::RBrace, "Expected '}' to close struct body")?;
-        meta.generics.clear();
-        meta.params.clear();
         meta.handles = used_handles.clone();
-        for decl in public_block_ast.iter().chain(private_block_ast.iter()).chain(static_block_ast.iter()) {
+        for decl in public_block_ast
+            .iter()
+            .chain(private_block_ast.iter())
+            .chain(static_block_ast.iter()) {
             match decl {
                 Decl::VarDecl { name, type_node, .. } => {
                     meta.fields.insert(name.clone(), type_node.clone());
@@ -201,7 +201,7 @@ impl Parser {
         self.metadata.insert(name.clone(), meta);
 
         return Ok(Decl::StructDecl {
-            is_exported: false,
+            visibility: Visibility::Private,
             name,
             handles: used_handles,
             public_block: public_block_ast,

@@ -1,6 +1,10 @@
 // Valid: complete custom scope with label , goto , leave , call , data
-custom recursion_chaos -> {
-    data -> 0;
+//update : we removed custom you can use machine instead
+machine recursion_chaos -> {
+    @init -> {
+      int data = 0;
+      goto -> @start;
+    }
     @start -> {
       if (this.data <= 0) {
         this.data -> 1;
@@ -19,7 +23,7 @@ custom recursion_chaos -> {
     }
     handle -> {
         fn call () -> int32 {
-            goto  -> @start;
+            goto  -> @init;
         }
         fn leave () -> int32 {
            return this.data;

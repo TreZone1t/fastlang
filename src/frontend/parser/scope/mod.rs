@@ -12,7 +12,7 @@ pub mod block;
 pub mod blueprint;
 pub mod builtins;
 pub mod class;
-pub mod custom;
+pub mod compile_scope;
 pub mod enum_decl;
 pub mod machine;
 pub mod struct_decl;

@@ -1,0 +1,9 @@
+// Fail Test 69: Cannot return () / void in function returning int32
+
+fn bad_return() -> int32 {
+    return ();
+}
+
+fn main() -> int32 {
+    return bad_return();
+}

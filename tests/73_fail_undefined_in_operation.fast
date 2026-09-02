@@ -1,0 +1,7 @@
+// Fail Test 73: Cannot use undefined value in operation
+
+fn main() -> int32 {
+    int z;
+    int32 x =  z + 10;
+    return x;
+}

@@ -46,7 +46,7 @@ fn process_result(res: Result<int32, string>) -> int32 {
 fn process_event(evt: AppEvent) -> int32 {
     int32 score = 0;
     match (evt) -> {
-        AppEvent::Click(x, y) => {
+        AppEvent::Click { x, y } => {
             print("Match Click: x=", x, " y=", y);
             score = x + y;
         }
@@ -79,11 +79,11 @@ fn main() -> int32 {
     print("Process Result Err output: ", r2);
 
     // 3. Enum Struct Payload pattern matching
-    AppEvent click_evt = AppEvent::Click(15, 25);
+    AppEvent click_evt = AppEvent::Click { x = 15, y = 25 };
     int32 e1 = process_event(click_evt);
     print("Process Click Event output: ", e1);
 
-    AppEvent quit_evt = AppEvent::Quit();
+    AppEvent quit_evt = AppEvent::Quit;
     int32 e2 = process_event(quit_evt);
     print("Process Quit Event output: ", e2);
 

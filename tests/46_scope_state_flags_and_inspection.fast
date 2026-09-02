@@ -4,7 +4,7 @@ fn add_numbers(a: int32, b: int32) -> int32 {
     return a + b;
 }
 
-block generator -> {
+generator -> {
     int32 step = 0;
     step = step + 1;
     yield;

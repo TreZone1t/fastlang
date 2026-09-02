@@ -1,5 +1,7 @@
-custom MathScope -> {
-    data -> 10;  
+class MathScope -> {
+    public -> {
+      int data = 10;  
+    }
     handle -> {
         fn add(other: MathScope) -> MathScope {
             MathScope result = new MathScope();
@@ -62,21 +64,21 @@ fn main() -> int32 {
   MathScope e = a * b;
   MathScope f = a / b;
   MathScope g = a % b;
-  print("c.data (10 + 10):");
-  print(c.data);
-  print("d.data (10 - 10):");
-  print(d.data);
-  print("e.data (10 * 10):");
-  print(e.data);
-  print("f.data (10 / 10):");
-  print(f.data);
-  print("g.data (10 % 10):");
-  print(g.data);
-  print("Index access a[5]:");
-  print(a[5]);
+  println("c.data (10 + 10):");
+  println(c.data);
+  println("d.data (10 - 10):");
+  println(d.data);
+  println("e.data (10 * 10):");
+  println(e.data);
+  println("f.data (10 / 10):");
+  println(f.data);
+  println("g.data (10 % 10):");
+  println(g.data);
+  println("Index access a[5]:");
+  println(a[5]);
 
   Direction dir1 = Direction::Up;
-  print(dir1);
+  println(dir1);
   return 0;
 }
 // EXPECT: c.data (10 + 10):

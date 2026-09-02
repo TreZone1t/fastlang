@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-
 use crate::frontend::lexer::token::TokenKind;
 use crate::frontend::parser::ast::*;
 use crate::frontend::parser::parser::Parser;
@@ -35,14 +34,12 @@ impl Parser {
         }
         let mut meta = TypeMetadata {
             name: name.clone(),
+            ty: BaseType::Class { name: name.clone(), fields: Box::new(HashMap::new()), methods: Box::new(HashMap::new()), constructor: None, generics: vec![] },
             fields: HashMap::new(),
             constructor: None,
-            params: Vec::new(),
-            generics: Vec::new(),
             methods: HashMap::new(),
             handles: Vec::new(),
             vars: HashMap::new(),
-            is_enum: false,
             variants: None,
         };
         //adding the default settings to the class scope
@@ -89,7 +86,8 @@ impl Parser {
                 //====================================================================
                 if t == TokenKind::Handle && !used_settings.contains(&Setting::Handle) {
                     self.advance(); // consume 'handle'
-                    handle_block = self.parse_handle_body(&mut used_handles)?;
+                    let allowed = self.get_allowed_handle(&meta.ty)?;
+                    handle_block = self.parse_handle_body(&mut used_handles, allowed)?;
                     used_settings.push(Setting::Handle);
                     continue;
                 }
@@ -176,7 +174,7 @@ impl Parser {
             }
         }
         Ok(Decl::ClassDecl {
-            is_exported: false,
+            visibility: Visibility::Private,
             name,
             extends,
             handles: used_handles,

@@ -1,6 +1,9 @@
 // Valid: complete custom scope with label , goto , yield , call , data
-custom recursion_chaos_yield -> {
-    data -> 0;
+machine recursion_chaos_yield -> {
+    @init -> {
+      int data = 0;
+      goto -> @start;
+    }
     @start -> {
       goto -> @process;
     }

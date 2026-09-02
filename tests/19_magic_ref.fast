@@ -9,10 +9,26 @@ fn main() -> void {
     int32* my_heap_array = new int32[1,2,3,4,5];
     
     modify<int32> not_safe_ptr = &my_heap_array[0];
-     del not_safe_ptr;  // now it will give error : cannot delete name
-    not_safe_ptr = my_array;   //it doesn't work *error: assignment of read-only reference 'not_safe_ptr'*
+    del not_safe_ptr;
     
-    name<int32> bad_ptr = safe_ptr;   //Warning : nested and linked ptr you must to be manged correctly
+    name<int32> bad_ptr = safe_ptr;
     print(*bad_ptr);
     print(*mut_ptr);
+
+    // Dynamic Heap Allocations & Pointer Arithmetic
+    int32* ptrarr = new int32[](5); // 5 is the length of the array 
+    int32* ptr = new int32(5); // 5 is the value of the int
+    modify<int32> mutsmart_ptr2 = ptrarr;   
+    modify<int32> mutsmart_ptr3 = ptr; 
+    for(int32 i = 0; i < 5; i++){
+        *(ptrarr + i) = i;
+        print(*(ptrarr + i));
+    	print(*(mutsmart_ptr2 + i));
+	}
+    print(mutsmart_ptr3);
+    print(*ptr);
+    print(*mutsmart_ptr3);
+    del mutsmart_ptr3;
+    print(*ptr);
+    del ptr;
 }

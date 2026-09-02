@@ -1,0 +1,60 @@
+// Test 74: Range Functions and Destructuring with '..'
+
+blueprint Point -> {
+    int32 x;
+    int32 y;
+    int32 z;
+};
+
+fn IreturnPoint() -> Point {
+    return Point { x = 10, y = 20, z = 30 };
+}
+
+fn main() -> int32 {
+    // 1. Test range functions
+    int r1[] = range(5);
+    for n in r1 {
+        print(n);
+        print(" ");
+    }
+    println("");
+
+    int r2[] = range(10, 15);
+    for n in r2 {
+        print(n);
+        print(" ");
+    }
+    println("");
+
+    int r3[] = range(0, 10, 2);
+    for n in r3 {
+        print(n);
+        print(" ");
+    }
+    println("");
+
+    char cr[] = range('a', 'e');
+    for c in cr {
+        print(c);
+        print(" ");
+    }
+    println("");
+
+    // 2. Test blueprint destructuring with '..'
+    {int32 x; ..} = IreturnPoint();
+    println(x);
+
+    const {int32 a; ..} = IreturnPoint();
+    println(a);
+
+    Point {c, ..} = IreturnPoint();
+    println(c);
+
+    const Point {e, ..} = IreturnPoint();
+    println(e);
+
+    Point {m, ..} = Point { x = 30, y = 40, z = 50 };
+    println(m);
+
+    return 0;
+}

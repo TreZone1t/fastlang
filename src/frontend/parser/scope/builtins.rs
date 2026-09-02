@@ -80,7 +80,7 @@ impl Parser {
         fn_meta.return_type = return_type.clone();
         self.fn_metadata.insert(name.clone(), fn_meta);
         Ok(Decl::FnDecl {
-            is_exported: false,
+            visibility: Visibility::Private,
             is_virtual,
             is_abstract,
             name,
@@ -135,7 +135,7 @@ impl Parser {
             self.advance();
         }
         Ok(Decl::BlockDecl {
-            is_exported: false,
+            visibility: Visibility::Private,
             name,
             return_type,
             statements,
@@ -148,67 +148,55 @@ impl Parser {
 
         let mut generics = None;
         if self.peek().kind == TokenKind::Less {
-            self.advance(); // consume '<'
-            let mut g_list = Vec::new();
+            self.advance();
+            let mut gen_list = Vec::new();
             while !self.is_at_end() && self.peek().kind != TokenKind::Greater {
-                let g_name = self.get_identifier("Expected generic type parameter name")?;
-                g_list.push(g_name);
+                gen_list.push(self.get_identifier("Expected generic parameter name")?);
                 if self.peek().kind == TokenKind::Comma {
                     self.advance();
-                } else {
-                    break;
                 }
             }
-            self.consume(TokenKind::Greater, "Expected '>' to close micro generics")?;
-            generics = Some(g_list);
+            self.consume(TokenKind::Greater, "Expected '>' after generic parameters")?;
+            generics = Some(gen_list);
         }
 
         if self.peek().kind == TokenKind::Assign {
-            self.advance(); // consume '='
+            self.advance();
         }
 
         let mut params = Vec::new();
         if self.peek().kind == TokenKind::LParen {
-            self.advance(); // consume '('
-            if self.peek().kind != TokenKind::RParen {
-                loop {
-                    let p_name = self.get_identifier("Expected parameter name in micro")?;
-                    self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
-                    let p_type = self.parse_type()?;
-                    params.push(Param {
-                        name: p_name,
-                        type_node: p_type,
-                    });
-                    if self.peek().kind == TokenKind::Comma {
-                        self.advance();
-                    } else {
-                        break;
-                    }
+            self.advance();
+            while !self.is_at_end() && self.peek().kind != TokenKind::RParen {
+                let p_name = self.get_identifier("Expected parameter name")?;
+                self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
+                let p_type = self.parse_type()?;
+                params.push(Param {
+                    name: p_name,
+                    type_node: p_type,
+                });
+                if self.peek().kind == TokenKind::Comma {
+                    self.advance();
                 }
             }
-            self.consume(TokenKind::RParen, "Expected ')' after micro parameters")?;
+            self.consume(TokenKind::RParen, "Expected ')' after parameter list")?;
         }
 
         let mut return_type = None;
         if self.peek().kind == TokenKind::Arrow {
-            self.advance(); // consume '->'
+            self.advance();
             if self.peek().kind != TokenKind::LBrace {
                 return_type = Some(self.parse_type()?);
             }
         }
 
         let body = if self.peek().kind == TokenKind::LBrace {
-            self.advance(); // consume '{'
+            self.advance();
             let mut stmts = Vec::new();
             while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                match self.parse_statement(ScopeType::Block) {
-                    Ok(Some(stmt)) => stmts.push(stmt),
-                    Ok(None) => {
-                        if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                            self.advance();
-                        }
-                    }
-                    Err(err) => return Err(err),
+                match self.parse_statement(ScopeType::Block)? {
+                    Some(stmt) => stmts.push(stmt),
+                    None => {}
                 }
             }
             self.consume(TokenKind::RBrace, "Expected '}' to close micro body")?;
@@ -225,11 +213,89 @@ impl Parser {
         }
 
         Ok(Decl::MicroDecl {
-            is_exported: false,
+            visibility: Visibility::Private,
             name,
             generics,
             params,
             return_type,
+            body,
+        })
+    }
+
+    pub(crate) fn parse_macro_decl(&mut self) -> Result<Decl, String> {
+        self.advance(); // consume 'macro'
+
+        let name = self.get_handle_identifier("Expected macro name after 'macro'")?;
+        self.macro_metadata.insert(name.clone());
+
+        let mut params = Vec::new();
+        if self.peek().kind == TokenKind::LBracket {
+            self.advance(); // consume '['
+            while !self.is_at_end() && self.peek().kind != TokenKind::RBracket {
+                let p_name = self.get_identifier("Expected parameter name")?;
+                self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
+                let p_type = self.parse_type()?;
+                params.push(Param {
+                    name: p_name,
+                    type_node: p_type,
+                });
+                if self.peek().kind == TokenKind::Comma {
+                    self.advance();
+                }
+            }
+            self.consume(TokenKind::RBracket, "Expected ']' after macro parameters")?;
+        } else if self.peek().kind == TokenKind::LParen {
+            self.advance(); // consume '('
+            while !self.is_at_end() && self.peek().kind != TokenKind::RParen {
+                let p_name = self.get_identifier("Expected parameter name")?;
+                self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
+                let p_type = self.parse_type()?;
+                params.push(Param {
+                    name: p_name,
+                    type_node: p_type,
+                });
+                if self.peek().kind == TokenKind::Comma {
+                    self.advance();
+                }
+            }
+            self.consume(TokenKind::RParen, "Expected ')' after parameter list")?;
+        }
+
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance();
+        }
+
+        let body = if self.peek().kind == TokenKind::LBrace {
+            self.advance();
+            let mut stmts = Vec::new();
+            while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                let start_pos = self.current;
+                match self.parse_statement(ScopeType::Block)? {
+                    Some(stmt) => stmts.push(stmt),
+                    None => {
+                        if self.current == start_pos && !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                            self.advance();
+                        }
+                    }
+                }
+            }
+            self.consume(TokenKind::RBrace, "Expected '}' to close macro body")?;
+            stmts
+        } else {
+            match self.parse_statement(ScopeType::Block)? {
+                Some(stmt) => vec![stmt],
+                None => vec![],
+            }
+        };
+
+        if self.peek().kind == TokenKind::SemiColon {
+            self.advance();
+        }
+
+        Ok(Decl::MacroDecl {
+            visibility: Visibility::Private,
+            name,
+            params,
             body,
         })
     }

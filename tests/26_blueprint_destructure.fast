@@ -9,20 +9,25 @@ fn IreturnPoint() -> Point {
 
 fn main() -> int32 {
     {int32 x; int32 y;} = IreturnPoint();
-    print(x); // EXPECT: 10
-    print(y); // EXPECT: 20
+    println(x); // EXPECT: 10
+    println(y); // EXPECT: 20
 
     const {int32 a; int32 b;} = IreturnPoint();
-    print(a); // EXPECT: 10
-    print(b); // EXPECT: 20
+    println(a); // EXPECT: 10
+    println(b); // EXPECT: 20
 
     Point {c, d} = IreturnPoint();
-    print(c); // EXPECT: 10
-    print(d); // EXPECT: 20
+    println(c); // EXPECT: 10
+    println(d); // EXPECT: 20
 
     const Point {e, f} = IreturnPoint();
-    print(e); // EXPECT: 10
-    print(f); // EXPECT: 20
-
+    println(e); // EXPECT: 10
+    println(f); // EXPECT: 20
+    Point {m, n} = Point { x = 30, y = 40 };
+    println(m); // EXPECT: 30
+    println(n); // EXPECT: 40
+    Point p = Point { x = 50, y = 60 };
+    println(p.x); // EXPECT: 50
+    println(p.y); // EXPECT: 60
     return 0;
 }

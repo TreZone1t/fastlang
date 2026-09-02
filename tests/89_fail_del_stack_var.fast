@@ -1,0 +1,6 @@
+// Test 89 (Expected Failure): Attempting to delete a non-heap primitive variable
+fn main() -> int32 {
+    int32 x = 10;
+    del x;
+    return 0;
+}

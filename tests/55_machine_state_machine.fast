@@ -35,8 +35,7 @@ machine CounterMachine -> {
 }
 
 fn main() -> int32 {
-    CounterMachine cm = new CounterMachine();
-    int32 result = cm();
+    int32 result = CounterMachine();
     print("Final Machine Count: ", result);
     return 0;
 }

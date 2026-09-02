@@ -18,17 +18,30 @@ pub struct Parser {
     pub(crate) metadata: HashMap<String, TypeMetadata>,
     pub(crate) var_metadata: HashMap<String, VarMetadata>,
     pub(crate) fn_metadata: HashMap<String, FnType>,
+    pub(crate) macro_metadata: std::collections::HashSet<String>,
     pub(crate) current_generics: std::collections::HashSet<String>,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
+        let mut macro_metadata = std::collections::HashSet::new();
+        for i in 0..tokens.len() {
+            if tokens[i].kind == TokenKind::TypeMacro {
+                if let Some(next) = tokens.get(i + 1) {
+                    if let TokenKind::Identifier(ref name) = next.kind {
+                        macro_metadata.insert(name.clone());
+                    }
+                }
+            }
+        }
+
         Parser {
             tokens,
             current: 0,
             metadata: HashMap::new(),
             var_metadata: HashMap::new(),
             fn_metadata: HashMap::new(),
+            macro_metadata,
             current_generics: std::collections::HashSet::new(),
         }
     }
