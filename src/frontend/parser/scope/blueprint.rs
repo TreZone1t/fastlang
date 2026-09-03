@@ -12,13 +12,13 @@ impl Parser {
             self.parse_generics(&mut generics)?;
         }
 
-        if self.peek().kind == TokenKind::Arrow {
+        if self.peek().kind == TokenKind::Arrow || self.peek().kind == TokenKind::Assign {
             self.advance();
         }
 
         let definition = if self.peek().kind == TokenKind::LBrace {
             self.advance();
-            // Parse Explicit definition: { int(32) x; int(32) y; }
+            // Parse Explicit definition: { int(32) x; int(32) y; } or { x := default; str y; }
             let mut fields = Vec::new();
             while self.peek().kind != TokenKind::RBrace && !self.is_at_end() {
                 let mut is_static = false;
@@ -26,27 +26,44 @@ impl Parser {
                     self.advance();
                     is_static = true;
                 }
-                let type_node = self.parse_type()?;
-                let field_name = self.get_identifier("Expected field name")?;
-                self.consume(TokenKind::SemiColon, "Expected ';'")?;
+
+                let is_colon_or_walrus = if let Some(next_tok) = self.tokens.get(self.current + 1) {
+                    next_tok.kind == TokenKind::Colon || next_tok.kind == TokenKind::Walrus
+                } else {
+                    false
+                };
+
+                let (field_name, type_node, default_value) = if is_colon_or_walrus {
+                    let p = self.parse_single_param()?;
+                    (p.name, p.type_node, p.default_value)
+                } else {
+                    let type_node = self.parse_type()?;
+                    let field_name = self.get_identifier("Expected field name")?;
+                    let default_value = if self.peek().kind == TokenKind::Assign || self.peek().kind == TokenKind::Walrus {
+                        self.advance();
+                        Some(self.parse_expression()?)
+                    } else {
+                        None
+                    };
+                    (field_name, type_node, default_value)
+                };
+
+                if self.peek().kind == TokenKind::SemiColon || self.peek().kind == TokenKind::Comma {
+                    self.advance();
+                }
+
                 fields.push(BlueprintField {
                     is_static,
                     name: field_name,
                     type_node,
+                    default_value,
                 });
             }
             self.consume(TokenKind::RBrace, "Expected '}'")?;
             BlueprintDef::Explicit(fields)
-        } else if self.peek().kind == TokenKind::Assign {
-            self.advance();
-            // Parse FromExistingObject or FromTemporaryObject
-            // Not needed for the current test, but let's implement later if needed.
-            return Err(
-                "Syntax Error: Only explicit blueprint definitions are currently supported.".to_string()
-            );
         } else {
             return Err(
-                "Syntax Error: Expected '{' after '->' in blueprint definition.".to_string()
+                "Syntax Error: Expected '{' after blueprint declaration.".to_string()
             );
         };
 

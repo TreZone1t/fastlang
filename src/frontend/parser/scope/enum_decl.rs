@@ -46,25 +46,27 @@ impl Parser {
                     while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
                         // Support both: `Type name;` and `name: Type;`
                         let is_colon_syntax = if let Some(next_tok) = self.tokens.get(self.current + 1) {
-                            next_tok.kind == TokenKind::Colon
+                            next_tok.kind == TokenKind::Colon || next_tok.kind == TokenKind::Walrus
                         } else {
                             false
                         };
 
                         if is_colon_syntax {
-                            let field_name = self.get_identifier("Expected field name")?;
-                            self.consume(TokenKind::Colon, "Expected ':' after field name")?;
-                            let field_type = self.parse_type()?;
-                            struct_fields.push(Param {
-                                name: field_name,
-                                type_node: field_type,
-                            });
+                            let p = self.parse_single_param()?;
+                            struct_fields.push(p);
                         } else {
                             let field_type = self.parse_type()?;
                             let field_name = self.get_identifier("Expected field name")?;
+                            let default_val = if self.peek().kind == TokenKind::Assign || self.peek().kind == TokenKind::Walrus {
+                                self.advance();
+                                Some(self.parse_expression()?)
+                            } else {
+                                None
+                            };
                             struct_fields.push(Param {
                                 name: field_name,
                                 type_node: field_type,
+                                default_value: default_val,
                             });
                         }
                         if self.peek().kind == TokenKind::SemiColon || self.peek().kind == TokenKind::Comma {

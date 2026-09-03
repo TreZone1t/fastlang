@@ -1,0 +1,36 @@
+// Comprehensive Suite 11: Modules, Bare Blocks, and Extern C FFI
+import @c "math.h";
+import @c "stdlib.h";
+
+extern @c {
+    fn sqrt(x: float64) -> float64;
+}
+
+extern @c fn abs(n: int32) -> int32;
+
+public math_ops {
+    public fn multiply(a: int32, b: int32) -> int32 {
+        return a * b;
+    }
+}
+
+fn main() -> int32 {
+    int32 res = math_ops::multiply(6, 7);
+    println("6 * 7 = ", res); // EXPECT: 6 * 7 = 42
+
+    counter_block -> int32 {
+        return 100;
+    };
+    println("Counter value: ", counter_block()); // EXPECT: Counter value: 100
+
+    float64 val = 144.0;
+    float64 root = sqrt(val);
+    println("sqrt: ", root); // EXPECT: sqrt: 12
+
+    int32 neg = -42;
+    int32 pos = abs(neg);
+    println("abs: ", pos); // EXPECT: abs: 42
+
+    println("ALL 11_MODULES_AND_FFI TESTS PASSED"); // EXPECT: ALL 11_MODULES_AND_FFI TESTS PASSED
+    return 0;
+}

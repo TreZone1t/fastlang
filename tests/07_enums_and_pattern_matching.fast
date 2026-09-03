@@ -1,0 +1,79 @@
+// Comprehensive Suite 07: Enums, Struct Payloads, Pattern Matching, and Using Directive
+
+fn test_number_match() -> void {
+    int32 num = 2;
+    int32 res = 0;
+    match (num) -> {
+        1 => {
+            res = 100;
+        }
+        2 => {
+            res = 200;
+        }
+        _ => {
+            res = -1;
+        }
+    }
+    println("matched num: ", res); // EXPECT: matched num: 200
+}
+
+enum Status {
+    Active,
+    Inactive,
+    Pending(int32),
+}
+
+enum AppEvent -> {
+    Click {
+        int32 x;
+        int32 y;
+    },
+    Quit,
+}
+
+fn test_using_and_tuple_payload() -> void {
+    using Status;
+
+    Status s1 = Active;
+    Status s3 = Pending(404);
+
+    match (s1) -> {
+        Active => {
+            println("s1: Active"); // EXPECT: s1: Active
+        }
+        _ => {
+            println("s1: Other");
+        }
+    }
+
+    match (s3) -> {
+        Pending(code) => {
+            println("s3 code: ", code); // EXPECT: s3 code: 404
+        }
+        _ => {
+            println("s3: Other");
+        }
+    }
+}
+
+fn test_struct_payload_enum() -> void {
+    AppEvent ev = AppEvent::Click { x = 15, y = 25 };
+
+    match (ev) -> {
+        AppEvent::Click { x, y } => {
+            println("clicked at: ", x, ", ", y); // EXPECT: clicked at: 15, 25
+        }
+        AppEvent::Quit => {
+            println("quit event");
+        }
+    }
+}
+
+fn main() -> int32 {
+    test_number_match();
+    test_using_and_tuple_payload();
+    test_struct_payload_enum();
+
+    println("ALL 07_ENUMS TESTS PASSED"); // EXPECT: ALL 07_ENUMS TESTS PASSED
+    return 0;
+}

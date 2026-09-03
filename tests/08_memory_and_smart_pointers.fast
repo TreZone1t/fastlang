@@ -1,0 +1,61 @@
+// Comprehensive Suite 08: Memory Management, Smart Pointers, Del, and Drop Handles
+
+class Resource -> {
+    public -> {
+        int32 id = 101;
+    }
+    constructor -> {
+        init(val: int32) -> {
+            this.id = val;
+        }
+    }
+    handle -> {
+        fn drop() -> void {
+            println("Resource ", this.id, " dropped!");
+        }
+    }
+}
+
+struct StackResource -> {
+    public -> {
+        int32 tag = 999;
+    }
+    handle -> {
+        fn drop() -> void {
+            println("StackResource ", this.tag, " dropped!");
+        }
+    }
+}
+
+fn increment_val(m: modify<int32>) -> void {
+    m += 10;
+}
+
+fn test_smart_pointers() -> void {
+    int32 num = 50;
+    name<int32> read_ptr = &num;
+    println("val via deref: ", *read_ptr); // EXPECT: val via deref: 50
+
+    modify<int32> mod_ptr = &num;
+    increment_val(mod_ptr);
+    println("val after modify: ", num); // EXPECT: val after modify: 60
+
+    mod_ptr += 5;
+    println("val after direct +=: ", num); // EXPECT: val after direct +=: 65
+}
+
+fn test_del_and_drop() -> void {
+    Resource res = new Resource(42);
+    del res; // EXPECT: Resource 42 dropped!
+
+    StackResource s;
+    del s; // EXPECT: StackResource 999 dropped!
+}
+
+fn main() -> int32 {
+    test_smart_pointers();
+    test_del_and_drop();
+
+    println("ALL 08_MEMORY TESTS PASSED"); // EXPECT: ALL 08_MEMORY TESTS PASSED
+    return 0;
+}

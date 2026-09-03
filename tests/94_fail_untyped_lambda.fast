@@ -1,0 +1,6 @@
+// Fail Test 94: Lambda parameters must have types if target type is not declared
+
+fn main() -> int32 {
+    lambda bad = |x, y| x + y;
+    return 0;
+}

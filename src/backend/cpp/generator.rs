@@ -920,7 +920,12 @@ impl CodeGenerator {
 
                     for field in fields {
                         let type_str = crate::backend::cpp::stmt::type_to_cpp(&field.type_node);
-                        self.emit(&format!("{} {};", type_str, field.name));
+                        if let Some(ref def_val) = field.default_value {
+                            let def_code = self.visit_expression(def_val);
+                            self.emit(&format!("{} {} = {};", type_str, field.name, def_code));
+                        } else {
+                            self.emit(&format!("{} {};", type_str, field.name));
+                        }
                     }
 
                     if let Some(methods) = impls.get(&name) {
@@ -1092,16 +1097,29 @@ impl CodeGenerator {
                     let ret_cpp = crate::backend::cpp::stmt::type_to_cpp(return_type);
                     let mut param_cpps = Vec::new();
                     param_cpps.push(format!("{} __this", target_cpp));
-                    for p in params {
-                        param_cpps.push(format!("{} {}", crate::backend::cpp::stmt::type_to_cpp(&p.type_node), p.name));
+                    let mut extra_gen_params = Vec::new();
+                    for (idx, p) in params.iter().enumerate() {
+                        if matches!(p.type_node, BaseType::Lambda { .. }) {
+                            let func_t = format!("__Func{}", idx);
+                            extra_gen_params.push(format!("typename {}", func_t));
+                            param_cpps.push(format!("{} {}", func_t, p.name));
+                        } else {
+                            param_cpps.push(format!("{} {}", crate::backend::cpp::stmt::type_to_cpp(&p.type_node), p.name));
+                        }
                     }
 
-                    if is_generic {
-                        let gen_params: Vec<String> = target_generics
+                    let mut all_gen_params: Vec<String> = if is_generic {
+                        target_generics
                             .iter()
                             .map(|g| format!("typename {}", g.as_str()))
-                            .collect();
-                        self.emit(&format!("template <{}>", gen_params.join(", ")));
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    all_gen_params.extend(extra_gen_params);
+
+                    if !all_gen_params.is_empty() {
+                        self.emit(&format!("template <{}>", all_gen_params.join(", ")));
                     }
                     self.emit(&format!("inline {} fastlang_{}_{}({}) {{", ret_cpp, target, name, param_cpps.join(", ")));
                     self.indent_level += 1;
@@ -1114,6 +1132,9 @@ impl CodeGenerator {
                     self.indent_level -= 1;
                     self.emit("}");
                     if target == "array" {
+                        self.emit(&format!("template <typename T, size_t N, typename... __Args> inline auto fastlang_array_{}(T (&arr)[N], __Args&&... args) {{ return fastlang_array_{}(fastlang_slice<T>(arr), std::forward<__Args>(args)...); }}", name, name));
+                    }
+                    if target == "array" && params.is_empty() {
                         self.emit(&format!("inline auto fastlang_array_{}(fastlang_str __this) {{ return fastlang_str_{}(__this); }}", name, name));
                     }
                 }

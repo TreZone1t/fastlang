@@ -40,6 +40,8 @@ pub struct SemanticAnalyzer {
     pub fn_overloads: HashMap<String, Vec<FnSignature>>,
     pub heap_allocated_vars: HashSet<String>,
     pub deleted_vars: HashSet<String>,
+    pub current_machine: Option<String>,
+    pub machine_labels: HashMap<String, HashMap<String, HashMap<String, BaseType>>>,
 }
 
 impl SemanticAnalyzer {
@@ -61,6 +63,8 @@ impl SemanticAnalyzer {
             fn_overloads: HashMap::new(),
             heap_allocated_vars: HashSet::new(),
             deleted_vars: HashSet::new(),
+            current_machine: None,
+            machine_labels: HashMap::new(),
         };
         analyzer.import_metadata();
         analyzer
@@ -252,6 +256,8 @@ impl SemanticAnalyzer {
             expr_type.starts_with("pointer<") ||
             expr_type.starts_with("scope") ||
             expr_type.starts_with("Fn<") ||
+            expr_type.to_lowercase().starts_with("fn") ||
+            expr_type.to_lowercase().starts_with("lambda") ||
             expr_type.starts_with("method") ||
             expr_type == "fn"
         {
@@ -508,6 +514,29 @@ impl SemanticAnalyzer {
                 let cond_type = self.visit_expression(condition)?;
                 if cond_type != "bool" && cond_type != "unknown" {
                     return Err("Semantic Error: do-while condition must be a boolean".to_string());
+                }
+                match body {
+                    EitherBlock::Inline(stmts) => {
+                        self.enter_scope();
+                        self.active_flags.push("+has_break".to_string());
+                        for s in stmts {
+                            self.visit_statement(s)?;
+                        }
+                        self.active_flags.retain(|f| f != "+has_break");
+                        self.leave_scope();
+                    }
+                    EitherBlock::External(expr) => {
+                        self.visit_expression(expr)?;
+                    }
+                }
+            }
+
+            Stmt::LoopStmt { count, body } => {
+                if let Some(c) = count {
+                    let c_type = self.visit_expression(c)?;
+                    if !c_type.starts_with("int") && !c_type.starts_with("uint") && c_type != "unknown" {
+                        return Err("Semantic Error: loop count must be an integer".to_string());
+                    }
                 }
                 match body {
                     EitherBlock::Inline(stmts) => {
@@ -1356,6 +1385,11 @@ impl SemanticAnalyzer {
                 self.active_flags = prev_flags;
                 self.active_return_type = prev_return;
 
+                let mut block_fields = std::collections::HashMap::new();
+                for (fname, ftype) in bp.fields.iter() {
+                    block_fields.insert(fname.clone(), ftype.clone());
+                }
+
                 self.current_env.borrow_mut().define_blueprint(name.to_string(), bp);
 
                 let info = SymbolInfo {
@@ -1363,8 +1397,8 @@ impl SemanticAnalyzer {
                     kind: SymbolKind::Variable {
                         type_node: BaseType::Block {
                             name: name.clone(),
+                            fields: Box::new(block_fields),
                             methods: Box::new(std::collections::HashMap::new()),
-                            return_type: Box::new(BaseType::Unknown),
                         },
                         editability: Editability::Editable,
                         is_array: false,
@@ -1383,6 +1417,22 @@ impl SemanticAnalyzer {
                 // Register the machine as a custom blueprint type
                 let mut bp = BlueprintData::new(name);
 
+                let mut label_map = std::collections::HashMap::new();
+                for l in labels.iter() {
+                    if let Decl::LabelDecl { name: lbl_name, body: stmts, .. } = l {
+                        let mut lbl_fields = std::collections::HashMap::new();
+                        for s in stmts {
+                            if let Stmt::Declaration(Decl::VarDecl { name: var_name, type_node, .. }) = s {
+                                lbl_fields.insert(var_name.clone(), type_node.clone());
+                            }
+                        }
+                        label_map.insert(lbl_name.clone(), BaseType::Label {
+                            name: lbl_name.clone(),
+                            fields: Box::new(lbl_fields),
+                        });
+                    }
+                }
+
                 let info = SymbolInfo {
                     name: name.clone(),
                     kind: SymbolKind::Variable {
@@ -1390,7 +1440,7 @@ impl SemanticAnalyzer {
                             name: name.clone(),
                             fields: Box::new(std::collections::HashMap::new()),
                             methods: Box::new(std::collections::HashMap::new()),
-                            labels: labels.iter().filter_map(|l| if let Decl::LabelDecl { name, .. } = l { Some(name.clone()) } else { None }).collect(),
+                            labels: Box::new(label_map),
                         },
                         editability: Editability::Editable,
                         is_array: false,
@@ -1403,6 +1453,58 @@ impl SemanticAnalyzer {
             is_compilable: false,
                 };
                 self.current_env.borrow_mut().define(name.to_string(), info)?;
+
+                if let Some(Decl::LabelDecl { name: last_lbl_name, body: last_body }) = labels.last() {
+                    fn stmts_contain_continue(stmts: &[Stmt]) -> bool {
+                        for s in stmts {
+                            match s {
+                                Stmt::ContinueStmt => return true,
+                                Stmt::Block(inner) | Stmt::ThisBlock(inner) => {
+                                    if stmts_contain_continue(inner) {
+                                        return true;
+                                    }
+                                }
+                                Stmt::IfStmt { then_block, else_block, .. } => {
+                                    if stmts_contain_continue(then_block) {
+                                        return true;
+                                    }
+                                    if let Some(eb) = else_block {
+                                        if stmts_contain_continue(eb) {
+                                            return true;
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        false
+                    }
+
+                    if stmts_contain_continue(last_body) {
+                        return Err(format!(
+                            "Semantic Error: Cannot 'continue' in final label '{}' of machine '{}' as there is no subsequent label to advance to.",
+                            last_lbl_name, name
+                        ));
+                    }
+                }
+
+                let mut label_vars: HashMap<String, HashMap<String, BaseType>> = HashMap::new();
+                for label_decl in labels {
+                    if let Decl::LabelDecl { name: l_name, body } = label_decl {
+                        let clean_name = l_name.replace("@", "");
+                        let mut vars = HashMap::new();
+                        for s in body {
+                            if let Stmt::Declaration(Decl::VarDecl { name: v_name, type_node, .. }) = s {
+                                vars.insert(v_name.clone(), type_node.clone());
+                            }
+                        }
+                        label_vars.insert(clean_name.clone(), vars.clone());
+                        label_vars.insert(l_name.clone(), vars);
+                    }
+                }
+                self.machine_labels.insert(name.clone(), label_vars);
+                let prev_machine = self.current_machine.clone();
+                self.current_machine = Some(name.clone());
 
                 let prev = self.in_custom_scope;
                 self.in_custom_scope = true;
@@ -1445,6 +1547,7 @@ impl SemanticAnalyzer {
 
                 self.leave_scope();
                 self.in_custom_scope = prev;
+                self.current_machine = prev_machine;
                 self.current_env.borrow_mut().define_blueprint(name.to_string(), bp);
             }
 
@@ -1458,19 +1561,128 @@ impl SemanticAnalyzer {
                 is_abstract,
                 ..
             } => {
-                self.fn_overloads.entry(name.clone()).or_default().push(FnSignature {
-                    name: name.clone(),
-                    params: params.clone(),
-                    return_type: return_type.clone(),
-                    is_virtual: *is_virtual,
-                    is_abstract: *is_abstract,
-                });
+                let mut resolved_params = params.clone();
+                for p in &mut resolved_params {
+                    if let Some(ref def_val) = p.default_value {
+                        let inferred = self.visit_expression(def_val)?;
+                        if matches!(p.type_node, BaseType::Unknown) {
+                            if let Some(bp) = self.current_env.borrow().lookup_blueprint(&inferred) {
+                                if bp.is_class {
+                                    p.type_node = BaseType::Class {
+                                        name: inferred.clone(),
+                                        fields: Box::new(HashMap::new()),
+                                        methods: Box::new(HashMap::new()),
+                                        constructor: None,
+                                        generics: Vec::new(),
+                                    };
+                                } else {
+                                    p.type_node = BaseType::Struct {
+                                        name: inferred.clone(),
+                                        fields: Box::new(HashMap::new()),
+                                        methods: Box::new(HashMap::new()),
+                                        generics: Vec::new(),
+                                    };
+                                }
+                            } else if let Some(meta) = self.global_metadata.get(&inferred) {
+                                if meta.ty.as_str().starts_with("class") {
+                                    p.type_node = BaseType::Class {
+                                        name: inferred.clone(),
+                                        fields: Box::new(HashMap::new()),
+                                        methods: Box::new(HashMap::new()),
+                                        constructor: None,
+                                        generics: Vec::new(),
+                                    };
+                                } else {
+                                    p.type_node = BaseType::Struct {
+                                        name: inferred.clone(),
+                                        fields: Box::new(HashMap::new()),
+                                        methods: Box::new(HashMap::new()),
+                                        generics: Vec::new(),
+                                    };
+                                }
+                            } else {
+                                p.type_node = match inferred.as_str() {
+                                    "int" | "int32" => BaseType::Int(Size::S32),
+                                    "int8" => BaseType::Int(Size::S8),
+                                    "int16" => BaseType::Int(Size::S16),
+                                    "int64" => BaseType::Int(Size::S64),
+                                    "uint" | "uint32" => BaseType::UInt(Size::S32),
+                                    "uint8" => BaseType::UInt(Size::S8),
+                                    "uint16" => BaseType::UInt(Size::S16),
+                                    "uint64" => BaseType::UInt(Size::S64),
+                                    "float" | "float32" => BaseType::Float(Size::S32),
+                                    "float64" => BaseType::Float(Size::S64),
+                                    "bool" => BaseType::Bool,
+                                    "str" => BaseType::Str,
+                                    "char" => BaseType::Char,
+                                    _ => BaseType::Blueprint {
+                                        name: inferred.clone(),
+                                        fields: Box::new(HashMap::new()),
+                                        methods: Box::new(HashMap::new()),
+                                        generics: Vec::new(),
+                                    },
+                                };
+                            }
+                        } else if !self.types_are_compatible(&p.type_node.as_str(), &inferred) {
+                            return Err(format!(
+                                "Semantic Error: Default value for parameter '{}' has type '{}', incompatible with declared type '{}'.",
+                                p.name, inferred, p.type_node.as_str()
+                            ));
+                        }
+                    }
+                }
+
+                let mut seen_default = false;
+                for p in &resolved_params {
+                    if p.default_value.is_some() {
+                        seen_default = true;
+                    } else if seen_default {
+                        return Err(format!(
+                            "Semantic Error: Required parameter '{}' cannot follow a parameter with a default value in function '{}'.",
+                            p.name, name
+                        ));
+                    }
+                }
+
+                let is_member_method = self.current_type_name.is_some() || self.in_custom_scope || self.in_class || self.in_struct;
+
+                if !is_member_method {
+                    let min_args = resolved_params.iter().take_while(|p| p.default_value.is_none()).count();
+                    let max_args = resolved_params.len();
+
+                    if let Some(existing_sigs) = self.fn_overloads.get(name) {
+                        for ex in existing_sigs {
+                            let ex_min = ex.params.iter().take_while(|p| p.default_value.is_none()).count();
+                            let ex_max = ex.params.len();
+                            for ex_len in ex_min..=ex_max {
+                                let ex_prefix: Vec<String> = ex.params[..ex_len].iter().map(|p| p.type_node.as_str()).collect();
+                                for len in min_args..=max_args {
+                                    let prefix: Vec<String> = resolved_params[..len].iter().map(|p| p.type_node.as_str()).collect();
+                                    if prefix == ex_prefix {
+                                        return Err(format!(
+                                            "Semantic Error: Overload conflict for function '{}': default parameters create an ambiguity with existing overload.",
+                                            name
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    self.fn_overloads.entry(name.clone()).or_default().push(FnSignature {
+                        name: name.clone(),
+                        params: resolved_params.clone(),
+                        return_type: return_type.clone(),
+                        is_virtual: *is_virtual,
+                        is_abstract: *is_abstract,
+                    });
+                }
                 let is_compilable_fn = has_compile_directive(body);
 
                 let fn_info = SymbolInfo {
                     name: name.clone(),
                     kind: SymbolKind::Function {
-                        params: params.clone(),
+                        params: resolved_params.clone(),
                         return_type: return_type.clone(),
                         body: Some(body.clone()),
                     },
@@ -1502,7 +1714,7 @@ impl SemanticAnalyzer {
                 self.active_return_type = Some(return_type.clone());
 
                 self.enter_scope();
-                for p in params {
+                for p in &resolved_params {
                     for dep in extract_all_type_names(&p.type_node.as_str()) {
                         self.record_dependency(dep);
                     }
@@ -2260,6 +2472,16 @@ impl SemanticAnalyzer {
 
                 // simple primitive types
                 _ => {
+                    if let Expr::Lambda { params, .. } = value {
+                        let is_lambda_untyped = matches!(type_node, BaseType::Unknown)
+                            || matches!(type_node, BaseType::Lambda { params, .. } if params.is_empty());
+                        if is_lambda_untyped && params.iter().any(|p| p.type_node == BaseType::Unknown) {
+                            return Err(format!(
+                                "Semantic Error: Lambda parameters must have explicit type annotations when target type is not declared (e.g. '|x: int, y: int|')"
+                            ));
+                        }
+                    }
+
                     // Allow -> operator for any type (it's used as "default init" syntax)
                     // Allow := operator (inferred type)
                     if assign_op != "->" && assign_op != ":=" && declared_type != "unknown" && expr_type != "default" && !self.types_are_compatible(&declared_type, &expr_type) {
@@ -2721,6 +2943,27 @@ impl SemanticAnalyzer {
             }
 
             Expr::NamespaceAccess { namespace, property } => {
+                if namespace.starts_with('@') {
+                    if let Some(ref m_name) = self.current_machine {
+                        let clean_lbl = namespace.replace("@", "");
+                        if let Some(labels_map) = self.machine_labels.get(m_name) {
+                            if let Some(vars_map) = labels_map.get(&clean_lbl).or_else(|| labels_map.get(namespace)) {
+                                if let Expr::Identifier(prop_name) = &**property {
+                                    if let Some(t_node) = vars_map.get(prop_name) {
+                                        return Ok(t_node.as_str());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Expr::Identifier(prop_name) = &**property {
+                        if let Some(info) = self.current_env.borrow().lookup(prop_name) {
+                            return Ok(info.type_str());
+                        }
+                    }
+                    return Ok("unknown".to_string());
+                }
+
                 // Check global metadata first
                 if let Some(metadata) = self.global_metadata.get(namespace) {
                     if let Expr::Identifier(prop_name) = &**property {
@@ -2962,8 +3205,10 @@ impl SemanticAnalyzer {
                     if let Some(sigs) = self.fn_overloads.get(name) {
                         let mut best_match = None;
                         for sig in sigs {
-                            if sig.params.len() == arg_types.len() {
-                                let matches = sig.params
+                            let min_args = sig.params.iter().take_while(|p| p.default_value.is_none()).count();
+                            let max_args = sig.params.len();
+                            if arg_types.len() >= min_args && arg_types.len() <= max_args {
+                                let matches = sig.params[..arg_types.len()]
                                     .iter()
                                     .zip(arg_types.iter())
                                     .all(|(p, a_ty)| {
@@ -3292,11 +3537,18 @@ impl SemanticAnalyzer {
                     };
                     self.current_env.borrow_mut().define(p.name.clone(), p_info)?;
                 }
+                let mut inferred_return: Option<String> = None;
                 for s in body {
-                    self.visit_statement(s)?;
+                    if let Stmt::ReturnStmt(Some(ret_expr)) = s {
+                        inferred_return = Some(self.visit_expression(ret_expr)?);
+                    } else {
+                        self.visit_statement(s)?;
+                    }
                 }
                 self.leave_scope();
-                Ok("method".to_string())
+                let ret_t = inferred_return.unwrap_or_else(|| "void".to_string());
+                let p_types: Vec<String> = params.iter().map(|p| p.type_node.as_str()).collect();
+                Ok(format!("lambda<({}), {}>", p_types.join(", "), ret_t))
             }
         }
     }
@@ -3325,6 +3577,10 @@ impl SemanticAnalyzer {
             }
         }
         if (expected == "flag" && actual == "bool") || (expected == "bool" && actual == "flag") {
+            return true;
+        }
+        if (expected.to_lowercase().starts_with("lambda") || expected.to_lowercase().starts_with("fn") || expected.starts_with("name<Fn") || expected.starts_with("name<lambda") || expected.to_lowercase().starts_with("method")) &&
+           (actual.to_lowercase().starts_with("lambda") || actual.to_lowercase().starts_with("fn") || actual.starts_with("name<Fn") || actual.starts_with("name<lambda") || actual.to_lowercase().starts_with("method")) {
             return true;
         }
         if (expected == "str" || expected == "array<char>" || expected == "char[]") &&
@@ -3802,6 +4058,19 @@ pub fn has_compile_directive(stmts: &[Stmt]) -> bool {
             }
             Stmt::WhileStmt { condition, body } => {
                 if has_compile_directive_expr(condition) { return true; }
+                match body {
+                    crate::frontend::parser::ast::EitherBlock::Inline(b) => {
+                        if has_compile_directive(b) { return true; }
+                    }
+                    crate::frontend::parser::ast::EitherBlock::External(e) => {
+                        if has_compile_directive_expr(e) { return true; }
+                    }
+                }
+            }
+            Stmt::LoopStmt { count, body } => {
+                if let Some(c) = count {
+                    if has_compile_directive_expr(c) { return true; }
+                }
                 match body {
                     crate::frontend::parser::ast::EitherBlock::Inline(b) => {
                         if has_compile_directive(b) { return true; }

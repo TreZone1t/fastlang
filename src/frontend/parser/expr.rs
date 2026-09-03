@@ -313,8 +313,8 @@ impl Parser {
                             }
                         }
                         self.consume(TokenKind::RParen, &format!("Expected ')' after {} parameter types", kind_str))?;
-                        if self.peek().kind == TokenKind::Comma {
-                            self.advance(); // consume ','
+                        if self.peek().kind == TokenKind::Comma || self.peek().kind == TokenKind::Arrow {
+                            self.advance(); // consume ',' or '->'
                             if self.peek().kind != TokenKind::Greater {
                                 return_type = Box::new(self.parse_type()?);
                             }
@@ -342,16 +342,15 @@ impl Parser {
                         self.advance();
                     }
                 }
-                let mut return_type = Box::new(BaseType::Unknown);
                 if self.peek().kind == TokenKind::Less {
                     self.advance(); // '<'
-                    return_type = Box::new(self.parse_type()?);
-                    self.consume(TokenKind::Greater, "Expected '>' after block return type")?;
+                    let _ = self.parse_type()?;
+                    self.consume(TokenKind::Greater, "Expected '>' after block type")?;
                 }
                 Ok(BaseType::Block {
                     name,
+                    fields: Box::new(std::collections::HashMap::new()),
                     methods: Box::new(std::collections::HashMap::new()),
-                    return_type,
                 })
             }
             TokenKind::TypeClass | TokenKind::TypeStruct | TokenKind::TypeBluePrint | TokenKind::TypeEnum => {
@@ -590,13 +589,8 @@ impl Parser {
                 let mut params = Vec::new();
                 if self.peek().kind != TokenKind::RParen {
                     loop {
-                        let param_name = self.get_identifier("Expected parameter name")?;
-                        self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
-                        let type_node = self.parse_type()?;
-                        params.push(Param {
-                            name: param_name,
-                            type_node,
-                        });
+                        let p = self.parse_single_param()?;
+                        params.push(p);
                         if self.peek().kind == TokenKind::Comma {
                             self.advance();
                         } else {
@@ -874,6 +868,45 @@ impl Parser {
                 self.consume(TokenKind::RBrace, "Expected '}' after object literal")?;
                 Ok(Expr::ObjectLiteral(stmts))
             }
+
+            // --- Pipe Lambdas: |x: int, y: int| x + y ---
+            TokenKind::Pipe => {
+                self.advance(); // consume opening '|'
+                let mut params = Vec::new();
+                while !self.is_at_end() && self.peek().kind != TokenKind::Pipe {
+                    let is_untyped = if let TokenKind::Identifier(_) = &self.peek().kind {
+                        self.peek_ahead(1).map(|t| t.kind == TokenKind::Comma || t.kind == TokenKind::Pipe).unwrap_or(false)
+                    } else {
+                        false
+                    };
+
+                    let p = if is_untyped {
+                        let name = self.get_identifier("Expected parameter name in lambda")?;
+                        Param {
+                            name,
+                            type_node: BaseType::Unknown,
+                            default_value: None,
+                        }
+                    } else {
+                        self.parse_single_param()?
+                    };
+
+                    params.push(p);
+                    if self.peek().kind == TokenKind::Comma {
+                        self.advance();
+                    } else if self.peek().kind != TokenKind::Pipe {
+                        return Err("Expected ',' or '|' in lambda parameters".to_string());
+                    }
+                }
+                self.consume(TokenKind::Pipe, "Expected '|' to close lambda parameters")?;
+
+                let body_expr = self.parse_expression()?;
+                Ok(Expr::Lambda {
+                    params,
+                    return_type: None,
+                    body: vec![Stmt::ReturnStmt(Some(body_expr))],
+                })
+            }
             // --- Keywords used as identifier expressions (e.g. `flag && check`) ---
             // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             other => {
@@ -1122,17 +1155,8 @@ impl Parser {
         self.consume(TokenKind::LParen, "Expected '(' at start of lambda")?;
         let mut params = Vec::new();
         while !self.is_at_end() && self.peek().kind != TokenKind::RParen {
-            let p_name = self.get_identifier("Expected parameter name in lambda")?;
-            let p_type = if self.peek().kind == TokenKind::Colon {
-                self.advance();
-                self.parse_type()?
-            } else {
-                BaseType::Unknown
-            };
-            params.push(Param {
-                name: p_name,
-                type_node: p_type,
-            });
+            let p = self.parse_single_param()?;
+            params.push(p);
             if self.peek().kind == TokenKind::Comma {
                 self.advance();
             } else if self.peek().kind != TokenKind::RParen {

@@ -1,0 +1,13 @@
+// Fail Test 98: Cannot access private field from outside class
+
+class SecretVault -> {
+    private -> {
+        int32 secret_code = 1234;
+    }
+}
+
+fn main() -> int32 {
+    SecretVault vault = new SecretVault();
+    int32 code = vault.secret_code;
+    return code;
+}

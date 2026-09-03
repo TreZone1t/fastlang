@@ -40,6 +40,7 @@ impl Parser {
             //| TokenKind::Scope
             | TokenKind::TypeMethod
             | TokenKind::TypeFn
+            | TokenKind::TypeLambda
             /*//todo | TokenKind::TypeObject */
             | TokenKind::TypeType
             | TokenKind::TypeName
@@ -433,6 +434,34 @@ impl Parser {
         }
     }
 
+    pub(crate) fn parse_single_param(&mut self) -> Result<Param, String> {
+        let err_msg = format!("Expected parameter name at line {}, column {}, found '{:?}'", self.peek().line, self.peek().column, self.peek().kind);
+        let param_name = self.get_identifier(&err_msg)?;
+        let (type_node, default_value) = if self.peek().kind == TokenKind::Walrus {
+            self.advance(); // consume ':='
+            let val_expr = self.parse_expression()?;
+            let t = type_from_expr(&val_expr);
+            (t, Some(val_expr))
+        } else if self.peek().kind == TokenKind::Colon {
+            self.advance(); // consume ':'
+            let t = self.parse_type()?;
+            let default_val = if self.peek().kind == TokenKind::Assign || self.peek().kind == TokenKind::Walrus {
+                self.advance();
+                Some(self.parse_expression()?)
+            } else {
+                None
+            };
+            (t, default_val)
+        } else {
+            return Err("Expected ':' or ':=' after parameter name".to_string());
+        };
+        Ok(Param {
+            name: param_name,
+            type_node,
+            default_value,
+        })
+    }
+
     pub(crate) fn parse_extern_fn_signature(&mut self, abi: &str) -> Result<Decl, String> {
         self.consume(TokenKind::Fn, "Expected 'fn'")?;
         let name = self.get_identifier("Expected function name in extern declaration")?;
@@ -440,13 +469,8 @@ impl Parser {
         let mut params = Vec::new();
         if self.peek().kind != TokenKind::RParen {
             loop {
-                let p_name = self.get_identifier("Expected parameter name")?;
-                self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
-                let p_type = self.parse_type()?;
-                params.push(Param {
-                    name: p_name,
-                    type_node: p_type,
-                });
+                let p = self.parse_single_param()?;
+                params.push(p);
                 if self.peek().kind == TokenKind::Comma {
                     self.advance();
                     continue;
@@ -682,7 +706,8 @@ impl Parser {
             | TokenKind::TypeCopy
             | TokenKind::TypeType
             | TokenKind::TypeMethod
-            | TokenKind::TypeFn => true,
+            | TokenKind::TypeFn
+            | TokenKind::TypeLambda => true,
             TokenKind::Identifier(_) => {
                 if let Some(next) = self.tokens.get(self.current + 1) {
                     if next.kind == TokenKind::Walrus {
@@ -1787,11 +1812,12 @@ impl Parser {
             op == TokenKind::MinusAssign ||
             op == TokenKind::MulAssign ||
             op == TokenKind::DivAssign ||
-            op == TokenKind::Walrus
+            op == TokenKind::Walrus ||
+            op == TokenKind::Colon
         {
-            self.advance(); // consume '=' or '+=' etc.
+            self.advance(); // consume '=' or ':' or '+=' etc.
             let value = self.parse_expression()?;
-            let op_str = op.as_str().to_string();
+            let op_str = if op == TokenKind::Colon { "=".to_string() } else { op.as_str().to_string() };
             if self.peek().kind == TokenKind::Comma {
                 self.advance();
             } else if self.peek().kind == TokenKind::SemiColon {

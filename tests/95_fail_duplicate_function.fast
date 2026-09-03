@@ -1,0 +1,13 @@
+// Fail Test 95: Cannot declare two functions with identical name and parameter types
+
+fn calculate(x: int32) -> int32 {
+    return x * 2;
+}
+
+fn calculate(x: int32) -> int32 {
+    return x * 3;
+}
+
+fn main() -> int32 {
+    return calculate(10);
+}

@@ -1,0 +1,39 @@
+// Comprehensive Suite 10: Metaprogramming, Defines, Type Variables, Sizeof, Typeof, and Macros
+
+define UserID = int32;
+define MAX_COUNT = 100;
+
+macro custom_log[tag: str, code: int32] -> {
+    println("[", tag, "] Code: ", code);
+}
+
+macro emit_metric[service: str, metric: str, val: int32] -> {
+    println("METRIC: ", service, ".", metric, " = ", val);
+}
+
+fn main() -> int32 {
+    UserID id = 42;
+    println(id); // EXPECT: 42
+
+    int32 limit = MAX_COUNT;
+    println(limit); // EXPECT: 100
+
+    if (sizeof(id) == 4) {
+        println("sizeof check passed"); // EXPECT: sizeof check passed
+    }
+
+    if (typeof(id) == int32) {
+        println("typeof check passed"); // EXPECT: typeof check passed
+    }
+
+    type t = typeof(id);
+    if (t == int32) {
+        println("type variable check passed"); // EXPECT: type variable check passed
+    }
+
+    custom_log "STATUS", 200; // EXPECT: [STATUS] Code: 200
+    emit_metric "auth", "latency_ms", 45; // EXPECT: METRIC: auth.latency_ms = 45
+
+    println("ALL 10_METAPROGRAMMING TESTS PASSED"); // EXPECT: ALL 10_METAPROGRAMMING TESTS PASSED
+    return 0;
+}

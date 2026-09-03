@@ -1,0 +1,38 @@
+// Comprehensive Suite 09: Scopes, State Machines, Labels, Goto, and Lifecycle Handles
+
+machine CounterMachine -> {
+    @init -> {
+        int32 count = 0;
+        int32 max_limit = 5;
+        goto -> @step;
+    }
+
+    @step -> {
+        count = count + 1;
+        if (count >= max_limit) {
+            goto -> @finish;
+        }
+        goto -> @step;
+    }
+
+    @finish -> {
+        leave;
+    }
+
+    handle -> {
+        fn call() -> int32 {
+            goto -> @init;
+        }
+        fn leave() -> int32 {
+            return this.count;
+        }
+    }
+}
+
+fn main() -> int32 {
+    int32 result = CounterMachine();
+    println("Final Machine Count: ", result); // EXPECT: Final Machine Count: 5
+
+    println("ALL 09_SCOPES TESTS PASSED"); // EXPECT: ALL 09_SCOPES TESTS PASSED
+    return 0;
+}

@@ -1,0 +1,52 @@
+// Comprehensive Suite 05: Native 'str' Primitive Type, Char Methods, and Escape Sequences
+
+fn test_str_operations() -> void {
+    str greeting = "Hello";
+    str target = "FastLang";
+    str message = greeting + ", " + target + '!';
+    println("Message: ", message); // EXPECT: Message: Hello, FastLang!
+
+    char first_ch = greeting[0];
+    char last_ch = greeting[4];
+    println("first: ", first_ch, ", last: ", last_ch); // EXPECT: first: H, last: o
+
+    bool empty_check = message.is_empty();
+    println("is_empty: ", empty_check); // EXPECT: is_empty: false
+
+    str a = "test";
+    str b = "test";
+    str c = "other";
+    bool eq1 = (a == b);
+    bool eq2 = (a == c);
+    println("eq1: ", eq1, ", eq2: ", eq2); // EXPECT: eq1: true, eq2: false
+}
+
+fn test_char_methods() -> void {
+    char c1 = '5';
+    char c2 = 'a';
+    char c3 = 'Z';
+    char c4 = ' ';
+
+    bool d1 = c1.is_digit();
+    bool d2 = c2.is_digit();
+    println("digit: ", d1, " ", d2); // EXPECT: digit: true false
+
+    bool a1 = c1.is_alpha();
+    bool a2 = c2.is_alpha();
+    println("alpha: ", a1, " ", a2); // EXPECT: alpha: false true
+
+    char up = c2.to_upper();
+    char low = c3.to_lower();
+    println("cases: ", up, " ", low); // EXPECT: cases: A z
+
+    bool w1 = c4.is_whitespace();
+    println("ws: ", w1); // EXPECT: ws: true
+}
+
+fn main() -> int32 {
+    test_str_operations();
+    test_char_methods();
+
+    println("ALL 05_STR_AND_PRIMITIVES TESTS PASSED"); // EXPECT: ALL 05_STR_AND_PRIMITIVES TESTS PASSED
+    return 0;
+}

@@ -59,7 +59,7 @@ impl Parser {
                         name: name.clone(),
                         fields: Box::new(std::collections::HashMap::new()),
                         methods: Box::new(std::collections::HashMap::new()),
-                        labels: vec![],
+                        labels: Box::new(std::collections::HashMap::new()),
                     })?;
                     let block = self.parse_handle_body(&mut _used, allowed)?;
                     // Only allow `call` and `leave` handles in machine

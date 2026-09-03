@@ -188,4 +188,10 @@ public impl array<T> -> {
         }
         return Some(this[this.len - 1]);
     }
+
+    fn map(transform: lambda<(T) -> T>) -> void {
+        for (int32 i = 0; i < this.len; i = i + 1) {
+            this[i] = transform(this[i]);
+        }
+    }
 }

@@ -1,0 +1,7 @@
+// Fail Test 96: 'break' cannot be used outside of a loop or switch
+
+fn main() -> int32 {
+    int32 x = 10;
+    break;
+    return x;
+}

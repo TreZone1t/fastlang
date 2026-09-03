@@ -132,6 +132,7 @@ pub enum TokenKind {
     // logical
     And, // && or and
     Or, // || or or
+    Pipe, // |
 
     // Relational
     Eq, // ==
@@ -258,6 +259,7 @@ impl TokenKind {
             TokenKind::LessEq => "<=",
             TokenKind::And => "and",
             TokenKind::Or => "or",
+            TokenKind::Pipe => "|",
             TokenKind::Underscore => "_",
             TokenKind::Walrus => ":=",
             TokenKind::Undefined => "undefined",

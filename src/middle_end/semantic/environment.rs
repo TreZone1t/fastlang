@@ -97,6 +97,7 @@ impl BlueprintData {
             let new_params = sig.params.iter().map(|p| Param {
                 name: p.name.clone(),
                 type_node: p.type_node.substitute_generics(&map),
+                default_value: p.default_value.clone(),
             }).collect();
             let new_ret = sig.return_type.substitute_generics(&map);
             new_methods.insert(m_name.clone(), FnSignature {

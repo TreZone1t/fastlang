@@ -146,7 +146,10 @@ impl Parser {
                 allowed_handle.push(HandleMethods::Drop);
                 allowed_handle.push(HandleMethods::Copy);
             }
-            BaseType::Block { .. } | BaseType::Machine { .. } => {
+            BaseType::Block { .. } => {
+                allowed_handle.push(HandleMethods::Display);
+            }
+            BaseType::Machine { .. } => {
                 allowed_handle.push(HandleMethods::Call);
 
                 allowed_handle.push(HandleMethods::Break);
@@ -230,10 +233,8 @@ impl Parser {
                     self.advance();
                     if self.peek().kind != TokenKind::RParen {
                         loop {
-                            let name: String = self.get_identifier("Expected parameter name")?;
-                            self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
-                            let type_node = self.parse_type()?;
-                            method_params.push(Param { name, type_node });
+                            let p = self.parse_single_param()?;
+                            method_params.push(p);
                             if self.peek().kind == TokenKind::Comma {
                                 self.advance();
                             } else {
@@ -334,16 +335,9 @@ impl Parser {
                 let mut param = Vec::new();
                 self.consume(TokenKind::LParen, "Expected '(' after 'init'")?;
                 if self.peek().kind != TokenKind::RParen {
-                    // we expect a list of params
-                    // (a : int(32), b : int(32)) -> void
                     loop {
-                        let name: String = self.get_identifier("Expected parameter name")?;
-                        self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
-                        let type_node = self.parse_type()?;
-                        param.push(Param {
-                            name,
-                            type_node: type_node,
-                        });
+                        let p = self.parse_single_param()?;
+                        param.push(p);
                         if self.peek().kind == TokenKind::Comma {
                             self.advance();
                         } else {

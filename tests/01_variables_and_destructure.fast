@@ -1,0 +1,108 @@
+// Comprehensive Suite 01: Variables, Types, Assignment, Walrus, and Destructuring
+import std;
+
+class PointClass -> {
+    public -> {
+        int32 x = 0;
+        int32 y = 0;
+    }
+}
+
+blueprint PointBp -> {
+    int32 x;
+    int32 y;
+    int32 z;
+};
+
+fn make_point_bp() -> PointBp {
+    return PointBp { x = 10, y = 20, z = 30 };
+}
+
+fn test_primitives_and_sizes() -> void {
+    int8 i8 = 127;
+    int32 i8_val = i8 + 0;
+    int16 i16 = 32767;
+    int32 i32 = 2147483647;
+    uint32 u32 = 4000000000;
+    bool is_fast = true;
+    char letter = 'F';
+
+    println("i8: ", i8_val); // EXPECT: i8: 127
+    println("i16: ", i16);   // EXPECT: i16: 32767
+    println("i32: ", i32);   // EXPECT: i32: 2147483647
+    println("u32: ", u32);   // EXPECT: u32: 4000000000
+    println("bool: ", is_fast); // EXPECT: bool: true
+    println("char: ", letter);  // EXPECT: char: F
+}
+
+fn test_walrus_and_inference() -> void {
+    wx := 42;
+    println("wx = ", wx); // EXPECT: wx = 42
+
+    const best := "fastlang";
+    println("best = ", best); // EXPECT: best = fastlang
+
+    p := new PointClass();
+    p.x = 10;
+    p.y = 20;
+    println("PointClass: x=", p.x, ", y=", p.y); // EXPECT: PointClass: x=10, y=20
+
+    int32 uninit = undefined;
+    uninit = 100;
+    println("uninit after assign = ", uninit); // EXPECT: uninit after assign = 100
+}
+
+fn test_destructuring_and_tuples() -> void {
+    int32 (x, y, z) = 10, 20, 30;
+    println(x); // EXPECT: 10
+    println(y); // EXPECT: 20
+    println(z); // EXPECT: 30
+
+    int32 (xy1, xy2), z2 = 10, 20;
+    println(xy1); // EXPECT: 10
+    println(xy2); // EXPECT: 10
+    println(z2);  // EXPECT: 20
+
+    int32 a, b, c;
+    a = 1;
+    b = 2;
+    c = 3;
+    println(a); // EXPECT: 1
+    println(b); // EXPECT: 2
+    println(c); // EXPECT: 3
+
+    int32 d, e, f = 10;
+    println(d); // EXPECT: 10
+    println(e); // EXPECT: 10
+    println(f); // EXPECT: 10
+
+    int32 j, (k, l) = 10, (20, 30);
+    println(j); // EXPECT: 10
+    println(k); // EXPECT: 20
+    println(l); // EXPECT: 30
+
+    int ((ele1, ele2), (ele3, ele4), (ele5, ele6)) = (1, 2), (3, 4), 5;
+    println(ele1); // EXPECT: 1
+    println(ele2); // EXPECT: 2
+    println(ele3); // EXPECT: 3
+    println(ele4); // EXPECT: 4
+    println(ele5); // EXPECT: 5
+    println(ele6); // EXPECT: 5
+}
+
+fn test_dotdot_destructure() -> void {
+    {int32 x; ..} = make_point_bp();
+    println("dotdot x: ", x); // EXPECT: dotdot x: 10
+
+    PointBp {c, ..} = make_point_bp();
+    println("dotdot c: ", c); // EXPECT: dotdot c: 10
+}
+
+fn main() -> int32 {
+    test_primitives_and_sizes();
+    test_walrus_and_inference();
+    test_destructuring_and_tuples();
+    test_dotdot_destructure();
+    println("ALL 01_VARIABLES TESTS PASSED"); // EXPECT: ALL 01_VARIABLES TESTS PASSED
+    return 0;
+}

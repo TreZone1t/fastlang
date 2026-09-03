@@ -82,14 +82,18 @@ pub enum BaseType {
     },
     Block {
         name: String,
+        fields: Box<HashMap<String, BaseType>>,
         methods: Box<HashMap<String, FnType>>,
-        return_type: Box<BaseType>,
+    },
+    Label {
+        name: String,
+        fields: Box<HashMap<String, BaseType>>,
     },
     Machine {
         name: String,
         fields: Box<HashMap<String, BaseType>>,
         methods: Box<HashMap<String, FnType>>,
-        labels: Vec<String>,
+        labels: Box<HashMap<String, BaseType>>,
     },
 
     Method {
@@ -134,6 +138,7 @@ impl BaseType {
             BaseType::Enum { name, .. } => name.clone(),
             BaseType::Block { name, .. } => name.clone(),
             BaseType::Machine { name, .. } => name.clone(),
+            BaseType::Label { name, .. } => name.clone(),
             _ => self.as_str(),
         }
     }
@@ -151,6 +156,7 @@ impl BaseType {
             BaseType::Flag => "flag".to_string(),
             BaseType::Block { name, .. } => format!("block<{}>", name),
             BaseType::Machine { name, .. } => format!("machine<{}>", name),
+            BaseType::Label { name, .. } => format!("label<{}>", name),
             BaseType::Void => "void".to_string(),
             BaseType::Modify(t) => format!("modify<{}>", t.as_str()),
             BaseType::Copy(t) => format!("copy<{}>", t.as_str()),
@@ -514,6 +520,7 @@ pub enum ScopeType {
 pub struct Param {
     pub name: String,
     pub type_node: BaseType,
+    pub default_value: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -953,6 +960,23 @@ impl Expr {
         }
     }
 }
+
+pub fn type_from_expr(expr: &Expr) -> BaseType {
+    match expr {
+        Expr::LiteralInt(_) => BaseType::Int(Size::S32),
+        Expr::LiteralFloat(_) => BaseType::Float(Size::S64),
+        Expr::LiteralBool(_) => BaseType::Bool,
+        Expr::LiteralString(_) => BaseType::Str,
+        Expr::LiteralChar(_) => BaseType::Char,
+        Expr::New { type_node, .. } => type_node.clone(),
+        Expr::ArrayAllocate { type_node, .. } => BaseType::Array {
+            base_type: Box::new(type_node.clone()),
+            size: Box::new(None),
+        },
+        _ => BaseType::Unknown,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Place {
     Local,
@@ -1277,6 +1301,7 @@ pub struct BlueprintField {
     pub is_static: bool,
     pub name: String,
     pub type_node: BaseType,
+    pub default_value: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

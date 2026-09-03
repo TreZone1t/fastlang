@@ -1,0 +1,88 @@
+// Comprehensive Suite 03: Functions, Overloading, Recursion, Default Parameters, and IIFE
+import std;
+
+fn add_vals(a: int32, b: int32) -> int32 {
+    return a + b;
+}
+
+fn add_vals(a: float64, b: float64) -> float64 {
+    return a + b;
+}
+
+fn compute(val: int32, factor := 2) -> int32 {
+    return val * factor;
+}
+
+fn factorial(n: int32) -> int32 {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+fn test_overloading_and_defaults() -> void {
+    int32 i_res = add_vals(10, 20);
+    println("add_vals int: ", i_res); // EXPECT: add_vals int: 30
+
+    float64 f_res = add_vals(1.5, 2.5);
+    println("add_vals float: ", f_res); // EXPECT: add_vals float: 4
+
+    int32 c1 = compute(10);
+    int32 c2 = compute(10, 5);
+    println("compute default: ", c1); // EXPECT: compute default: 20
+    println("compute custom: ", c2);  // EXPECT: compute custom: 50
+}
+
+fn test_recursion() -> void {
+    int32 fact5 = factorial(5);
+    println("factorial 5: ", fact5); // EXPECT: factorial 5: 120
+}
+
+fn test_iife_and_anon() -> void {
+    int32 sum = (fn(a: int32, b: int32) -> int32 {
+        return a + b;
+    })(15, 25);
+    println("iife sum: ", sum); // EXPECT: iife sum: 40
+
+    fn(x: int32) -> void {
+        println("direct iife: ", x); // EXPECT: direct iife: 99
+    }(99);
+}
+
+micro double_val = (val: int32) -> int32 {
+    return val * 2;
+};
+
+micro decrement_val = (i: modify<int32>) -> {
+    i -= 1;
+};
+
+fn test_methods_and_micros() -> void {
+    method<void> hello = () -> {
+        println("hello from method");
+    };
+    hello(); // EXPECT: hello from method
+
+    method add = (a: int32, b: int32) -> {
+        return a + b;
+    };
+    int32 res = add(10, 20);
+    println("method add: ", res); // EXPECT: method add: 30
+
+    int32 doubled = double_val(25);
+    println("micro double: ", doubled); // EXPECT: micro double: 50
+
+    int32 val = 10;
+    decrement_val(&val);
+    println("micro decrement: ", val); // EXPECT: micro decrement: 9
+}
+
+fn main() -> int32 {
+    test_overloading_and_defaults();
+    test_recursion();
+    test_iife_and_anon();
+    test_methods_and_micros();
+
+    println("ALL 03_FUNCTIONS TESTS PASSED"); // EXPECT: ALL 03_FUNCTIONS TESTS PASSED
+    return 0;
+}

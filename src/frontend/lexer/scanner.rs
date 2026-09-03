@@ -497,9 +497,7 @@ impl Scanner {
                     self.advance();
                     TokenKind::Or
                 } else {
-                    TokenKind::Error(
-                        "Unsupported operator '|' (bitwise OR is not supported; did you mean '||'?)".to_string()
-                    )
+                    TokenKind::Pipe
                 }
             }
             '>' => {

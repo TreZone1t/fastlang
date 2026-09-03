@@ -22,13 +22,11 @@ pub(crate) fn type_to_cpp(t: &BaseType) -> String {
         BaseType::Str => "fastlang_str".to_string(),
         BaseType::Bool => "bool".to_string(),
         BaseType::Void => "void".to_string(),
-        BaseType::Block { name, return_type, .. } => {
+        BaseType::Block { name, .. } => {
             if !name.is_empty() {
                 format!("__block_type_{}", name)
-            } else if return_type.as_ref() != &BaseType::Unknown {
-                format!("std::function<{}()>", type_to_cpp(return_type))
             } else {
-                "std::function<void()>".to_string()
+                "void".to_string()
             }
         }
         BaseType::Machine { name, .. } => {
@@ -190,6 +188,18 @@ fn stmts_use_flag(stmts: &[Stmt], flag: &str) -> bool {
                     }
                 }
             }
+            Stmt::LoopStmt { count, body } => {
+                if let Some(c) = count {
+                    if expr_uses_flag(c, flag) {
+                        return true;
+                    }
+                }
+                if let EitherBlock::Inline(b) = body {
+                    if stmts_use_flag(b, flag) {
+                        return true;
+                    }
+                }
+            }
             Stmt::ForStmt { body, .. } | Stmt::ForInStmt { body, .. } => {
                 if let EitherBlock::Inline(b) = body {
                     if stmts_use_flag(b, flag) {
@@ -247,7 +257,7 @@ fn collect_block_vars(stmts: &[Stmt], vars: &mut Vec<(String, BaseType)>) {
                     collect_block_vars(inner, vars);
                 }
             }
-            Stmt::WhileStmt { body, .. } | Stmt::DoWhileStmt { body, .. } => {
+            Stmt::WhileStmt { body, .. } | Stmt::DoWhileStmt { body, .. } | Stmt::LoopStmt { body, .. } => {
                 if let EitherBlock::Inline(inner) = body {
                     collect_block_vars(inner, vars);
                 }
@@ -274,6 +284,16 @@ fn collect_block_vars(stmts: &[Stmt], vars: &mut Vec<(String, BaseType)>) {
 }
 
 impl CodeGenerator {
+    pub(crate) fn format_param(&mut self, param: &Param) -> String {
+        let cpp_t = type_to_cpp(&param.type_node);
+        if let Some(ref def_val) = param.default_value {
+            let def_code = self.visit_expression(def_val);
+            format!("{} {} = {}", cpp_t, param.name, def_code)
+        } else {
+            format!("{} {}", cpp_t, param.name)
+        }
+    }
+
     pub(crate) fn visit_statement(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Block(stmts) | Stmt::ThisBlock(stmts) => {
@@ -387,6 +407,28 @@ impl CodeGenerator {
                 self.indent_level -= 1;
                 let cond_code = self.visit_expression(condition);
                 self.emit(&format!("}} while ({});", cond_code));
+            }
+            Stmt::LoopStmt { count, body } => {
+                if let Some(c) = count {
+                    let count_code = self.visit_expression(c);
+                    self.emit(&format!("for (long long _i = 0, _limit = (long long)({}); _i < _limit; ++_i) {{", count_code));
+                } else {
+                    self.emit("while (true) {");
+                }
+                self.indent_level += 1;
+                match body {
+                    EitherBlock::Inline(stmts) => {
+                        for s in stmts {
+                            self.visit_statement(s);
+                        }
+                    }
+                    EitherBlock::External(expr) => {
+                        let expr_code = self.visit_expression(expr);
+                        self.emit(&format!("{};", expr_code));
+                    }
+                }
+                self.indent_level -= 1;
+                self.emit("}");
             }
             Stmt::SwitchStmt { condition, cases, .. } => {
                 let cond_code = self.visit_expression(condition);
@@ -886,7 +928,13 @@ impl CodeGenerator {
                                 let field_strs: Vec<String> = fields
                                     .iter()
                                     .map(|f| {
-                                        format!("{} {};", type_to_cpp(&f.type_node), f.name)
+                                        let type_str = type_to_cpp(&f.type_node);
+                                        if let Some(ref def_val) = f.default_value {
+                                            let def_code = self.visit_expression(def_val);
+                                            format!("{} {} = {};", type_str, f.name, def_code)
+                                        } else {
+                                            format!("{} {};", type_str, f.name)
+                                        }
                                     })
                                     .collect();
                                 self.emit(
@@ -1572,9 +1620,14 @@ impl CodeGenerator {
                             .map(|p| {
                                 let cpp_t = type_to_cpp(&p.type_node);
                                 if cpp_t == *name || cpp_t.ends_with(&format!("::{}", name)) || p.type_node.get_name() == *name {
-                                    format!("const {}& {}", cpp_t, p.name)
+                                    if let Some(ref def_val) = p.default_value {
+                                        let def_code = self.visit_expression(def_val);
+                                        format!("const {}& {} = {}", cpp_t, p.name, def_code)
+                                    } else {
+                                        format!("const {}& {}", cpp_t, p.name)
+                                    }
                                 } else {
-                                    format!("{} {}", cpp_t, p.name)
+                                    self.format_param(p)
                                 }
                             })
                             .collect();
@@ -1796,8 +1849,7 @@ impl CodeGenerator {
                             self.pointer_vars.insert(param.name.clone());
                         }
                     }
-                    let param_type = type_to_cpp(&param.type_node);
-                    param_strs.push(format!("{} {}", param_type, param.name));
+                    param_strs.push(self.format_param(param));
                 }
 
                 let safe_name = match name.as_str() {
@@ -2108,49 +2160,73 @@ impl CodeGenerator {
                 self.emit("bool has_yielded = false;");
                 self.emit("int32_t __state = 0;");
 
-                // Hoist `this.var = value` or `this.var := value` as struct fields
+                // Hoist `this.var = value` or `this.var := value` or label variables as struct fields
                 let mut field_names: Vec<String> = Vec::new();
-                
-                let mut collect_this = |s: &Stmt| {
-                    if let Stmt::Declaration(Decl::VarDecl { name: f_name, type_node, .. }) = s {
-                        if !field_names.contains(f_name) {
-                            let cpp_t = type_to_cpp(type_node);
-                            self.emit(&format!("{} {} = {{}};", cpp_t, f_name));
-                            field_names.push(f_name.clone());
+                let mut fields_out: Vec<String> = Vec::new();
+
+                fn collect_machine_fields(s: &Stmt, field_names: &mut Vec<String>, fields_out: &mut Vec<String>) {
+                    match s {
+                        Stmt::Declaration(Decl::VarDecl { name: f_name, type_node, .. }) => {
+                            if !field_names.contains(f_name) {
+                                let cpp_t = type_to_cpp(type_node);
+                                fields_out.push(format!("{} {} = {{}};", cpp_t, f_name));
+                                field_names.push(f_name.clone());
+                            }
                         }
-                    }
-                    if let Stmt::ReassignStmt { target: Expr::PropertyAccess { object, property }, .. } = s {
-                        let is_this = match &**object {
-                            Expr::This => true,
-                            Expr::Identifier(obj_name) => obj_name == "this",
-                            _ => false,
-                        };
-                        if is_this && !field_names.contains(property) {
-                            self.emit(&format!("int32_t {} = {{}};", property));
-                            field_names.push(property.clone());
+                        Stmt::Block(inner) | Stmt::ThisBlock(inner) => {
+                            for sub in inner {
+                                collect_machine_fields(sub, field_names, fields_out);
+                            }
                         }
+                        Stmt::IfStmt { then_block, else_block, .. } => {
+                            for sub in then_block {
+                                collect_machine_fields(sub, field_names, fields_out);
+                            }
+                            if let Some(eb) = else_block {
+                                for sub in eb {
+                                    collect_machine_fields(sub, field_names, fields_out);
+                                }
+                            }
+                        }
+                        Stmt::WhileStmt { body, .. } | Stmt::DoWhileStmt { body, .. } => {
+                            if let EitherBlock::Inline(sub) = body {
+                                for st in sub {
+                                    collect_machine_fields(st, field_names, fields_out);
+                                }
+                            }
+                        }
+                        Stmt::ForStmt { init, body, .. } => {
+                            if let Some(i) = init {
+                                collect_machine_fields(i, field_names, fields_out);
+                            }
+                            if let EitherBlock::Inline(sub) = body {
+                                for st in sub {
+                                    collect_machine_fields(st, field_names, fields_out);
+                                }
+                            }
+                        }
+                        _ => {}
                     }
-                };
+                }
 
                 // Collect from handle_block first so typed `this { ... }` declarations take precedence
                 for h in handle_block {
                     if let Decl::FnDecl { body, .. } = h {
                         for s in body {
-                            if let Stmt::Block(inner_stmts) | Stmt::ThisBlock(inner_stmts) = s {
-                                for inner in inner_stmts {
-                                    collect_this(inner);
-                                }
-                            }
-                            collect_this(s);
+                            collect_machine_fields(s, &mut field_names, &mut fields_out);
                         }
                     }
                 }
                 for label_decl in labels.iter() {
                     if let Decl::LabelDecl { body, .. } = label_decl {
                         for s in body {
-                            collect_this(s);
+                            collect_machine_fields(s, &mut field_names, &mut fields_out);
                         }
                     }
+                }
+
+                for f in fields_out {
+                    self.emit(&f);
                 }
 
                 // Call handle body logic

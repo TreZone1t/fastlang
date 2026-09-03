@@ -30,13 +30,8 @@ impl Parser {
         self.consume(TokenKind::LParen, "Expected '(' after function name")?;
         if self.peek().kind != TokenKind::RParen {
             loop {
-                let param_name: String = self.get_identifier("Expected parameter name")?;
-                self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
-                let type_node = self.parse_type()?;
-                params.push(Param {
-                    name: param_name,
-                    type_node,
-                });
+                let p = self.parse_single_param()?;
+                params.push(p);
                 if self.peek().kind == TokenKind::Comma {
                     self.advance();
                 } else {
@@ -168,13 +163,8 @@ impl Parser {
         if self.peek().kind == TokenKind::LParen {
             self.advance();
             while !self.is_at_end() && self.peek().kind != TokenKind::RParen {
-                let p_name = self.get_identifier("Expected parameter name")?;
-                self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
-                let p_type = self.parse_type()?;
-                params.push(Param {
-                    name: p_name,
-                    type_node: p_type,
-                });
+                let p = self.parse_single_param()?;
+                params.push(p);
                 if self.peek().kind == TokenKind::Comma {
                     self.advance();
                 }
@@ -232,13 +222,8 @@ impl Parser {
         if self.peek().kind == TokenKind::LBracket {
             self.advance(); // consume '['
             while !self.is_at_end() && self.peek().kind != TokenKind::RBracket {
-                let p_name = self.get_identifier("Expected parameter name")?;
-                self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
-                let p_type = self.parse_type()?;
-                params.push(Param {
-                    name: p_name,
-                    type_node: p_type,
-                });
+                let p = self.parse_single_param()?;
+                params.push(p);
                 if self.peek().kind == TokenKind::Comma {
                     self.advance();
                 }
@@ -247,13 +232,8 @@ impl Parser {
         } else if self.peek().kind == TokenKind::LParen {
             self.advance(); // consume '('
             while !self.is_at_end() && self.peek().kind != TokenKind::RParen {
-                let p_name = self.get_identifier("Expected parameter name")?;
-                self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
-                let p_type = self.parse_type()?;
-                params.push(Param {
-                    name: p_name,
-                    type_node: p_type,
-                });
+                let p = self.parse_single_param()?;
+                params.push(p);
                 if self.peek().kind == TokenKind::Comma {
                     self.advance();
                 }

@@ -332,7 +332,9 @@ impl CodeGenerator {
             }
             Expr::NamespaceAccess { namespace, property } => {
                 let prop_code = self.visit_expression(property);
-                if self.payload_enum_types.contains(namespace) {
+                if namespace.starts_with('@') {
+                    format!("this->{}", prop_code)
+                } else if self.payload_enum_types.contains(namespace) {
                     format!("{}::{}()", namespace, prop_code)
                 } else {
                     format!("{}::{}", namespace, prop_code)

@@ -673,3 +673,39 @@ print("hallo:",IAmNotPrintable,".");
 // but anyway we will stop the compiling after the first error 
 // so when we add a @compile Macro or func that make the scope that @compile run in a compilable scope 
 // and we will add a flag for that
+
+// =========================================================================
+// DEFERRED FUTURE ROADMAP (Saved from discussion):
+// =========================================================================
+// 1. Dedicated String Type (fastlang_str):
+//    - Separate 'str' from 'fastlang_slice<char>' into its own dedicated struct 'fastlang_str'.
+//    - Allow 'impl str' to have string-specific methods (split, trim, to_upper, contains, etc.)
+//      without polluting generic array slices.
+//
+// 2. Micro Architecture Split:
+//    - Normal runtime micros: keep as high-performance C++ inline functions.
+//    - Compile-time syntactic micros: AST subtree injection for code wrappers (e.g. try_in_me).
+//
+// 3. Yield inside Functions (fn):
+//    - Normal 'fn' returns normally.
+//    - Future support for 'yield' inside 'fn' when an explicit 'yield' handle is provided.
+//
+// 4. Lambda First-Class Parser & Representation:
+//    - Explicit syntax and parsing for 'lambda<Ret(Args...)>'.
+// =========================================================================
+
+//lambda ex:
+lambda inl = |x:int,y:int| x+y;
+lambda<(int,int ,int),int> incl = |x:int,y:int,z:int| x+y+z;
+
+blueprint S =  {
+ x := "hi there , i am default";
+ str y ;
+}
+S s = S {
+    y : "hi there , i am from obj";
+}
+println(s.x,"\n",s.y);
+S s2 = S {};
+println(s2.x,"\n",s2.y); // y will throw error cause it not defined
+// func<(<params>) -> <return_type>>

@@ -1,0 +1,100 @@
+// Comprehensive Suite 04: Arrays, Collections, Generic Array Methods, and Spread Protocol
+import std::list;
+
+class Matrix -> {
+    handle -> {
+        fn index_access(r: int32, c: int32) -> int32 {
+            return r * 10 + c;
+        }
+    }
+}
+
+fn test_basic_and_multi_index() -> void {
+    int32 nums[] = [10, 20, 30];
+    println("nums[0]: ", nums[0]); // EXPECT: nums[0]: 10
+    println("nums[1]: ", nums[1]); // EXPECT: nums[1]: 20
+    println("nums[2]: ", nums[2]); // EXPECT: nums[2]: 30
+
+    Matrix mat = new Matrix();
+    int32 val = mat[3, 7];
+    println("matrix[3, 7]: ", val); // EXPECT: matrix[3, 7]: 37
+}
+
+fn test_generic_array_methods() -> void {
+    int32 arr[] = [10, 20, 30];
+    bool not_empty = arr.is_empty();
+    println("is_empty false: ", not_empty); // EXPECT: is_empty false: false
+
+    Option<int32> f = arr.first();
+    match f {
+        Some(val) => {
+            println("first: ", val); // EXPECT: first: 10
+        }
+        None => {
+            println("first: 0");
+        }
+    }
+
+    Option<int32> l = arr.last();
+    match l {
+        Some(val) => {
+            println("last: ", val); // EXPECT: last: 30
+        }
+        None => {
+            println("last: 0");
+        }
+    }
+
+    char[] empty_arr = [];
+    bool is_empty_true = empty_arr.is_empty();
+    println("is_empty true: ", is_empty_true); // EXPECT: is_empty true: true
+
+    arr.map(|x: int32| x * 2);
+    println("mapped[0]: ", arr[0]); // EXPECT: mapped[0]: 20
+    println("mapped[1]: ", arr[1]); // EXPECT: mapped[1]: 40
+    println("mapped[2]: ", arr[2]); // EXPECT: mapped[2]: 60
+}
+
+fn test_spread_operator() -> void {
+    int32 a[] = [2, 3, 4];
+    int32 b[] = [1, ...a, 5];
+    for x in b {
+        print(x, " ");
+    }
+    println("");
+    // EXPECT: 1 2 3 4 5 
+
+    int32 c[] = [6, 7];
+    int32 all[] = [...a, ...c];
+    for y in all {
+        print(y, " ");
+    }
+    println("");
+    // EXPECT: 2 3 4 6 7 
+}
+
+fn test_std_list() -> void {
+    list<int32> li -> [1, 2, 3];
+    li.push(4);
+    int32 len = li.size();
+    println("list len: ", len); // EXPECT: list len: 4
+
+    match (li.pop()) -> {
+        Some(val) => {
+            println("popped: ", val); // EXPECT: popped: 4
+        }
+        None => {
+            println("popped: none");
+        }
+    }
+}
+
+fn main() -> int32 {
+    test_basic_and_multi_index();
+    test_generic_array_methods();
+    test_spread_operator();
+    test_std_list();
+
+    println("ALL 04_ARRAYS TESTS PASSED"); // EXPECT: ALL 04_ARRAYS TESTS PASSED
+    return 0;
+}
