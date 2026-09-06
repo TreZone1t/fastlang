@@ -5,7 +5,7 @@ use crate::frontend::parser::parser::Parser;
 impl Parser {
     pub(crate) fn parse_generic_list(
         &mut self,
-        generics: &mut Vec<BaseType>
+        generics: &mut Vec<BaseType>,
     ) -> Result<(), String> {
         if self.peek().kind != TokenKind::Greater {
             generics.push(self.parse_type()?);
@@ -26,6 +26,14 @@ impl Parser {
                 self.advance();
                 base_type = BaseType::Pointer(Box::new(base_type));
             } else if self.peek().kind == TokenKind::LBracket {
+                if let Some(after_tok) = self.token_after_bracket() {
+                    if matches!(after_tok.kind, TokenKind::Identifier(_)) {
+                        return Err(format!(
+                            "Syntax Error: Invalid array declaration syntax at line {}. In FastLang, declare arrays using 'Type name[]' or 'array<Type> name', not 'Type[] name'.",
+                            after_tok.line
+                        ));
+                    }
+                }
                 if !self.is_array_type_bracket() {
                     break;
                 }
@@ -46,6 +54,25 @@ impl Parser {
         }
 
         Ok(base_type)
+    }
+
+    fn token_after_bracket(&self) -> Option<&crate::frontend::lexer::token::Token> {
+        let mut offset = 1;
+        let mut depth = 1;
+        while let Some(tok) = self.tokens.get(self.current + offset) {
+            match &tok.kind {
+                TokenKind::LBracket => depth += 1,
+                TokenKind::RBracket => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return self.tokens.get(self.current + offset + 1);
+                    }
+                }
+                _ => {}
+            }
+            offset += 1;
+        }
+        None
     }
 
     fn is_array_type_bracket(&self) -> bool {
@@ -94,13 +121,19 @@ impl Parser {
                 self.advance(); // consume 'int' / 'int32'
                 if self.peek().kind == TokenKind::Less {
                     self.advance();
-                    let size = if let TokenKind::Int(s) = self.peek().kind {
-                        self.advance();
-                        s
-                    } else {
-                        return Err(
-                            "Syntax Error: Expected integer size for type int<size>".to_string()
-                        );
+                    let size = match self.peek().kind {
+                        TokenKind::Int(s) => {
+                            self.advance();
+                            s
+                        }
+                        TokenKind::UInt(s) => {
+                            self.advance();
+                            s as i128
+                        }
+                        _ => {
+                            return Err("Syntax Error: Expected integer size for type int<size>"
+                                .to_string());
+                        }
                     };
                     self.consume(TokenKind::Greater, "Expected '>' after type size")?;
                     match size {
@@ -109,10 +142,10 @@ impl Parser {
                         32 => Ok(BaseType::Int(Size::S32)),
                         64 => Ok(BaseType::Int(Size::S64)),
                         128 => Ok(BaseType::Int(Size::S128)),
-                        _ =>
-                            Err(
-                                format!("Syntax Error: Invalid size {} for int. Allowed: 8, 16, 32, 64, 128", size)
-                            ),
+                        _ => Err(format!(
+                            "Syntax Error: Invalid size {} for int. Allowed: 8, 16, 32, 64, 128",
+                            size
+                        )),
                     }
                 } else {
                     match default_size {
@@ -129,13 +162,19 @@ impl Parser {
                 self.advance(); // consume 'uint' / 'uint32' / 'byte'
                 if self.peek().kind == TokenKind::Less {
                     self.advance();
-                    let size = if let TokenKind::Int(s) = self.peek().kind {
-                        self.advance();
-                        s
-                    } else {
-                        return Err(
-                            "Syntax Error: Expected integer size for type uint<size>".to_string()
-                        );
+                    let size = match self.peek().kind {
+                        TokenKind::Int(s) => {
+                            self.advance();
+                            s
+                        }
+                        TokenKind::UInt(s) => {
+                            self.advance();
+                            s as i128
+                        }
+                        _ => {
+                            return Err("Syntax Error: Expected integer size for type uint<size>"
+                                .to_string());
+                        }
                     };
                     self.consume(TokenKind::Greater, "Expected '>' after type size")?;
                     match size {
@@ -144,10 +183,10 @@ impl Parser {
                         32 => Ok(BaseType::UInt(Size::S32)),
                         64 => Ok(BaseType::UInt(Size::S64)),
                         128 => Ok(BaseType::UInt(Size::S128)),
-                        _ =>
-                            Err(
-                                format!("Syntax Error: Invalid size {} for uint. Allowed: 8, 16, 32, 64, 128", size)
-                            ),
+                        _ => Err(format!(
+                            "Syntax Error: Invalid size {} for uint. Allowed: 8, 16, 32, 64, 128",
+                            size
+                        )),
                     }
                 } else {
                     match default_size {
@@ -172,21 +211,30 @@ impl Parser {
                 self.advance(); // consume 'float' / 'float32'
                 if self.peek().kind == TokenKind::Less {
                     self.advance();
-                    let size = if let TokenKind::Int(s) = self.peek().kind {
-                        self.advance();
-                        s
-                    } else {
-                        return Err("Syntax Error: Expected size for type float<size>".to_string());
+                    let size = match self.peek().kind {
+                        TokenKind::Int(s) => {
+                            self.advance();
+                            s
+                        }
+                        TokenKind::UInt(s) => {
+                            self.advance();
+                            s as i128
+                        }
+                        _ => {
+                            return Err(
+                                "Syntax Error: Expected size for type float<size>".to_string()
+                            );
+                        }
                     };
                     self.consume(TokenKind::Greater, "Expected '>' after type size")?;
                     match size {
                         32 => Ok(BaseType::Float(Size::S32)),
                         64 => Ok(BaseType::Float(Size::S64)),
                         128 => Ok(BaseType::Float(Size::S128)),
-                        _ =>
-                            Err(
-                                format!("Syntax Error: Invalid size {} for float. Allowed: 32, 64, 128", size)
-                            ),
+                        _ => Err(format!(
+                            "Syntax Error: Invalid size {} for float. Allowed: 32, 64, 128",
+                            size
+                        )),
                     }
                 } else {
                     match default_size {
@@ -275,7 +323,11 @@ impl Parser {
                 self.advance();
                 Ok(BaseType::Flag)
             }
-            TokenKind::TypeMethod | TokenKind::TypeFn | TokenKind::Fn | TokenKind::TypeMicro | TokenKind::TypeLambda => {
+            TokenKind::TypeMethod
+            | TokenKind::TypeFn
+            | TokenKind::Fn
+            | TokenKind::TypeMicro
+            | TokenKind::TypeLambda => {
                 let kind_str = match &self.peek().kind {
                     TokenKind::TypeMethod => "method",
                     TokenKind::TypeMicro => "micro",
@@ -309,11 +361,19 @@ impl Parser {
                             if self.peek().kind == TokenKind::Comma {
                                 self.advance();
                             } else if self.peek().kind != TokenKind::RParen {
-                                return Err(format!("Expected ',' or ')' in {} parameter types", kind_str));
+                                return Err(format!(
+                                    "Expected ',' or ')' in {} parameter types",
+                                    kind_str
+                                ));
                             }
                         }
-                        self.consume(TokenKind::RParen, &format!("Expected ')' after {} parameter types", kind_str))?;
-                        if self.peek().kind == TokenKind::Comma || self.peek().kind == TokenKind::Arrow {
+                        self.consume(
+                            TokenKind::RParen,
+                            &format!("Expected ')' after {} parameter types", kind_str),
+                        )?;
+                        if self.peek().kind == TokenKind::Comma
+                            || self.peek().kind == TokenKind::Arrow
+                        {
                             self.advance(); // consume ',' or '->'
                             if self.peek().kind != TokenKind::Greater {
                                 return_type = Box::new(self.parse_type()?);
@@ -322,14 +382,36 @@ impl Parser {
                     } else if self.peek().kind != TokenKind::Greater {
                         return_type = Box::new(self.parse_type()?);
                     }
-                    self.consume(TokenKind::Greater, &format!("Expected '>' after {} type", kind_str))?;
+                    self.consume(
+                        TokenKind::Greater,
+                        &format!("Expected '>' after {} type", kind_str),
+                    )?;
                 }
 
                 match kind_str {
-                    "method" => Ok(BaseType::Method { name, params, return_type }),
-                    "micro" => Ok(BaseType::Micro { name, params, return_type }),
-                    "lambda" => Ok(BaseType::Lambda { name, params, return_type }),
-                    _ => Ok(BaseType::Fn { name, params, return_type }),
+                    "method" => Ok(BaseType::Method {
+                        name,
+                        params,
+                        return_type,
+                        mode: ExecutionMode::Runtime,
+                    }),
+                    "micro" => Ok(BaseType::Micro {
+                        name,
+                        params,
+                        return_type,
+                        mode: ExecutionMode::Runtime,
+                    }),
+                    "lambda" => Ok(BaseType::Lambda {
+                        name,
+                        params,
+                        return_type,
+                    }),
+                    _ => Ok(BaseType::Fn {
+                        name,
+                        params,
+                        return_type,
+                        mode: ExecutionMode::Runtime,
+                    }),
                 }
             }
             TokenKind::TypeBlock => {
@@ -353,7 +435,10 @@ impl Parser {
                     methods: Box::new(std::collections::HashMap::new()),
                 })
             }
-            TokenKind::TypeClass | TokenKind::TypeStruct | TokenKind::TypeBluePrint | TokenKind::TypeEnum => {
+            TokenKind::TypeClass
+            | TokenKind::TypeStruct
+            | TokenKind::TypeBluePrint
+            | TokenKind::TypeEnum => {
                 let token_kind = self.peek().kind.clone();
                 self.advance();
                 let mut obj_name = String::new();
@@ -368,13 +453,37 @@ impl Parser {
                 if self.peek().kind == TokenKind::Less {
                     self.advance(); // '<'
                     self.parse_generic_list(&mut generics)?;
-                    self.consume(TokenKind::Greater, "Expected '>' after generic type parameter")?;
+                    self.consume(
+                        TokenKind::Greater,
+                        "Expected '>' after generic type parameter",
+                    )?;
                 }
                 match token_kind {
-                    TokenKind::TypeClass => Ok(BaseType::Class { name: obj_name, fields: Box::new(std::collections::HashMap::new()), methods: Box::new(std::collections::HashMap::new()), constructor: None, generics }),
-                    TokenKind::TypeStruct => Ok(BaseType::Struct { name: obj_name, fields: Box::new(std::collections::HashMap::new()), methods: Box::new(std::collections::HashMap::new()), generics }),
-                    TokenKind::TypeBluePrint => Ok(BaseType::Blueprint { name: obj_name, fields: Box::new(std::collections::HashMap::new()), methods: Box::new(std::collections::HashMap::new()), generics }),
-                    _ => Ok(BaseType::Enum { name: obj_name, variants: Vec::new(), methods: Box::new(std::collections::HashMap::new()), generics }),
+                    TokenKind::TypeClass => Ok(BaseType::Class {
+                        name: obj_name,
+                        fields: Box::new(std::collections::HashMap::new()),
+                        methods: Box::new(std::collections::HashMap::new()),
+                        constructor: None,
+                        generics,
+                    }),
+                    TokenKind::TypeStruct => Ok(BaseType::Struct {
+                        name: obj_name,
+                        fields: Box::new(std::collections::HashMap::new()),
+                        methods: Box::new(std::collections::HashMap::new()),
+                        generics,
+                    }),
+                    TokenKind::TypeBluePrint => Ok(BaseType::Blueprint {
+                        name: obj_name,
+                        fields: Box::new(std::collections::HashMap::new()),
+                        methods: Box::new(std::collections::HashMap::new()),
+                        generics,
+                    }),
+                    _ => Ok(BaseType::Enum {
+                        name: obj_name,
+                        variants: Vec::new(),
+                        methods: Box::new(std::collections::HashMap::new()),
+                        generics,
+                    }),
                 }
             }
             TokenKind::Identifier(n) => {
@@ -386,7 +495,10 @@ impl Parser {
                 if self.peek().kind == TokenKind::Less {
                     self.advance(); // '<'
                     self.parse_generic_list(&mut generics)?;
-                    self.consume(TokenKind::Greater, "Expected '>' after generic type parameter")?;
+                    self.consume(
+                        TokenKind::Greater,
+                        "Expected '>' after generic type parameter",
+                    )?;
                 }
 
                 if let Some(meta) = self.metadata.get(&n).cloned() {
@@ -439,15 +551,12 @@ impl Parser {
                     })
                 }
             }
-            _ =>
-                Err(
-                    format!(
-                        "Syntax Error: Expected a type, found '{}'. at line {}, column {}",
-                        self.peek().kind.as_str(),
-                        self.peek().line,
-                        self.peek().column
-                    )
-                ),
+            _ => Err(format!(
+                "Syntax Error: Expected a type, found '{}'. at line {}, column {}",
+                self.peek().kind.as_str(),
+                self.peek().line,
+                self.peek().column
+            )),
         }
     }
 
@@ -460,7 +569,11 @@ impl Parser {
         self.parse_expr_with_lhs(lhs, min_bp)
     }
 
-    pub(crate) fn parse_expr_with_lhs(&mut self, mut lhs: Expr, min_bp: u8) -> Result<Expr, String> {
+    pub(crate) fn parse_expr_with_lhs(
+        &mut self,
+        mut lhs: Expr,
+        min_bp: u8,
+    ) -> Result<Expr, String> {
         // --- Infix / Postfix
         loop {
             if let Some(postfix_bp) = self.postfix_binding_power() {
@@ -469,6 +582,20 @@ impl Parser {
                 }
                 lhs = self.parse_postfix(lhs)?;
 
+                continue;
+            }
+
+            if self.peek().kind == TokenKind::As {
+                let as_bp = 14;
+                if as_bp < min_bp {
+                    break;
+                }
+                self.advance(); // consume 'as'
+                let target_type = self.parse_type()?;
+                lhs = Expr::Cast {
+                    expr: Box::new(lhs),
+                    target_type,
+                };
                 continue;
             }
 
@@ -502,7 +629,6 @@ impl Parser {
         Ok(lhs)
     }
 
-
     pub(crate) fn parse_prefix(&mut self) -> Result<Expr, String> {
         match &self.peek().kind.clone() {
             // --- Literals ---
@@ -523,6 +649,12 @@ impl Parser {
                 self.advance();
 
                 Ok(Expr::LiteralInt(val))
+            }
+            TokenKind::UInt(v) => {
+                let val = *v;
+                self.advance();
+
+                Ok(Expr::LiteralUInt(val))
             }
             TokenKind::Float(v) => {
                 let val = *v;
@@ -556,7 +688,7 @@ impl Parser {
                 self.advance();
                 Ok(Expr::LiteralUndefined)
             }
-            | TokenKind::TypeInt(_)
+            TokenKind::TypeInt(_)
             | TokenKind::TypeUInt(_)
             | TokenKind::TypeUSize
             | TokenKind::TypeISize
@@ -570,11 +702,10 @@ impl Parser {
 
             TokenKind::Fn => {
                 self.advance(); // consume 'fn'
-                // Optional name or '_' (e.g. fn _(...) or fn(...))
+                                // Optional name or '_' (e.g. fn _(...) or fn(...))
                 if let TokenKind::Identifier(ref name) = self.peek().kind {
-                    if
-                        name == "_" ||
-                        self
+                    if name == "_"
+                        || self
                             .peek_ahead(1)
                             .map(|t| t.kind == TokenKind::LParen)
                             .unwrap_or(false)
@@ -598,7 +729,10 @@ impl Parser {
                         }
                     }
                 }
-                self.consume(TokenKind::RParen, "Expected ')' after lambda parameter list")?;
+                self.consume(
+                    TokenKind::RParen,
+                    "Expected ')' after lambda parameter list",
+                )?;
 
                 let mut return_type = None;
                 if self.peek().kind == TokenKind::Arrow {
@@ -632,24 +766,6 @@ impl Parser {
                 let val: String = name.clone();
                 self.advance();
                 Ok(Expr::Identifier(val))
-            }
-            TokenKind::TypeOf => {
-                self.advance();
-                self.consume(TokenKind::LParen, "Expected '(' after typeof")?;
-                let target = self.parse_expression()?;
-                self.consume(TokenKind::RParen, "Expected ')' after typeof target")?;
-                Ok(Expr::TypeOf {
-                    target: Box::new(target),
-                })
-            }
-            TokenKind::SizeOf => {
-                self.advance();
-                self.consume(TokenKind::LParen, "Expected '(' after sizeof")?;
-                let target = self.parse_expression()?;
-                self.consume(TokenKind::RParen, "Expected ')' after sizeof target")?;
-                Ok(Expr::SizeOf {
-                    target: Box::new(target),
-                })
             }
             TokenKind::ToString => {
                 self.advance();
@@ -761,16 +877,18 @@ impl Parser {
                 let type_node = self.parse_base_type()?;
 
                 // Check for dynamic array allocation with length: new T[](length)
-                if
-                    self.peek().kind == TokenKind::LBracket &&
-                    self
+                if self.peek().kind == TokenKind::LBracket
+                    && self
                         .peek_ahead(1)
                         .map(|t| t.kind == TokenKind::RBracket)
                         .unwrap_or(false)
                 {
                     self.advance(); // consume '['
                     self.advance(); // consume ']'
-                    self.consume(TokenKind::LParen, "Expected '(' after '[]' for array length")?;
+                    self.consume(
+                        TokenKind::LParen,
+                        "Expected '(' after '[]' for array length",
+                    )?;
                     let len_expr = self.parse_expr(0)?;
                     self.consume(TokenKind::RParen, "Expected ')' after array length")?;
                     return Ok(Expr::New {
@@ -795,7 +913,7 @@ impl Parser {
                         }
                         self.consume(
                             TokenKind::RBracket,
-                            "Expected ']' to close array allocation"
+                            "Expected ']' to close array allocation",
                         )?;
                         Expr::ArrayLiteral(elements)
                     }
@@ -811,7 +929,7 @@ impl Parser {
                         }
                         self.consume(
                             TokenKind::RParen,
-                            "Expected ')' after constructor arguments"
+                            "Expected ')' after constructor arguments",
                         )?;
 
                         if args.is_empty() {
@@ -823,7 +941,7 @@ impl Parser {
                             }
                         }
                     }
-                    _ => { Expr::Default(None) }
+                    _ => Expr::Default(None),
                 };
                 Ok(Expr::New {
                     type_node,
@@ -852,10 +970,16 @@ impl Parser {
                             }
                             elements.push(self.parse_expr(0)?);
                         }
-                        self.consume(TokenKind::RParen, "Expected ')' to close tuple/stack expression")?;
+                        self.consume(
+                            TokenKind::RParen,
+                            "Expected ')' to close tuple/stack expression",
+                        )?;
                         Ok(Expr::ArrayLiteral(elements))
                     } else {
-                        self.consume(TokenKind::RParen, "Expected ')' to close grouped expression")?;
+                        self.consume(
+                            TokenKind::RParen,
+                            "Expected ')' to close grouped expression",
+                        )?;
                         Ok(first)
                     }
                 }
@@ -875,7 +999,9 @@ impl Parser {
                 let mut params = Vec::new();
                 while !self.is_at_end() && self.peek().kind != TokenKind::Pipe {
                     let is_untyped = if let TokenKind::Identifier(_) = &self.peek().kind {
-                        self.peek_ahead(1).map(|t| t.kind == TokenKind::Comma || t.kind == TokenKind::Pipe).unwrap_or(false)
+                        self.peek_ahead(1)
+                            .map(|t| t.kind == TokenKind::Comma || t.kind == TokenKind::Pipe)
+                            .unwrap_or(false)
                     } else {
                         false
                     };
@@ -886,6 +1012,7 @@ impl Parser {
                             name,
                             type_node: BaseType::Unknown,
                             default_value: None,
+                            is_variadic: false,
                         }
                     } else {
                         self.parse_single_param()?
@@ -917,14 +1044,12 @@ impl Parser {
                     self.peek().line,
                     self.peek().column
                 );
-                return Err(
-                    format!(
-                        "Syntax Error: Unexpected token '{:?}' in expression at line {}, col {}",
-                        other,
-                        self.peek().line,
-                        self.peek().column
-                    )
-                );
+                return Err(format!(
+                    "Syntax Error: Unexpected token '{:?}' in expression at line {}, col {}",
+                    other,
+                    self.peek().line,
+                    self.peek().column
+                ));
             }
         }
     }
@@ -935,12 +1060,17 @@ impl Parser {
         }
         let idx = self.current + 1;
         if idx < self.tokens.len() {
-            if self.tokens[idx].kind == TokenKind::RBrace || self.tokens[idx].kind == TokenKind::DotDot {
+            if self.tokens[idx].kind == TokenKind::RBrace
+                || self.tokens[idx].kind == TokenKind::DotDot
+            {
                 return true;
             }
             if matches!(&self.tokens[idx].kind, TokenKind::Identifier(_)) {
                 if let Some(next_tok) = self.tokens.get(idx + 1) {
-                    if matches!(next_tok.kind, TokenKind::Assign | TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace) {
+                    if matches!(
+                        next_tok.kind,
+                        TokenKind::Assign | TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace
+                    ) {
                         return true;
                     }
                 }
@@ -949,12 +1079,49 @@ impl Parser {
         false
     }
 
+    pub(crate) fn is_generic_call_ahead(&self) -> bool {
+        let mut offset = 1;
+        let mut depth = 1;
+        while let Some(tok) = self.tokens.get(self.current + offset) {
+            match &tok.kind {
+                TokenKind::Less => depth += 1,
+                TokenKind::Greater => {
+                    depth -= 1;
+                    if depth == 0 {
+                        if let Some(next_tok) = self.tokens.get(self.current + offset + 1) {
+                            return matches!(
+                                next_tok.kind,
+                                TokenKind::LParen | TokenKind::Dot | TokenKind::DoubleColon
+                            );
+                        }
+                        return false;
+                    }
+                }
+                TokenKind::SemiColon
+                | TokenKind::LBrace
+                | TokenKind::RBrace
+                | TokenKind::Assign
+                | TokenKind::Arrow => return false,
+                _ => {}
+            }
+            offset += 1;
+        }
+        false
+    }
+
     pub(crate) fn postfix_binding_power(&self) -> Option<u8> {
         match &self.peek().kind {
-            TokenKind::Dot => Some(20), // property access: obj.field
+            TokenKind::Dot => Some(20),         // property access: obj.field
             TokenKind::DoubleColon => Some(20), // static access: Class::field
-            TokenKind::LParen => Some(20), // function call:   foo(...)
-            TokenKind::LBracket => Some(20), // array indexing: arr[0]
+            TokenKind::LParen => Some(20),      // function call:   foo(...)
+            TokenKind::Less => {
+                if self.is_generic_call_ahead() {
+                    Some(20) // generic function call or type member access: foo<T>(...) or foo<T>.bar
+                } else {
+                    None
+                }
+            }
+            TokenKind::LBracket => Some(20),    // array indexing: arr[0]
             TokenKind::LBrace => {
                 if self.is_struct_instantiation_ahead() {
                     Some(20) // object instantiation: TypeName { ... }
@@ -962,7 +1129,7 @@ impl Parser {
                     None
                 }
             }
-            TokenKind::PlusPlus => Some(21), // postfix ++
+            TokenKind::PlusPlus => Some(21),   // postfix ++
             TokenKind::MinusMinus => Some(21), // postfix --
             _ => None,
         }
@@ -970,6 +1137,62 @@ impl Parser {
 
     pub(crate) fn parse_postfix(&mut self, lhs: Expr) -> Result<Expr, String> {
         match &self.peek().kind.clone() {
+            // --- Generic Function Call or Type Access: lhs<T1, T2>(...) or lhs<T1, T2>.prop ---
+            TokenKind::Less => {
+                self.advance(); // consume '<'
+                let mut generics = Vec::new();
+                self.parse_generic_list(&mut generics)?;
+                self.consume(TokenKind::Greater, "Expected '>' after generic type arguments")?;
+                if self.peek().kind == TokenKind::LParen {
+                    self.advance(); // consume '('
+                    let mut args = Vec::new();
+                    if self.peek().kind != TokenKind::RParen {
+                        args.push(self.parse_expr(0)?);
+                        while self.peek().kind == TokenKind::Comma {
+                            self.advance();
+                            args.push(self.parse_expr(0)?);
+                        }
+                    }
+                    self.consume(
+                        TokenKind::RParen,
+                        "Expected ')' to close function call argument list",
+                    )?;
+                    Ok(Expr::Call {
+                        callee: Box::new(lhs),
+                        generics,
+                        args,
+                    })
+                } else {
+                    let gen_str = generics
+                        .iter()
+                        .map(|g| g.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    match lhs {
+                        Expr::Identifier(name) => {
+                            Ok(Expr::Identifier(format!("{}<{}>", name, gen_str)))
+                        }
+                        Expr::NamespaceAccess {
+                            namespace,
+                            property,
+                        } => {
+                            if let Expr::Identifier(prop_name) = *property {
+                                Ok(Expr::NamespaceAccess {
+                                    namespace,
+                                    property: Box::new(Expr::Identifier(format!(
+                                        "{}<{}>",
+                                        prop_name, gen_str
+                                    ))),
+                                })
+                            } else {
+                                Err("Syntax Error: Unexpected property expression before generic arguments".to_string())
+                            }
+                        }
+                        _ => Err("Syntax Error: Generic type arguments can only follow an identifier or namespace access".to_string()),
+                    }
+                }
+            }
+
             // --- Property Access: lhs.identifier ---
             TokenKind::Dot => {
                 self.advance();
@@ -1024,10 +1247,11 @@ impl Parser {
 
                 self.consume(
                     TokenKind::RParen,
-                    "Expected ')' to close function call argument list"
+                    "Expected ')' to close function call argument list",
                 )?;
                 Ok(Expr::Call {
                     callee: Box::new(lhs),
+                    generics: Vec::new(),
                     args,
                 })
             }
@@ -1077,21 +1301,18 @@ impl Parser {
                 })
             }
 
-            other =>
-                Err(
-                    format!(
-                        "Internal error: parse_postfix called with non-postfix token '{:?}'",
-                        other
-                    )
-                ),
+            other => Err(format!(
+                "Internal error: parse_postfix called with non-postfix token '{:?}'",
+                other
+            )),
         }
     }
 
     pub(crate) fn infix_binding_power(&self) -> Option<(u8, u8)> {
         match &self.peek().kind {
-            TokenKind::Or => Some((1, 2)), // left-associative
+            TokenKind::Or => Some((1, 2)),  // left-associative
             TokenKind::And => Some((3, 4)), // left-associative
-            TokenKind::Eq => Some((5, 6)), // left-associative
+            TokenKind::Eq => Some((5, 6)),  // left-associative
             TokenKind::NotEq => Some((5, 6)),
             TokenKind::Less => Some((7, 8)),
             TokenKind::Greater => Some((7, 8)),

@@ -88,7 +88,7 @@ pub enum HandleLookupResult {
 //   "int32"          -> None
 // ─────────────────────────────────────────────────────────────────────────────
 pub fn extract_blueprint_name_from_type(type_str: &str) -> Option<String> {
-    const PREFIXES: &[&str] = &["custom<", "class<", "struct<", "enum<", "blueprint<", "machine<", "block<", "name<", "pointer<"];
+    const PREFIXES: &[&str] = &["class<", "struct<", "enum<", "blueprint<", "machine<", "block<", "name<", "pointer<"];
     for prefix in PREFIXES {
         if let Some(rest) = type_str.strip_prefix(prefix) {
             let base_name = rest.split('<').next().unwrap_or(rest).trim_end_matches('>').to_string();
@@ -118,7 +118,6 @@ pub fn extract_all_type_names(type_str: &str) -> Vec<String> {
     }
     names
 }
-//todo: remove it (hardcoded)
 fn is_primitive_type(s: &str) -> bool {
     matches!(
         s,
@@ -126,7 +125,7 @@ fn is_primitive_type(s: &str) -> bool {
         | "uint8" | "uint16" | "uint32" | "uint64" | "uint128" | "uint"
         | "float32" | "float64" | "float128" | "float"
         | "char" | "bool" | "void" | "type" | "unknown" | "any"
-        | "name" | "modify" | "copy" | "pointer" | "array" | "custom" | "class" | "struct" | "enum" | "blueprint" | "machine" | "block" | "T" | "U" | "V" | "K"
+        | "name" | "modify" | "copy" | "pointer" | "array" | "class" | "struct" | "enum" | "blueprint" | "machine" | "block"
     )
 }
 
@@ -134,8 +133,7 @@ fn is_primitive_type(s: &str) -> bool {
 // is_complex_type — checks if type is composite/user-defined (can define handles)
 // ─────────────────────────────────────────────────────────────────────────────
 pub fn is_complex_type(type_str: &str) -> bool {
-    type_str.starts_with("custom<")
-        || type_str.starts_with("class<")
+    type_str.starts_with("class<")
         || type_str.starts_with("struct<")
         || type_str.starts_with("enum<")
         || type_str.starts_with("blueprint<")
@@ -173,6 +171,7 @@ pub fn build_blueprint_from_base_type(
                     m_name.clone(),
                     FnSignature {
                         name: fn_type.name.clone(),
+                        generics: fn_type.generics.clone(),
                         params: fn_type.params.clone(),
                         return_type: fn_type.return_type.clone(),
                         is_virtual: true,
@@ -205,6 +204,7 @@ pub fn build_blueprint_from_base_type(
                     m_name.clone(),
                     FnSignature {
                         name: fn_type.name.clone(),
+                        generics: fn_type.generics.clone(),
                         params: fn_type.params.clone(),
                         return_type: fn_type.return_type.clone(),
                         is_virtual: true,
@@ -236,6 +236,7 @@ pub fn build_blueprint_from_base_type(
                     m_name.clone(),
                     FnSignature {
                         name: fn_type.name.clone(),
+                        generics: fn_type.generics.clone(),
                         params: fn_type.params.clone(),
                         return_type: fn_type.return_type.clone(),
                         is_virtual: true,
@@ -267,6 +268,7 @@ pub fn build_blueprint_from_base_type(
                     m_name.clone(),
                     FnSignature {
                         name: fn_type.name.clone(),
+                        generics: fn_type.generics.clone(),
                         params: fn_type.params.clone(),
                         return_type: fn_type.return_type.clone(),
                         is_virtual: true,
@@ -285,6 +287,7 @@ pub fn build_blueprint_from_base_type(
                     m_name.clone(),
                     FnSignature {
                         name: fn_type.name.clone(),
+                        generics: fn_type.generics.clone(),
                         params: fn_type.params.clone(),
                         return_type: fn_type.return_type.clone(),
                         is_virtual: true,
@@ -316,6 +319,7 @@ pub fn build_blueprint_from_metadata(
         }
         bp.methods.entry(m_name.clone()).or_insert_with(|| FnSignature {
             name: fn_type.name.clone(),
+            generics: fn_type.generics.clone(),
             params: fn_type.params.clone(),
             return_type: fn_type.return_type.clone(),
             is_virtual: true,

@@ -45,7 +45,7 @@ fn test_generic_array_methods() -> void {
         }
     }
 
-    char[] empty_arr = [];
+    char empty_arr[] = [];
     bool is_empty_true = empty_arr.is_empty();
     println("is_empty true: ", is_empty_true); // EXPECT: is_empty true: true
 
@@ -88,13 +88,52 @@ fn test_std_list() -> void {
         }
     }
 }
+fn test_std_range() -> void {
+    for x in range(1, 10) {
+        print(x, " ");
+    }
+    println("");
+    // EXPECT: 1 2 3 4 5 6 7 8 9 
+
+    for x in range(1, 10, 2) {
+        print(x, " ");
+    }
+    println("");
+    // EXPECT: 1 3 5 7 9 
+
+    for x in range('a', 'e') {
+        print(x, " ");
+    }
+    println("");
+    // EXPECT: a b c d e 
+
+    for x in range('a', 'e', 2) {
+        print(x, " ");
+    }
+    println("");
+    // EXPECT: a c e
+}
+// test chain method in for in loop
+
+fn test_chain() -> void {
+    int32 arr1[] = [1, 2, 3];
+    int32 arr2[] = [4, 5, 6];
+    int32 arr3[] = [7, 8, 9];
+    println("Chained elements:"); // EXPECT: Chained elements:
+    for ele in arr1.chain(arr2).chain(arr3) {
+        print(ele, " ");
+    }
+    println("");
+    // EXPECT: 1 2 3 4 5 6 7 8 9
+}
 
 fn main() -> int32 {
     test_basic_and_multi_index();
     test_generic_array_methods();
     test_spread_operator();
     test_std_list();
-
+    test_std_range();
+    test_chain();   
     println("ALL 04_ARRAYS TESTS PASSED"); // EXPECT: ALL 04_ARRAYS TESTS PASSED
     return 0;
 }

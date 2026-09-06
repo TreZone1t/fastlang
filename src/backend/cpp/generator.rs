@@ -18,6 +18,7 @@ pub struct CodeGenerator {
     pub(crate) in_class_or_scope: bool,
     pub(crate) in_machine: bool,
     pub(crate) current_block_vars: Option<std::collections::HashSet<String>>,
+    pub(crate) variadic_packs: std::collections::HashSet<String>,
 }
 
 impl CodeGenerator {
@@ -40,6 +41,7 @@ impl CodeGenerator {
             in_class_or_scope: false,
             in_machine: false,
             current_block_vars: None,
+            variadic_packs: std::collections::HashSet::new(),
         }
     }
     pub(crate) fn emit_operator_overloads(&mut self, handle_block: &Option<Vec<Decl>>) {
@@ -129,6 +131,14 @@ impl CodeGenerator {
                         }
                         self.indent_level -= 1;
                         self.emit("}");
+                    } else if name == "cast" {
+                        if params.is_empty() {
+                            self.emit(&format!("explicit operator {}() const {{", ret_str));
+                            self.indent_level += 1;
+                            self.emit("return const_cast<std::decay_t<decltype(*this)>*>(this)->cast();");
+                            self.indent_level -= 1;
+                            self.emit("}");
+                        }
                     }
                 }
             }
@@ -151,27 +161,7 @@ impl CodeGenerator {
         self.output.push_str("#include <cstring>\n");
         self.output.push_str("#include <memory>\n");
         self.emit("");
-        self.emit("using type = uint32_t;");
-        self.emit("");
-        self.emit("template <typename T>");
-        self.emit("constexpr uint32_t fastlang_typeof_val(const T&) {");
-        self.emit("    if constexpr (std::is_same_v<T, bool>) return 1;");
-        self.emit("    else if constexpr (std::is_same_v<T, int8_t>) return 2;");
-        self.emit("    else if constexpr (std::is_same_v<T, int16_t>) return 3;");
-        self.emit("    else if constexpr (std::is_same_v<T, int32_t>) return 4;");
-        self.emit("    else if constexpr (std::is_same_v<T, int64_t>) return 5;");
-        self.emit("    else if constexpr (std::is_same_v<T, uint8_t>) return 7;");
-        self.emit("    else if constexpr (std::is_same_v<T, uint16_t>) return 8;");
-        self.emit("    else if constexpr (std::is_same_v<T, uint32_t>) return 9;");
-        self.emit("    else if constexpr (std::is_same_v<T, uint64_t>) return 10;");
-        self.emit("    else if constexpr (std::is_same_v<T, float>) return 12;");
-        self.emit("    else if constexpr (std::is_same_v<T, double>) return 13;");
-        self.emit("    else if constexpr (std::is_same_v<T, char>) return 15;");
-        self.emit("    else if constexpr (std::is_same_v<T, std::string>) return 19;");
-        self.emit("    else return 100;");
-        self.emit("}");
-        self.emit("#define typeof fastlang_typeof_val");
-        self.emit("#define sizeof(x) ((int32_t)sizeof(x))");
+        self.emit("using type = const char*;");
         self.emit("");
         self.emit("std::ostream& operator<<(std::ostream& os, const std::exception& e) {");
         self.emit("    return os << e.what();");
@@ -499,9 +489,9 @@ impl CodeGenerator {
         self.emit("};");
         self.emit("");
         self.emit("template<typename T, typename = void>");
-        self.emit("struct has_custom_copy : std::false_type {};");
+        self.emit("struct has_copy : std::false_type {};");
         self.emit("template<typename T>");
-        self.emit("struct has_custom_copy<T, std::void_t<decltype(std::declval<T>().copy())>> : std::true_type {};");
+        self.emit("struct has_copy<T, std::void_t<decltype(std::declval<T>().copy())>> : std::true_type {};");
         self.emit("");
         self.emit("template<typename T, typename = void>");
         self.emit("struct has_drop : std::false_type {};");
@@ -532,6 +522,19 @@ impl CodeGenerator {
         self.emit("struct has_has_yielded : std::false_type {};");
         self.emit("template<typename T>");
         self.emit("struct has_has_yielded<T, std::void_t<decltype(std::declval<T>().has_yielded)>> : std::true_type {};");
+        self.emit("");
+        self.emit("template<typename T, typename = void>");
+        self.emit("struct fastlang_type_default_helper {");
+        self.emit("    static T get() { return T{}; }");
+        self.emit("};");
+        self.emit("template<typename T>");
+        self.emit("struct fastlang_type_default_helper<T, std::void_t<decltype(T::fastlang_handle_default())>> {");
+        self.emit("    static T get() { return T::fastlang_handle_default(); }");
+        self.emit("};");
+        self.emit("template<typename T>");
+        self.emit("inline T fastlang_type_default() {");
+        self.emit("    return fastlang_type_default_helper<T>::get();");
+        self.emit("}");
         self.emit("");
         self.emit("template <typename Signature>");
         self.emit("class fastlang_method;");
@@ -739,7 +742,7 @@ impl CodeGenerator {
         self.emit("    owned = false;");
         self.emit("}");
         self.emit("static T* make_copy(const T& ref) {");
-        self.emit("    if constexpr (has_custom_copy<T>::value) {");
+        self.emit("    if constexpr (has_copy<T>::value) {");
         self.emit("        return new T(const_cast<T&>(ref).copy());");
         self.emit("    } else {");
         self.emit("        return new T(ref);");
@@ -748,6 +751,7 @@ impl CodeGenerator {
         self.emit("T& operator[](size_t index) { return ptr[index]; }");
         self.emit("fastlang_modify(T& ref) : ptr(&ref), owned(false) {}");
         self.emit("fastlang_modify(const T& ref) : ptr(make_copy(ref)), owned(true) {}");
+        self.emit("fastlang_modify(T* p, bool is_owned) : ptr(p), owned(is_owned) {}");
         self.emit("fastlang_modify(T* p = nullptr) : ptr(p), owned(false) {}");
         self.emit("fastlang_modify(const fastlang_modify& other) : ptr(other.owned && other.ptr ? make_copy(*other.ptr) : other.ptr), owned(other.owned) {}");
         self.emit("fastlang_modify(fastlang_tag_stop) : ptr(nullptr), owned(false) {}");
@@ -776,7 +780,7 @@ impl CodeGenerator {
         self.emit("fastlang_modify& operator=(T* p) { if (owned && ptr && ptr != p) { delete ptr; } ptr = p; owned = false; return *this; }");
         self.emit("fastlang_modify& operator=(const T& ref) { ");
         self.emit("    if (owned && ptr) { ");
-        self.emit("        *ptr = (has_custom_copy<T>::value ? const_cast<T&>(ref).copy() : ref); ");
+        self.emit("        *ptr = (has_copy<T>::value ? const_cast<T&>(ref).copy() : ref); ");
         self.emit("    } else { ");
         self.emit("        ptr = make_copy(ref); ");
         self.emit("        owned = true; ");
@@ -794,11 +798,25 @@ impl CodeGenerator {
         self.emit("bool operator==(std::nullptr_t) const { return ptr == nullptr; }");
         self.emit("bool operator!=(std::nullptr_t) const { return ptr != nullptr; }");
         self.emit("explicit operator bool() const { return ptr != nullptr; }");
+        self.emit("fastlang_modify(fastlang_modify&& other) noexcept : ptr(other.ptr), owned(other.owned) { other.ptr = nullptr; other.owned = false; }");
+        self.emit("fastlang_modify& operator=(fastlang_modify&& other) noexcept { if (this != &other) { drop(); ptr = other.ptr; owned = other.owned; other.ptr = nullptr; other.owned = false; } return *this; }");
         self.emit("friend std::ostream& operator<<(std::ostream& os, const fastlang_modify<T>& obj) { if (obj.ptr) os << *obj.ptr; return os; }");
         self.emit("};");
         self.emit("template <typename T> fastlang_modify(T&) -> fastlang_modify<T>;");
         self.emit("template <typename T> fastlang_modify(T*) -> fastlang_modify<T>;");
         self.emit("template <typename T> using fastlang_copy = fastlang_modify<T>;");
+        self.emit("template <typename T>");
+        self.emit("inline fastlang_modify<T> fastlang_make_copy(const T& val) {");
+        self.emit("    return fastlang_modify<T>(fastlang_modify<T>::make_copy(val), true);");
+        self.emit("}");
+        self.emit("template <typename T>");
+        self.emit("inline fastlang_modify<T> fastlang_make_copy(const fastlang_modify<T>& m) {");
+        self.emit("    return fastlang_modify<T>(m.ptr ? fastlang_modify<T>::make_copy(*m.ptr) : nullptr, true);");
+        self.emit("}");
+        self.emit("template <typename T>");
+        self.emit("inline fastlang_modify<T> fastlang_make_copy(const fastlang_name<T>& n) {");
+        self.emit("    return fastlang_modify<T>(n.ptr ? fastlang_modify<T>::make_copy(*n.ptr) : nullptr, true);");
+        self.emit("}");
         self.emit("");
         self.emit("template <typename T>");
         self.emit("inline void _fastlang_del(fastlang_name<T>& obj) {");
@@ -885,8 +903,13 @@ impl CodeGenerator {
                 let cnt = public_block.iter().chain(private_block.iter()).filter(|d| matches!(d, Decl::VarDecl { .. })).count();
                 self.struct_field_counts.insert(name.clone(), cnt);
             } else if let Stmt::Declaration(Decl::FnDecl { name, return_type, .. }) = stmt {
-                self.fn_return_types.insert(name.clone(), return_type.get_name());
+                if name != "typeof" && name != "sizeof" && !name.starts_with("@compile::") {
+                    self.fn_return_types.insert(name.clone(), return_type.get_name());
+                }
             } else if let Stmt::Declaration(Decl::ImplDecl { target, target_generics, is_handle_impl, methods, handle_block }) = stmt {
+                if target == "type" {
+                    continue;
+                }
                 let is_primitive = matches!(target.as_str(), "str" | "char" | "bool" | "flag" | "string" | "array" | "byte" | "usize" | "isize") || target.starts_with("int") || target.starts_with("uint") || target.starts_with("float");
                 if is_primitive {
                     for m in methods {
@@ -1003,7 +1026,7 @@ impl CodeGenerator {
 
                     if has_display {
                         self.emit(&format!("friend std::ostream& operator<<(std::ostream& os, const {}& obj) {{", name));
-                        self.emit(&format!("    const_cast<{}&>(obj).display();", name));
+                        self.emit(&format!("    os << const_cast<{}&>(obj).display();", name));
                         self.emit("    return os;");
                         self.emit("}");
                     } else {
@@ -1132,6 +1155,9 @@ impl CodeGenerator {
                     self.indent_level -= 1;
                     self.emit("}");
                     if target == "array" {
+                        if !params.is_empty() {
+                            self.emit(&format!("template <typename T, typename U, size_t N> inline auto fastlang_array_{}(fastlang_slice<T> __this, U (&other)[N]) {{ return fastlang_array_{}(__this, fastlang_slice<T>(other)); }}", name, name));
+                        }
                         self.emit(&format!("template <typename T, size_t N, typename... __Args> inline auto fastlang_array_{}(T (&arr)[N], __Args&&... args) {{ return fastlang_array_{}(fastlang_slice<T>(arr), std::forward<__Args>(args)...); }}", name, name));
                     }
                     if target == "array" && params.is_empty() {

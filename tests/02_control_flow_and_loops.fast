@@ -2,7 +2,7 @@
 
 class NumberList -> {
     private -> {
-        int32[5] items = [10, 20, 30, 40, 50];
+        int32 items[5] = [10, 20, 30, 40, 50];
         int32 count = 0;
         int32 limit = 3;
     }

@@ -152,6 +152,12 @@ pub fn stmt_to_json(stmt: &Stmt) -> Value {
             "kind": kind_name,
             "value": expr_to_json(value)
         }),
+        Stmt::CompileValidation { body, args } =>
+            json!({
+            "type": "CompileValidation",
+            "body": stmts_to_json(body),
+            "args": args.iter().map(expr_to_json).collect::<Vec<_>>()
+        }),
         _ => json!({
             "type": "OtherStmt"
         }),
@@ -179,11 +185,12 @@ pub fn decl_to_json(decl: &Decl) -> Value {
             "editability": format!("{:?}", editability),
             "value": expr_to_json(value)
         }),
-        Decl::FnDecl { visibility, is_virtual, is_abstract, name, params, return_type, body } =>
+        Decl::FnDecl { visibility, is_virtual, is_abstract, name, generics, params, return_type, body } =>
             json!({
             "type": "FnDecl",
             "name": name,
             "visibility": format!("{:?}", visibility),
+            "generics": generics.iter().map(|g| g.as_str()).collect::<Vec<_>>(),
             "is_virtual": is_virtual,
             "is_abstract": is_abstract,
             "params": params.iter().map(|p| json!({
@@ -269,7 +276,8 @@ pub fn decl_to_json(decl: &Decl) -> Value {
 
 pub fn expr_to_json(expr: &Expr) -> Value {
     match expr {
-        Expr::LiteralInt(v) => json!({ "type": "LiteralInt", "value": v }),
+        Expr::LiteralInt(v) => json!({ "type": "LiteralInt", "value": v.to_string() }),
+        Expr::LiteralUInt(v) => json!({ "type": "LiteralUInt", "value": v.to_string() }),
         Expr::LiteralFloat(v) => json!({ "type": "LiteralFloat", "value": v }),
         Expr::LiteralString(v) => json!({ "type": "LiteralString", "value": v }),
         Expr::LiteralChar(v) => json!({ "type": "LiteralChar", "value": v }),
@@ -288,10 +296,11 @@ pub fn expr_to_json(expr: &Expr) -> Value {
             "operator": operator,
             "operand": expr_to_json(operand)
         }),
-        Expr::Call { callee, args } =>
+        Expr::Call { callee, generics, args } =>
             json!({
             "type": "Call",
             "callee": expr_to_json(callee),
+            "generics": generics.iter().map(|g| json!(g.as_str())).collect::<Vec<_>>(),
             "args": args.iter().map(expr_to_json).collect::<Vec<_>>()
         }),
         Expr::IndexAccess { object, indices } =>
@@ -318,6 +327,11 @@ pub fn expr_to_json(expr: &Expr) -> Value {
         }),
         Expr::This => json!({ "type": "This" }),
         Expr::Super => json!({ "type": "Super" }),
+        Expr::Cast { expr, target_type } => json!({
+            "type": "Cast",
+            "expr": expr_to_json(expr),
+            "target_type": target_type.as_str()
+        }),
         _ => json!({ "type": "OtherExpr" }),
     }
 }

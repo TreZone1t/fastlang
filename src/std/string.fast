@@ -1,7 +1,7 @@
 // FastLang Standard Library: string
 public class string -> {
     private -> {
-        char[] buffer = []; //we will use list in future not array.
+        char buffer[] = []; //we will use list in future not array.
         int32 length = 0;
     }
 

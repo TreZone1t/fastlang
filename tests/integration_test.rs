@@ -5,18 +5,22 @@ use std::process::Command;
 #[test]
 fn run_all_fs_tests() {
     let backend = std::env::var("FASTLANG_BACKEND").unwrap_or_else(|_| "cpp".to_string());
-    run_tests_with_backend(&backend);
+    run_directory_tests(Path::new("tests"), &backend);
+}
+
+#[test]
+fn run_all_examples() {
+    run_directory_tests(Path::new("examples"), "cpp");
 }
 
 #[test]
 fn run_cranelift_aot_tests() {
-    run_tests_with_backend("cranelift");
+    run_directory_tests(Path::new("tests"), "cranelift");
 }
 
-fn run_tests_with_backend(backend: &str) {
-    let test_dir = Path::new("tests");
+fn run_directory_tests(test_dir: &Path, backend: &str) {
     if !test_dir.exists() {
-        println!("No tests directory found.");
+        println!("Directory {:?} not found.", test_dir);
         return;
     }
 
@@ -118,9 +122,25 @@ Stderr:
                     } else {
                         let content = fs::read_to_string(&path).unwrap();
                         let mut expected_lines = Vec::new();
+                        let mut input_lines = Vec::new();
+                        let mut in_block_comment = false;
                         for line in content.lines() {
+                            let trimmed = line.trim();
+                            if trimmed.contains("/*") {
+                                in_block_comment = true;
+                            }
+                            if trimmed.contains("*/") {
+                                in_block_comment = false;
+                                continue;
+                            }
+                            if in_block_comment {
+                                continue;
+                            }
                             if let Some(idx) = line.find("// EXPECT:") {
                                 expected_lines.push(line[idx + 10..].trim().to_string());
+                            }
+                            if let Some(idx) = line.find("// INPUT:") {
+                                input_lines.push(line[idx + 9..].trim().to_string());
                             }
                         }
 
@@ -133,9 +153,26 @@ Stderr:
                             ));
                             is_success = false;
                         } else {
-                            let app_output = Command::new(&build_exe)
-                                .output()
-                                .expect("failed to execute compiled app");
+                            let app_output = if !input_lines.is_empty() {
+                                use std::io::Write;
+                                let mut child = Command::new(&build_exe)
+                                    .stdin(std::process::Stdio::piped())
+                                    .stdout(std::process::Stdio::piped())
+                                    .stderr(std::process::Stdio::piped())
+                                    .spawn()
+                                    .expect("failed to spawn compiled app");
+
+                                if let Some(mut stdin) = child.stdin.take() {
+                                    let input_data = input_lines.join("\n") + "\n";
+                                    let _ = stdin.write_all(input_data.as_bytes());
+                                }
+
+                                child.wait_with_output().expect("failed to wait on compiled app")
+                            } else {
+                                Command::new(&build_exe)
+                                    .output()
+                                    .expect("failed to execute compiled app")
+                            };
                             if !app_output.status.success() {
                                 let app_stderr = String::from_utf8_lossy(&app_output.stderr);
                                 let app_stdout = String::from_utf8_lossy(&app_output.stdout);

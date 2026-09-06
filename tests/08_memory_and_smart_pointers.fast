@@ -52,9 +52,68 @@ fn test_del_and_drop() -> void {
     del s; // EXPECT: StackResource 999 dropped!
 }
 
+fn test_dynamic_heap_allocations() -> void {
+    int32* my_heap_array = new int32[1, 2, 3, 4, 5];
+    println("heap_array[0]: ", my_heap_array[0]); // EXPECT: heap_array[0]: 1
+    println("heap_array[4]: ", my_heap_array[4]); // EXPECT: heap_array[4]: 5
+
+    int32* ptrarr = new int32[](5);
+    for (int32 i = 0; i < 5; i = i + 1) {
+        ptrarr[i] = i * 10;
+        print(ptrarr[i], " ");
+    }
+    println(""); // EXPECT: 0 10 20 30 40 
+
+    int32* ptr = new int32(42);
+    println("heap single int: ", *ptr); // EXPECT: heap single int: 42
+    del ptr;
+}
+
+blueprint Point =  {
+  
+        int32 x ;
+        int32 y;
+    }
+impl Point  {
+    handle {
+        fn copy() -> Point {
+            Point p = Point {
+                x:this.x;
+                y:this.y;
+            };
+            return p;
+        }
+    }
+}
+
+fn test_copy_semantics() -> void {
+    // 1. Primitive copy
+    int32 orig = 100;
+    copy<int32> copied_int = orig;
+    copied_int += 50;
+    println("orig: ", orig, ", copied: ", copied_int); // EXPECT: orig: 100, copied: 150
+    // 2. Blueprint copy via handle
+    Point pt1 = Point {
+      x = 10;
+      y = 20;
+    };
+    copy<Point> pt2 = pt1;
+    pt2.x = 99;
+    println("pt1.x: ", pt1.x, ", pt2.x: ", pt2.x); // EXPECT: pt1.x: 10, pt2.x: 99
+    // 3. using deepCopy method
+    int orig_copy = deepCopy(orig);
+    orig_copy += 50;
+    println("orig: ", orig, ", orig_copy: ", orig_copy); // EXPECT: orig: 100, orig_copy: 150
+    Point pt_copy = deepCopy(pt1);
+    pt_copy.x = 99;
+    println("pt1.x: ", pt1.x, ", pt_copy.x: ", pt_copy.x); // EXPECT: pt1.x: 10, pt_copy.x: 99
+}
+
 fn main() -> int32 {
     test_smart_pointers();
     test_del_and_drop();
+    test_dynamic_heap_allocations();
+    test_copy_semantics();
 
     println("ALL 08_MEMORY TESTS PASSED"); // EXPECT: ALL 08_MEMORY TESTS PASSED
     return 0;

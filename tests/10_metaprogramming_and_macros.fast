@@ -11,6 +11,16 @@ macro emit_metric[service: str, metric: str, val: int32] -> {
     println("METRIC: ", service, ".", metric, " = ", val);
 }
 
+fn print_variadic<...T>(...args: ...T) -> void {
+    for arg in args {
+        println(arg);
+    }
+}
+
+fn forward_variadic<...T>(...args: ...T) -> void {
+    print_variadic(...args);
+}
+
 fn main() -> int32 {
     UserID id = 42;
     println(id); // EXPECT: 42
@@ -33,6 +43,61 @@ fn main() -> int32 {
 
     custom_log "STATUS", 200; // EXPECT: [STATUS] Code: 200
     emit_metric "auth", "latency_ms", 45; // EXPECT: METRIC: auth.latency_ms = 45
+
+    if (typeof(id).printable) {
+        println("id printable check passed"); // EXPECT: id printable check passed
+    }
+
+    if (typeof(id).printable()) {
+        println("id printable method check passed"); // EXPECT: id printable method check passed
+    }
+
+    if (typeof(id).is_primitive) {
+        println("id primitive check passed"); // EXPECT: id primitive check passed
+    }
+
+    if (!typeof(id).is_pointer) {
+        println("id not pointer check passed"); // EXPECT: id not pointer check passed
+    }
+
+    if (!typeof(id).is_array) {
+        println("id not array check passed"); // EXPECT: id not array check passed
+    }
+
+    if (typeof(id).size == 4) {
+        println("id size check passed"); // EXPECT: id size check passed
+    }
+
+    int32* ptr = &id;
+    if (typeof(ptr).is_pointer) {
+        println("ptr is pointer check passed"); // EXPECT: ptr is pointer check passed
+    }
+
+    int32 arr[] = [1, 2, 3];
+    if (typeof(arr).is_array) {
+        println("arr is array check passed"); // EXPECT: arr is array check passed
+    }
+
+    if (@compile::typeof(id).printable) {
+        println("comptime typeof check passed"); // EXPECT: comptime typeof check passed
+    }
+
+    if (typeof(id).castable) {
+        println("id castable check passed"); // EXPECT: id castable check passed
+    }
+
+    if (typeof(id).castable_to(float64)) {
+        println("id castable_to float64 check passed"); // EXPECT: id castable_to float64 check passed
+    }
+
+    print_variadic("var1", 42, true);
+    // EXPECT: var1
+    // EXPECT: 42
+    // EXPECT: true
+
+    forward_variadic("fwd", 123);
+    // EXPECT: fwd
+    // EXPECT: 123
 
     println("ALL 10_METAPROGRAMMING TESTS PASSED"); // EXPECT: ALL 10_METAPROGRAMMING TESTS PASSED
     return 0;

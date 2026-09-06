@@ -10,6 +10,7 @@ use std::rc::Rc;
 #[derive(Debug, Clone)]
 pub struct FnSignature {
     pub name: String,
+    pub generics: Vec<BaseType>,
     pub params: Vec<Param>,
     pub return_type: BaseType,
     pub is_virtual: bool,
@@ -98,6 +99,7 @@ impl BlueprintData {
                 name: p.name.clone(),
                 type_node: p.type_node.substitute_generics(&map),
                 default_value: p.default_value.clone(),
+                is_variadic: p.is_variadic,
             }).collect();
             let new_ret = sig.return_type.substitute_generics(&map);
             new_methods.insert(m_name.clone(), FnSignature {
@@ -106,6 +108,7 @@ impl BlueprintData {
                 return_type: new_ret,
                 is_virtual: sig.is_virtual,
                 is_abstract: sig.is_abstract,
+                generics: sig.generics.clone(),
             });
         }
 
@@ -136,6 +139,7 @@ pub enum SymbolKind {
     },
     /// Function (fn)
     Function {
+        generics: Vec<BaseType>,
         params: Vec<Param>,
         return_type: BaseType,
         body: Option<Vec<Stmt>>,
@@ -365,10 +369,9 @@ impl Environment {
         None
     }
 
-    /// Extract blueprint name from generic types like "custom<list>" -> "list"
-    /// or "class<Node>" -> "Node"
+    /// Extract blueprint name from generic types like "class<Node>" -> "Node"
     pub fn extract_blueprint_name(type_str: &str) -> Option<&str> {
-        for prefix in &["custom<", "class<", "struct<", "enum<", "blueprint<"] {
+        for prefix in &["class<", "struct<", "enum<", "blueprint<"] {
             if type_str.starts_with(prefix) {
                 return Some(type_str.trim_start_matches(prefix).trim_end_matches('>'));
             }

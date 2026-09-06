@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::frontend::lexer::token::TokenKind::{ self };
+use crate::frontend::lexer::token::TokenKind::{self};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Visibility {
@@ -34,6 +34,19 @@ impl Size {
         }
     }
 }
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub enum ExecutionMode {
+    Runtime,
+    FullyCompilable,
+    CompileRuntimeMix,
+}
+
+impl Default for ExecutionMode {
+    fn default() -> Self {
+        Self::Runtime
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum BaseType {
     Int(Size),
@@ -94,27 +107,32 @@ pub enum BaseType {
         fields: Box<HashMap<String, BaseType>>,
         methods: Box<HashMap<String, FnType>>,
         labels: Box<HashMap<String, BaseType>>,
+        mode: ExecutionMode,
     },
 
     Method {
         name: Option<String>,
         params: Vec<BaseType>,
         return_type: Box<BaseType>,
+        mode: ExecutionMode,
     },
     Fn {
         name: Option<String>,
         params: Vec<BaseType>,
         return_type: Box<BaseType>,
+        mode: ExecutionMode,
     },
     Micro {
         name: Option<String>,
         params: Vec<BaseType>,
         return_type: Box<BaseType>,
+        mode: ExecutionMode,
     },
     Macro {
         name: Option<String>,
         params: Vec<BaseType>,
         return_type: Box<BaseType>,
+        mode: ExecutionMode,
     },
     Lambda {
         name: Option<String>,
@@ -174,10 +192,7 @@ impl BaseType {
                 if generics.is_empty() {
                     format!("struct<{}>", name)
                 } else {
-                    let g_strs: Vec<String> = generics
-                        .iter()
-                        .map(|g| g.as_str())
-                        .collect();
+                    let g_strs: Vec<String> = generics.iter().map(|g| g.as_str()).collect();
                     format!("struct<{}<{}> >", name, g_strs.join(", "))
                 }
             }
@@ -185,10 +200,7 @@ impl BaseType {
                 if generics.is_empty() {
                     format!("class<{}>", name)
                 } else {
-                    let g_strs: Vec<String> = generics
-                        .iter()
-                        .map(|g| g.as_str())
-                        .collect();
+                    let g_strs: Vec<String> = generics.iter().map(|g| g.as_str()).collect();
                     format!("class<{}<{}> >", name, g_strs.join(", "))
                 }
             }
@@ -196,10 +208,7 @@ impl BaseType {
                 if generics.is_empty() {
                     format!("enum<{}>", name)
                 } else {
-                    let g_strs: Vec<String> = generics
-                        .iter()
-                        .map(|g| g.as_str())
-                        .collect();
+                    let g_strs: Vec<String> = generics.iter().map(|g| g.as_str()).collect();
                     format!("enum<{}<{}> >", name, g_strs.join(", "))
                 }
             }
@@ -207,18 +216,17 @@ impl BaseType {
                 if generics.is_empty() {
                     format!("blueprint<{}>", name)
                 } else {
-                    let g_strs: Vec<String> = generics
-                        .iter()
-                        .map(|g| g.as_str())
-                        .collect();
+                    let g_strs: Vec<String> = generics.iter().map(|g| g.as_str()).collect();
                     format!("blueprint<{}<{}> >", name, g_strs.join(", "))
                 }
             }
-            BaseType::Method { name, params, return_type } => {
-                let p_strs: Vec<String> = params
-                    .iter()
-                    .map(|p| p.as_str())
-                    .collect();
+            BaseType::Method {
+                name,
+                params,
+                return_type,
+                ..
+            } => {
+                let p_strs: Vec<String> = params.iter().map(|p| p.as_str()).collect();
                 if name.clone().is_none() {
                     format!("Method<({}), {}>", p_strs.join(", "), return_type.as_str())
                 } else {
@@ -230,11 +238,13 @@ impl BaseType {
                     )
                 }
             }
-            BaseType::Micro { name, params, return_type } => {
-                let p_strs: Vec<String> = params
-                    .iter()
-                    .map(|p| p.as_str())
-                    .collect();
+            BaseType::Micro {
+                name,
+                params,
+                return_type,
+                ..
+            } => {
+                let p_strs: Vec<String> = params.iter().map(|p| p.as_str()).collect();
                 if name.clone().is_none() {
                     format!("Micro<({}), {}>", p_strs.join(", "), return_type.as_str())
                 } else {
@@ -246,11 +256,13 @@ impl BaseType {
                     )
                 }
             }
-            BaseType::Macro { name, params, return_type } => {
-                let p_strs: Vec<String> = params
-                    .iter()
-                    .map(|p| p.as_str())
-                    .collect();
+            BaseType::Macro {
+                name,
+                params,
+                return_type,
+                ..
+            } => {
+                let p_strs: Vec<String> = params.iter().map(|p| p.as_str()).collect();
                 if name.is_none() {
                     format!("Macro<({}), {}>", p_strs.join(", "), return_type.as_str())
                 } else {
@@ -262,11 +274,12 @@ impl BaseType {
                     )
                 }
             }
-            BaseType::Lambda { name, params, return_type } => {
-                let p_strs: Vec<String> = params
-                    .iter()
-                    .map(|p| p.as_str())
-                    .collect();
+            BaseType::Lambda {
+                name,
+                params,
+                return_type,
+            } => {
+                let p_strs: Vec<String> = params.iter().map(|p| p.as_str()).collect();
                 if name.clone().is_none() {
                     format!("Lambda<({}), {}>", p_strs.join(", "), return_type.as_str())
                 } else {
@@ -278,11 +291,13 @@ impl BaseType {
                     )
                 }
             }
-            BaseType::Fn { name, params, return_type } => {
-                let p_strs: Vec<String> = params
-                    .iter()
-                    .map(|p| p.as_str())
-                    .collect();
+            BaseType::Fn {
+                name,
+                params,
+                return_type,
+                ..
+            } => {
+                let p_strs: Vec<String> = params.iter().map(|p| p.as_str()).collect();
                 if name.is_none() {
                     format!("Fn<({}), {}>", p_strs.join(", "), return_type.as_str())
                 } else {
@@ -296,10 +311,7 @@ impl BaseType {
             }
             BaseType::GenericParam(name) => name.clone(),
             BaseType::Generic(inner_vec) => {
-                let strs: Vec<String> = inner_vec
-                    .iter()
-                    .map(|t| t.as_str())
-                    .collect();
+                let strs: Vec<String> = inner_vec.iter().map(|t| t.as_str()).collect();
                 strs.join(", ")
             }
             BaseType::Unknown => "unknown".to_string(),
@@ -333,16 +345,102 @@ impl BaseType {
             "copy" => BaseType::Copy(Box::new(BaseType::Unknown)),
             "pointer" => BaseType::Pointer(Box::new(BaseType::Unknown)),
             "type" => BaseType::Type(Box::new(BaseType::Unknown)),
-            "macro" => BaseType::Macro { name: None, params: vec![], return_type: Box::new(BaseType::Void) },
+            "macro" => BaseType::Macro {
+                name: None,
+                params: vec![],
+                return_type: Box::new(BaseType::Void),
+                mode: ExecutionMode::Runtime,
+            },
             "unknown" => BaseType::Unknown,
             "error" => BaseType::Error,
-            _ => BaseType::Unknown,
+            _ => {
+                if s.starts_with("blueprint<") && s.ends_with('>') {
+                    let inner = &s[10..s.len() - 1];
+                    BaseType::Blueprint {
+                        name: inner.to_string(),
+                        fields: Box::new(std::collections::HashMap::new()),
+                        methods: Box::new(std::collections::HashMap::new()),
+                        generics: vec![],
+                    }
+                } else if s.starts_with("struct<") && s.ends_with('>') {
+                    let inner = &s[7..s.len() - 1];
+                    BaseType::Struct {
+                        name: inner.to_string(),
+                        fields: Box::new(std::collections::HashMap::new()),
+                        methods: Box::new(std::collections::HashMap::new()),
+                        generics: vec![],
+                    }
+                } else if s.starts_with("class<") && s.ends_with('>') {
+                    let inner = &s[6..s.len() - 1];
+                    BaseType::Class {
+                        name: inner.to_string(),
+                        fields: Box::new(std::collections::HashMap::new()),
+                        methods: Box::new(std::collections::HashMap::new()),
+                        constructor: None,
+                        generics: vec![],
+                    }
+                } else if s.starts_with("enum<") && s.ends_with('>') {
+                    let inner = &s[5..s.len() - 1];
+                    BaseType::Enum {
+                        name: inner.to_string(),
+                        variants: vec![],
+                        methods: Box::new(std::collections::HashMap::new()),
+                        generics: vec![],
+                    }
+                } else if s.starts_with("pointer<") && s.ends_with('>') {
+                    let inner = &s[8..s.len() - 1];
+                    BaseType::Pointer(Box::new(BaseType::from_str(inner)))
+                } else if s.starts_with("modify<") && s.ends_with('>') {
+                    let inner = &s[7..s.len() - 1];
+                    BaseType::Modify(Box::new(BaseType::from_str(inner)))
+                } else if s.starts_with("name<") && s.ends_with('>') {
+                    let inner = &s[5..s.len() - 1];
+                    BaseType::Name(Box::new(BaseType::from_str(inner)))
+                } else if s.starts_with("copy<") && s.ends_with('>') {
+                    let inner = &s[5..s.len() - 1];
+                    BaseType::Copy(Box::new(BaseType::from_str(inner)))
+                } else if s.ends_with('*') {
+                    BaseType::Pointer(Box::new(BaseType::from_str(&s[..s.len() - 1])))
+                } else if s.ends_with("[]") {
+                    BaseType::Array {
+                        base_type: Box::new(BaseType::from_str(&s[..s.len() - 2])),
+                        size: Box::new(None),
+                    }
+                } else if s.contains('<') && s.ends_with('>') {
+                    let open_idx = s.find('<').unwrap();
+                    let base = &s[..open_idx];
+                    let inner = &s[open_idx + 1..s.len() - 1];
+                    let gen_parts: Vec<BaseType> = inner
+                        .split(',')
+                        .map(|p| BaseType::from_str(p.trim()))
+                        .collect();
+                    BaseType::Blueprint {
+                        name: base.to_string(),
+                        fields: Box::new(std::collections::HashMap::new()),
+                        methods: Box::new(std::collections::HashMap::new()),
+                        generics: gen_parts,
+                    }
+                } else if !s.is_empty()
+                    && s.chars()
+                        .next()
+                        .map_or(false, |c| c.is_alphabetic() || c == '_')
+                {
+                    BaseType::Blueprint {
+                        name: s.to_string(),
+                        fields: Box::new(std::collections::HashMap::new()),
+                        methods: Box::new(std::collections::HashMap::new()),
+                        generics: vec![],
+                    }
+                } else {
+                    BaseType::Unknown
+                }
+            }
         }
     }
 
     pub fn substitute_generics(
         &self,
-        map: &std::collections::HashMap<String, BaseType>
+        map: &std::collections::HashMap<String, BaseType>,
     ) -> BaseType {
         match self {
             BaseType::GenericParam(name) => {
@@ -357,55 +455,64 @@ impl BaseType {
             BaseType::Copy(inner) => BaseType::Copy(Box::new(inner.substitute_generics(map))),
             BaseType::Pointer(inner) => BaseType::Pointer(Box::new(inner.substitute_generics(map))),
             BaseType::Type(inner) => BaseType::Type(Box::new(inner.substitute_generics(map))),
-            BaseType::Array { base_type, size } =>
-                BaseType::Array {
-                    base_type: Box::new(base_type.substitute_generics(map)),
-                    size: size.clone(),
-                },
-            BaseType::Generic(vec) =>
-                BaseType::Generic(
-                    vec
-                        .iter()
-                        .map(|t| t.substitute_generics(map))
-                        .collect()
-                ),
-            BaseType::Fn { name, params, return_type } =>
-                BaseType::Fn {
-                    name: name.clone(),
-                    params: params
-                        .iter()
-                        .map(|p| p.substitute_generics(map))
-                        .collect(),
-                    return_type: Box::new(return_type.substitute_generics(map)),
-                },
-            BaseType::Micro { name, params, return_type } =>
-                BaseType::Micro {
-                    name: name.clone(),
-                    params: params
-                        .iter()
-                        .map(|p| p.substitute_generics(map))
-                        .collect(),
-                    return_type: Box::new(return_type.substitute_generics(map)),
-                },
-            BaseType::Macro { name, params, return_type } =>
-                BaseType::Macro {
-                    name: name.clone(),
-                    params: params
-                        .iter()
-                        .map(|p| p.substitute_generics(map))
-                        .collect(),
-                    return_type: Box::new(return_type.substitute_generics(map)),
-                },
-            BaseType::Method { name, params, return_type } =>
-                BaseType::Method {
-                    name: name.clone(),
-                    params: params
-                        .iter()
-                        .map(|p| p.substitute_generics(map))
-                        .collect(),
-                    return_type: Box::new(return_type.substitute_generics(map)),
-                },
-            BaseType::Class { name, fields, methods, constructor, generics } => {
+            BaseType::Array { base_type, size } => BaseType::Array {
+                base_type: Box::new(base_type.substitute_generics(map)),
+                size: size.clone(),
+            },
+            BaseType::Generic(vec) => {
+                BaseType::Generic(vec.iter().map(|t| t.substitute_generics(map)).collect())
+            }
+            BaseType::Fn {
+                name,
+                params,
+                return_type,
+                mode,
+            } => BaseType::Fn {
+                name: name.clone(),
+                params: params.iter().map(|p| p.substitute_generics(map)).collect(),
+                return_type: Box::new(return_type.substitute_generics(map)),
+                mode: *mode,
+            },
+            BaseType::Micro {
+                name,
+                params,
+                return_type,
+                mode,
+            } => BaseType::Micro {
+                name: name.clone(),
+                params: params.iter().map(|p| p.substitute_generics(map)).collect(),
+                return_type: Box::new(return_type.substitute_generics(map)),
+                mode: *mode,
+            },
+            BaseType::Macro {
+                name,
+                params,
+                return_type,
+                mode,
+            } => BaseType::Macro {
+                name: name.clone(),
+                params: params.iter().map(|p| p.substitute_generics(map)).collect(),
+                return_type: Box::new(return_type.substitute_generics(map)),
+                mode: *mode,
+            },
+            BaseType::Method {
+                name,
+                params,
+                return_type,
+                mode,
+            } => BaseType::Method {
+                name: name.clone(),
+                params: params.iter().map(|p| p.substitute_generics(map)).collect(),
+                return_type: Box::new(return_type.substitute_generics(map)),
+                mode: *mode,
+            },
+            BaseType::Class {
+                name,
+                fields,
+                methods,
+                constructor,
+                generics,
+            } => {
                 let substituted_generics = generics
                     .iter()
                     .map(|g| g.substitute_generics(map))
@@ -418,7 +525,12 @@ impl BaseType {
                     generics: substituted_generics,
                 }
             }
-            BaseType::Struct { name, fields, methods, generics } => {
+            BaseType::Struct {
+                name,
+                fields,
+                methods,
+                generics,
+            } => {
                 let substituted_generics = generics
                     .iter()
                     .map(|g| g.substitute_generics(map))
@@ -430,7 +542,12 @@ impl BaseType {
                     generics: substituted_generics,
                 }
             }
-            BaseType::Enum { name, variants, methods, generics } => {
+            BaseType::Enum {
+                name,
+                variants,
+                methods,
+                generics,
+            } => {
                 let substituted_generics = generics
                     .iter()
                     .map(|g| g.substitute_generics(map))
@@ -442,7 +559,12 @@ impl BaseType {
                     generics: substituted_generics,
                 }
             }
-            BaseType::Blueprint { name, fields, methods, generics } => {
+            BaseType::Blueprint {
+                name,
+                fields,
+                methods,
+                generics,
+            } => {
                 let substituted_generics = generics
                     .iter()
                     .map(|g| g.substitute_generics(map))
@@ -457,19 +579,76 @@ impl BaseType {
             _ => self.clone(),
         }
     }
+
+    pub fn extract_generic_params(&self) -> Vec<String> {
+        let mut res = Vec::new();
+        match self {
+            BaseType::GenericParam(name) => res.push(name.clone()),
+            BaseType::Name(inner)
+            | BaseType::Modify(inner)
+            | BaseType::Copy(inner)
+            | BaseType::Pointer(inner)
+            | BaseType::Type(inner) => res.extend(inner.extract_generic_params()),
+            BaseType::Array { base_type, .. } => res.extend(base_type.extract_generic_params()),
+            BaseType::Generic(vec) => {
+                for t in vec {
+                    res.extend(t.extract_generic_params());
+                }
+            }
+            _ => {}
+        }
+        res
+    }
+
+    pub fn infer_generics(
+        &self,
+        actual: &BaseType,
+        bindings: &mut std::collections::HashMap<String, BaseType>,
+    ) {
+        match (self, actual) {
+            (BaseType::GenericParam(name), concrete) => {
+                bindings
+                    .entry(name.clone())
+                    .or_insert_with(|| concrete.clone());
+            }
+            (
+                BaseType::Array {
+                    base_type: pat_inner,
+                    ..
+                },
+                BaseType::Array {
+                    base_type: act_inner,
+                    ..
+                },
+            ) => {
+                pat_inner.infer_generics(act_inner, bindings);
+            }
+            (BaseType::Pointer(pat_inner), BaseType::Pointer(act_inner))
+            | (BaseType::Name(pat_inner), BaseType::Name(act_inner))
+            | (BaseType::Modify(pat_inner), BaseType::Modify(act_inner))
+            | (BaseType::Copy(pat_inner), BaseType::Copy(act_inner)) => {
+                pat_inner.infer_generics(act_inner, bindings);
+            }
+            _ => {}
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnType {
     pub name: String,
+    pub generics: Vec<BaseType>,
     pub params: Vec<Param>,
     pub return_type: BaseType,
+    pub mode: ExecutionMode,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct MacroType {
     pub name: String,
+    pub generics: Vec<BaseType>,
     pub params: Vec<Param>,
     pub return_type: BaseType,
+    pub mode: ExecutionMode,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstructorType {
@@ -521,6 +700,7 @@ pub struct Param {
     pub name: String,
     pub type_node: BaseType,
     pub default_value: Option<Expr>,
+    pub is_variadic: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -542,7 +722,7 @@ pub enum Flag {
     HasError,
     HasSwitch,
 
-    // Runtime execution states
+    // Runtime execution states ( runtime flags )
     Yielded,
     IsDone,
     Broken,
@@ -670,36 +850,37 @@ pub enum HandleMethods {
     Div, // div
     Mod, // mod
 
-    Not, // !
+    Not,    // !
     Negate, //-
 
     And, // and &&
-    Or, // or ||
+    Or,  // or ||
 
     Arrow,
     ArrowAssign,
     FatArrow,
     Equal,
 
-    PartialEqual, // ==
-    NotEqual, // !=
-    GreaterThan, // >
-    LessThan, // <
+    PartialEqual,     // ==
+    NotEqual,         // !=
+    GreaterThan,      // >
+    LessThan,         // <
     GreaterThanEqual, // >=
-    LessThanEqual, // <=
+    LessThanEqual,    // <=
 
     Iterator, // iter() or iterator()
-    Next, // next()
+    Next,     // next()
 
     Copy, // copy()
+    Cast, // cast() or $cast
     Call,
     Leave,
     Yield,
-    Break, // break
+    Break,    // break
     Continue, // continue
-    Return, // return
-    Error, // handle error(e: Error) (receiver/catcher)
-    Throw, // handle throw() -> Error (throwable capability)
+    Return,   // return
+    Error,    // handle error(e: Error) (receiver/catcher)
+    Throw,    // handle throw() -> Error (throwable capability)
     //Exit,
     Drop,
     IsDone,
@@ -736,19 +917,20 @@ impl HandleMethods {
             "or" => HandleMethods::Or,
             "iterator" | "iter" => HandleMethods::Iterator,
             "next" => HandleMethods::Next,
-            "copy" => HandleMethods::Copy,
-            "call" => HandleMethods::Call,
-            "leave" => HandleMethods::Leave,
-            "yield" => HandleMethods::Yield,
-            "error" => HandleMethods::Error,
-            "throw" => HandleMethods::Throw,
-            "break" => HandleMethods::Break,
-            "continue" => HandleMethods::Continue,
-            "return" => HandleMethods::Return,
-            "drop" => HandleMethods::Drop,
-            "is_done" => HandleMethods::IsDone,
+            "copy" | "$copy" => HandleMethods::Copy,
+            "cast" | "$cast" => HandleMethods::Cast,
+            "call" | "$call" => HandleMethods::Call,
+            "leave" | "$leave" => HandleMethods::Leave,
+            "yield" | "$yield" => HandleMethods::Yield,
+            "error" | "$error" => HandleMethods::Error,
+            "throw" | "$throw" => HandleMethods::Throw,
+            "break" | "$break" => HandleMethods::Break,
+            "continue" | "$continue" => HandleMethods::Continue,
+            "return" | "$return" => HandleMethods::Return,
+            "drop" | "$drop" => HandleMethods::Drop,
+            "is_done" | "$is_done" => HandleMethods::IsDone,
             // "exit" => HandleMethods::Exit,
-            "default" => HandleMethods::Default,
+            "default" | "$default" => HandleMethods::Default,
             _ => HandleMethods::NotFound,
         }
     }
@@ -759,6 +941,7 @@ impl HandleMethods {
             HandleMethods::Iterator => "iter",
             HandleMethods::Next => "next",
             HandleMethods::Copy => "copy",
+            HandleMethods::Cast => "cast",
             HandleMethods::Add => "add",
             HandleMethods::Increment => "increment",
             HandleMethods::Decrement => "decrement",
@@ -801,7 +984,8 @@ impl HandleMethods {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
-    LiteralInt(i64),
+    LiteralInt(i128),
+    LiteralUInt(u128),
     LiteralFloat(f64),
     LiteralString(String),
     LiteralBool(bool),
@@ -830,20 +1014,15 @@ pub enum Expr {
         type_node: BaseType,
         target: Box<Expr>,
     },
-    TypeOf {
-        target: Box<Expr>,
-    },
-    SizeOf {
-        target: Box<Expr>,
-    },
-    ToString {
-        target: Box<Expr>,
-    },
     UnaryOp {
         operator: String,
         operand: Box<Expr>,
     },
     Default(Option<BaseType>),
+    Cast {
+        expr: Box<Expr>,
+        target_type: BaseType,
+    },
 
     IndexAccess {
         object: Box<Expr>,
@@ -852,6 +1031,7 @@ pub enum Expr {
 
     Call {
         callee: Box<Expr>,
+        generics: Vec<BaseType>,
         args: Vec<Expr>,
     },
 
@@ -894,11 +1074,16 @@ impl Expr {
     pub fn as_str(&self) -> String {
         match self {
             Expr::LiteralInt(i) => i.to_string(),
+            Expr::LiteralUInt(u) => u.to_string(),
             Expr::LiteralFloat(f) => f.to_string(),
             Expr::LiteralString(s) => format!("\"{}\"", s),
             Expr::LiteralChar(c) => format!("'{}'", c),
             Expr::LiteralBool(val) => {
-                if *val { "true".to_string() } else { "false".to_string() }
+                if *val {
+                    "true".to_string()
+                } else {
+                    "false".to_string()
+                }
             }
             Expr::ArrayLiteral(elements) => {
                 let mut elems_code = Vec::new();
@@ -913,48 +1098,57 @@ impl Expr {
             Expr::This => "this".to_string(),
             Expr::Super => "super".to_string(), // will be handled in PropertyAccess
             Expr::Global => "global".to_string(),
-            Expr::BinaryOp { left: _, operator: _, right: _ } => "unimplemented".to_string(),
+            Expr::BinaryOp {
+                left: _,
+                operator: _,
+                right: _,
+            } => "unimplemented".to_string(),
             Expr::PostfixUpdate { left, operator } => format!("{}{}", left.as_str(), operator),
             Expr::PrefixUpdate { right, operator } => format!("{}{}", operator, right.as_str()),
             Expr::Lambda { .. } => "lambda".to_string(),
             Expr::UnaryOp { operator, operand } => format!("{}{}", operator, operand.as_str()),
             Expr::IndexAccess { object, indices } => {
-                let idxs: Vec<String> = indices
-                    .iter()
-                    .map(|i| i.as_str())
-                    .collect();
+                let idxs: Vec<String> = indices.iter().map(|i| i.as_str()).collect();
                 format!("{}[{}]", object.as_str(), idxs.join(", "))
             }
-            Expr::Call { callee, args } =>
-                format!(
-                    "{}({})",
-                    callee.as_str(),
-                    args
-                        .iter()
-                        .map(|a| a.as_str())
-                        .collect::<Vec<String>>()
-                        .join(", ")
-                ),
-            Expr::Instantiate { target, args } =>
-                format!(
-                    "{}({})",
-                    target.as_str(),
-                    args
-                        .iter()
-                        .map(|a| a.as_str())
-                        .collect::<Vec<String>>()
-                        .join(", ")
-                ),
+            Expr::Call {
+                callee,
+                generics: _,
+                args,
+            } => format!(
+                "{}({})",
+                callee.as_str(),
+                args.iter()
+                    .map(|a| a.as_str())
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            ),
+            Expr::Instantiate { target, args } => format!(
+                "{}({})",
+                target.as_str(),
+                args.iter()
+                    .map(|a| a.as_str())
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            ),
 
             Expr::PropertyAccess { object, property } => {
                 format!("{}.{}", object.as_str(), property.as_str())
             }
-            Expr::NamespaceAccess { namespace, property } =>
-                format!("{}::{}", namespace, property.as_str()),
-            Expr::ArrayAllocate { type_node, size, length: _ } =>
-                format!("new {}[{}]", type_node.as_str(), size.as_str()),
+            Expr::NamespaceAccess {
+                namespace,
+                property,
+            } => format!("{}::{}", namespace, property.as_str()),
+            Expr::ArrayAllocate {
+                type_node,
+                size,
+                length: _,
+            } => format!("new {}[{}]", type_node.as_str(), size.as_str()),
             Expr::New { type_node, target } => {
                 format!("new {}[{}]", type_node.as_str(), target.as_str())
+            }
+            Expr::Cast { expr, target_type } => {
+                format!("({} as {})", expr.as_str(), target_type.as_str())
             }
             _ => unreachable!(),
         }
@@ -964,6 +1158,7 @@ impl Expr {
 pub fn type_from_expr(expr: &Expr) -> BaseType {
     match expr {
         Expr::LiteralInt(_) => BaseType::Int(Size::S32),
+        Expr::LiteralUInt(_) => BaseType::UInt(Size::S32),
         Expr::LiteralFloat(_) => BaseType::Float(Size::S64),
         Expr::LiteralBool(_) => BaseType::Bool,
         Expr::LiteralString(_) => BaseType::Str,
@@ -973,6 +1168,7 @@ pub fn type_from_expr(expr: &Expr) -> BaseType {
             base_type: Box::new(type_node.clone()),
             size: Box::new(None),
         },
+        Expr::Cast { target_type, .. } => target_type.clone(),
         _ => BaseType::Unknown,
     }
 }
@@ -1095,6 +1291,7 @@ pub enum Decl {
         is_virtual: bool,
         is_abstract: bool,
         name: String,
+        generics: Vec<BaseType>,
         params: Vec<Param>,
         return_type: BaseType,
         body: Vec<Stmt>,
@@ -1102,6 +1299,7 @@ pub enum Decl {
     ExternFnDecl {
         abi: String,
         name: String,
+        generics: Vec<BaseType>,
         params: Vec<Param>,
         return_type: BaseType,
         alias: Option<String>,
@@ -1140,6 +1338,7 @@ pub enum Decl {
     MacroDecl {
         visibility: Visibility,
         name: String,
+        generics: Vec<BaseType>,
         params: Vec<Param>,
         body: Vec<Stmt>,
     },
@@ -1154,6 +1353,10 @@ pub enum Stmt {
     Declaration(Decl),
     Block(Vec<Stmt>),
     ThisBlock(Vec<Stmt>),
+    CompileValidation {
+        body: Vec<Stmt>,
+        args: Vec<Expr>,
+    },
 
     CaseStmt {
         option: Expr,

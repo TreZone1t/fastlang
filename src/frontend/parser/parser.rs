@@ -70,6 +70,30 @@ impl Parser {
         self.previous(None)
     }
 
+    pub(crate) fn is_compile_validation_ahead(&self) -> bool {
+        let mut idx = self.current + 1;
+        if self.tokens.get(idx).map(|t| &t.kind) == Some(&TokenKind::Arrow) {
+            idx += 1;
+        }
+        if self.tokens.get(idx).map(|t| &t.kind) != Some(&TokenKind::LBrace) {
+            return false;
+        }
+        let mut depth = 1;
+        idx += 1;
+        while idx < self.tokens.len() && depth > 0 {
+            match self.tokens[idx].kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => depth -= 1,
+                _ => {}
+            }
+            idx += 1;
+        }
+        if depth == 0 && idx < self.tokens.len() {
+            return matches!(self.tokens[idx].kind, TokenKind::LParen);
+        }
+        false
+    }
+
     /// Keywords that can legally appear as identifiers in name positions
     /// (variable names, field names, parameter names).
     /// e.g. `let bool flag = ...` where 'flag' is a keyword we registered.

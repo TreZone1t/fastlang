@@ -4,24 +4,24 @@ import std;
 enum Status {
     Idle,
     Running(int32),
-    Success(string),
-    Failed(int32, string),
+    Success(str),
+    Failed(int32, str),
 }
 
 fn process_status(s: Status) -> void {
     match (s) -> {
         Idle => {
-            print("State: System is idle.");
+            println("State: System is idle.");
         }
         Running(progress) => {
-            print("State: In progress: ", progress);
+            println("State: In progress: ", progress);
         }
         Success(msg) => {
-            print("State: Success! ", msg);
+            println("State: Success! ", msg);
         }
         Failed(err_code, reason) => {
-            print("State: Failed with code ", err_code);
-            print("Reason: ", reason);
+            println("State: Failed with code ", err_code);
+            println("Reason: ", reason);
         }
     }
 }

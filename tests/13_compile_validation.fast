@@ -1,0 +1,18 @@
+// Test 91: Compile-time Validation Block
+
+fn test_validation() -> void {
+    int32 x = rand<int32>();
+    @compile {
+        if (x < 0) {
+        @compile::print("x is negative");
+        }else{
+        @compile::print("x is ", x);
+        }
+    }(x);
+}
+
+fn main() -> int32 {
+    test_validation();
+    println("COMPILE VALIDATION PASSED");
+    return 0;
+}

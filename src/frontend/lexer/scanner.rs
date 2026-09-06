@@ -9,8 +9,9 @@ pub struct Scanner {
 
 impl Scanner {
     pub fn new(source: String) -> Self {
+        let clean_source = source.strip_prefix('\u{feff}').unwrap_or(&source);
         Scanner {
-            source: source.chars().collect(),
+            source: clean_source.chars().collect(),
             position: 0,
             line: 1,
             column: 1,
@@ -226,55 +227,172 @@ impl Scanner {
                 TokenKind::LabelName(word.clone())
             }
             '0'..='9' => {
-                let mut num_str = String::new();
-                num_str.push(c);
-
-                while let Some(next_c) = self.peek() {
-                    if next_c.is_ascii_digit() {
-                        num_str.push(self.advance().unwrap());
-                    } else {
-                        break;
-                    }
-                }
-
-                // Float: a '.' followed by at least one digit. A trailing bare '.'
-                // (e.g. `5.` or `5.foo`) is left alone so `.` can still be a Dot token
-                // (property access, etc.) on the next scan.
-                let is_float =
-                    self.peek() == Some('.') &&
-                    matches!(self.peek_at(1), Some(d) if d.is_ascii_digit());
-
-                if is_float {
-                    num_str.push(self.advance().unwrap()); // consume '.'
+                let start_line = self.line;
+                // Check for radix prefix if c == '0'
+                if c == '0' && matches!(self.peek(), Some('x' | 'X' | 'b' | 'B' | 'o' | 'O')) {
+                    let prefix = self.advance().unwrap();
+                    let radix = match prefix {
+                        'x' | 'X' => 16,
+                        'b' | 'B' => 2,
+                        'o' | 'O' => 8,
+                        _ => unreachable!(),
+                    };
+                    let mut digits_str = String::new();
                     while let Some(next_c) = self.peek() {
+                        if next_c == '_' {
+                            self.advance(); // consume '_' separator
+                            continue;
+                        }
+                        let is_valid_digit = match radix {
+                            16 => next_c.is_ascii_hexdigit(),
+                            2 => next_c == '0' || next_c == '1',
+                            8 => matches!(next_c, '0'..='7'),
+                            _ => false,
+                        };
+                        if is_valid_digit {
+                            digits_str.push(self.advance().unwrap());
+                        } else {
+                            break;
+                        }
+                    }
+                    if digits_str.is_empty() {
+                        TokenKind::Error(format!("Empty numeric literal with prefix '0{}' at line {}", prefix, start_line))
+                    } else {
+                        // Optional suffix (e.g. u8, u16, u32, u64, u128, uint, usize, i8, i16, i32, i64, i128, int, isize)
+                        let mut suffix = String::new();
+                        while let Some(next_c) = self.peek() {
+                            if next_c.is_alphanumeric() || next_c == '_' {
+                                suffix.push(self.advance().unwrap());
+                            } else {
+                                break;
+                            }
+                        }
+                        let is_unsigned = suffix.starts_with('u') || suffix == "usize" || suffix == "byte";
+                        match u128::from_str_radix(&digits_str, radix) {
+                            Ok(u_val) => {
+                                if is_unsigned || u_val > i128::MAX as u128 {
+                                    TokenKind::UInt(u_val)
+                                } else {
+                                    TokenKind::Int(u_val as i128)
+                                }
+                            }
+                            Err(_) => TokenKind::Error(format!("Numeric literal '0{}{}{}' out of range at line {}", prefix, digits_str, suffix, start_line)),
+                        }
+                    }
+                } else {
+                    let mut num_str = String::new();
+                    num_str.push(c);
+
+                    while let Some(next_c) = self.peek() {
+                        if next_c == '_' {
+                            self.advance(); // consume '_'
+                            continue;
+                        }
                         if next_c.is_ascii_digit() {
                             num_str.push(self.advance().unwrap());
                         } else {
                             break;
                         }
                     }
-                    match num_str.parse::<f64>() {
-                        Ok(f) => TokenKind::Float(f),
-                        Err(_) =>
-                            TokenKind::Error(
-                                format!(
-                                    "Invalid float literal '{}' at line {}",
-                                    num_str,
-                                    start_line
-                                )
-                            ),
-                    }
-                } else {
-                    match num_str.parse::<i64>() {
-                        Ok(i) => TokenKind::Int(i),
-                        Err(_) =>
-                            TokenKind::Error(
-                                format!(
-                                    "Integer literal '{}' out of range at line {}",
-                                    num_str,
-                                    start_line
-                                )
-                            ),
+
+                    // Float: a '.' followed by at least one digit. A trailing bare '.'
+                    // (e.g. `5.` or `5.foo`) is left alone so `.` can still be a Dot token
+                    // (property access, etc.) on the next scan.
+                    let is_float =
+                        self.peek() == Some('.') &&
+                        matches!(self.peek_at(1), Some(d) if d.is_ascii_digit());
+
+                    if is_float {
+                        num_str.push(self.advance().unwrap()); // consume '.'
+                        while let Some(next_c) = self.peek() {
+                            if next_c == '_' {
+                                self.advance();
+                                continue;
+                            }
+                            if next_c.is_ascii_digit() {
+                                num_str.push(self.advance().unwrap());
+                            } else {
+                                break;
+                            }
+                        }
+                        // Optional float suffix (f32, f64, float)
+                        let mut suffix = String::new();
+                        while let Some(next_c) = self.peek() {
+                            if next_c.is_alphanumeric() || next_c == '_' {
+                                suffix.push(self.advance().unwrap());
+                            } else {
+                                break;
+                            }
+                        }
+                        match num_str.parse::<f64>() {
+                            Ok(f) => TokenKind::Float(f),
+                            Err(_) =>
+                                TokenKind::Error(
+                                    format!(
+                                        "Invalid float literal '{}{}' at line {}",
+                                        num_str,
+                                        suffix,
+                                        start_line
+                                    )
+                                ),
+                        }
+                    } else {
+                        // Optional int/uint suffix
+                        let mut suffix = String::new();
+                        while let Some(next_c) = self.peek() {
+                            if next_c.is_alphanumeric() || next_c == '_' {
+                                suffix.push(self.advance().unwrap());
+                            } else {
+                                break;
+                            }
+                        }
+                        let is_unsigned = suffix.starts_with('u') || suffix == "usize" || suffix == "byte";
+                        let is_float_suffix = suffix.starts_with('f') || suffix == "float";
+                        if is_float_suffix {
+                            match num_str.parse::<f64>() {
+                                Ok(f) => TokenKind::Float(f),
+                                Err(_) =>
+                                    TokenKind::Error(
+                                        format!(
+                                            "Invalid float literal '{}{}' at line {}",
+                                            num_str,
+                                            suffix,
+                                            start_line
+                                        )
+                                    ),
+                            }
+                        } else if is_unsigned {
+                            match num_str.parse::<u128>() {
+                                Ok(u) => TokenKind::UInt(u),
+                                Err(_) =>
+                                    TokenKind::Error(
+                                        format!(
+                                            "Unsigned integer literal '{}{}' out of range at line {}",
+                                            num_str,
+                                            suffix,
+                                            start_line
+                                        )
+                                    ),
+                            }
+                        } else {
+                            match num_str.parse::<i128>() {
+                                Ok(i) => TokenKind::Int(i),
+                                Err(_) => {
+                                    match num_str.parse::<u128>() {
+                                        Ok(u) => TokenKind::UInt(u),
+                                        Err(_) =>
+                                            TokenKind::Error(
+                                                format!(
+                                                    "Integer literal '{}{}' out of range at line {}",
+                                                    num_str,
+                                                    suffix,
+                                                    start_line
+                                                )
+                                            ),
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

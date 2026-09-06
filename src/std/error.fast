@@ -1,0 +1,39 @@
+// FastLang Standard Library: Error Definition & Compile-time Throw Macro
+
+public class Error -> {
+    public -> {
+        str message = "";
+        int32 code = 0;
+    }
+
+    constructor -> {
+        init(err: Error) -> {
+            this.message = err.message;
+            this.code = err.code;
+        }
+        init(msg: str) -> {
+            this.message = msg;
+            this.code = 0;
+        }
+        init(code: int32) -> {
+            this.message = "Error happened with code";
+            this.code = code;
+        }
+        init(msg: str, code: int32) -> {
+            this.message = msg;
+            this.code = code;
+        }
+    }
+
+    handle -> {
+        fn $throw() -> Error {
+            return this;
+        }
+    }
+}
+
+public @compile -> {
+    macro $throw[e: Error] -> {
+        throw e;
+    }
+}

@@ -43,9 +43,59 @@ fn test_char_methods() -> void {
     println("ws: ", w1); // EXPECT: ws: true
 }
 
+fn test_numeric_literals() -> void {
+    // Hex literals (upper and lower case prefix and digits)
+    int32 h1 = 0xFF;
+    int32 h2 = 0X1A;
+    int32 h3 = 0xdead;
+    println("hex: ", h1, " ", h2, " ", h3); // EXPECT: hex: 255 26 57005
+
+    // Octal literals
+    int32 o1 = 0o77;
+    int32 o2 = 0O12;
+    println("oct: ", o1, " ", o2); // EXPECT: oct: 63 10
+
+    // Binary literals
+    int32 b1 = 0b1010;
+    int32 b2 = 0B1111_0000;
+    println("bin: ", b1, " ", b2); // EXPECT: bin: 10 240
+
+    // Unsigned integer types with literals
+    uint32 u_val = 0x8000;
+    uint8 u8_val = 0b1111;
+    println("uint: ", u_val, " ", u8_val); // EXPECT: uint: 32768 15
+}
+
+fn test_casting() -> void {
+    float64 f = 5.545;
+    int32 x = 10 + f as int32;
+    println("cast sum: ", x); // EXPECT: cast sum: 15
+
+    int32 val = 65;
+    char ch = val as char;
+    println("cast to char: ", ch); // EXPECT: cast to char: A
+
+    float64 pi = 3.14159;
+    int32 pi_int = pi as int32;
+    println("pi int: ", pi_int); // EXPECT: pi int: 3
+
+    int32 num = 1;
+    bool b = num as bool;
+    println("bool cast: ", b); // EXPECT: bool cast: true
+
+    float64 f2 = 7.89;
+    int32 c1 = cast<int32>(f2);
+    println("method cast: ", c1); // EXPECT: method cast: 7
+
+    int32 c2 = @compile::cast<int32>(12.34);
+    println("compile cast: ", c2); // EXPECT: compile cast: 12
+}
+
 fn main() -> int32 {
     test_str_operations();
     test_char_methods();
+    test_numeric_literals();
+    test_casting();
 
     println("ALL 05_STR_AND_PRIMITIVES TESTS PASSED"); // EXPECT: ALL 05_STR_AND_PRIMITIVES TESTS PASSED
     return 0;

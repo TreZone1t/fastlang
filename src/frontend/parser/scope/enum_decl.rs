@@ -67,6 +67,7 @@ impl Parser {
                                 name: field_name,
                                 type_node: field_type,
                                 default_value: default_val,
+                                is_variadic: false,
                             });
                         }
                         if self.peek().kind == TokenKind::SemiColon || self.peek().kind == TokenKind::Comma {

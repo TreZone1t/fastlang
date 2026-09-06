@@ -1,0 +1,35 @@
+// FastLang Standard Library: I/O (print, println, input)
+import std::error;
+import @c "clib/io.h";
+
+extern @c {
+    fn fast_print<...T>(...args: ...T) -> void;
+    fn fast_println<...T>(...args: ...T) -> void;
+    fn fast_input(prompt: str) -> str;
+}
+
+public fn input(prompt := "") -> str {
+    return fast_input(prompt);
+}
+
+public fn print<...T>(...args: ...T) -> void {
+    @compile {
+        for arg in args {
+            if (!typeof(arg).printable) {
+                @compile::throw new Error("Argument type is not printable");
+            }
+        }
+    }(args);
+    fast_print(...args);
+}
+
+public fn println<...T>(...args: ...T) -> void {
+    @compile {
+        for arg in args {
+            if (!typeof(arg).printable) {
+                @compile::throw new Error("Argument type is not printable");
+            }
+        }
+    }(args);
+    fast_println(...args);
+}

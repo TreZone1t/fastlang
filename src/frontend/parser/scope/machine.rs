@@ -60,6 +60,7 @@ impl Parser {
                         fields: Box::new(std::collections::HashMap::new()),
                         methods: Box::new(std::collections::HashMap::new()),
                         labels: Box::new(std::collections::HashMap::new()),
+                        mode: ExecutionMode::Runtime,
                     })?;
                     let block = self.parse_handle_body(&mut _used, allowed)?;
                     // Only allow `call` and `leave` handles in machine

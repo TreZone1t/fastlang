@@ -238,7 +238,7 @@ fn main() {
         loader.include_paths.push(inc);
     }
 
-    let program = match loader.load(&path, target.as_deref()) {
+    let mut program = match loader.load(&path, target.as_deref()) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{}", e);
@@ -355,6 +355,23 @@ fn main() {
         }
     }
 
+    // Compile-Time AST Evaluation & Constant Folding Pass via Interpreter
+    let mut interp = crate::middle_end::interpreter::eval::Interpreter::new();
+    interp.current_env = Some(main_analyzer.current_env.clone());
+    interp.fn_overloads = main_analyzer.fn_overloads.clone();
+    interp.load_from_program(&program.main_ast, &program.modules);
+    interp.load_functions_from_env(&main_analyzer.current_env.borrow());
+    for module in &mut program.modules {
+        if let Err(e) = interp.evaluate_ast(&mut module.ast) {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    }
+    if let Err(e) = interp.evaluate_ast(&mut program.main_ast) {
+        eprintln!("{}", e);
+        std::process::exit(1);
+    }
+
     // Code Generation
     if backend == "cranelift" {
         if debug {
@@ -468,8 +485,24 @@ fn main() {
             match stmt {
                 Stmt::Declaration(decl) => {
                     match decl {
-                        Decl::FnDecl { name, .. }
-                        | Decl::MicroDecl { name, .. }
+                        Decl::FnDecl { name, body, .. } => {
+                            let is_comptime = main_analyzer
+                                .current_env
+                                .borrow()
+                                .lookup(name)
+                                .map_or(false, |info| info.is_compilable)
+                                || name.starts_with("@compile::")
+                                || crate::middle_end::semantic::analyzer::detect_execution_mode(body)
+                                    == crate::frontend::parser::ast::ExecutionMode::FullyCompilable;
+                            if is_comptime {
+                                None
+                            } else if reachable_symbols.contains(name) {
+                                Some(stmt.clone())
+                            } else {
+                                None
+                            }
+                        }
+                        Decl::MicroDecl { name, .. }
                         | Decl::ClassDecl { name, .. }
                         | Decl::StructDecl { name, .. }
                         | Decl::MachineDecl { name, .. }

@@ -1,0 +1,31 @@
+// Comprehensive Suite 14: I/O, Escape Sequences, and Interactive Input
+// INPUT: FastDeveloper
+// INPUT: 42
+
+fn test_escape_sequences() -> void {
+    char newline_char = '\n';
+    char tab_char = '\t';
+    print("Escapes:");
+    print(tab_char);
+    print("Tabbed");
+    print(newline_char);
+    // EXPECT: Escapes:	Tabbed
+
+    println("Quotes: \"Hello World\" and Backslash: \\");
+    // EXPECT: Quotes: "Hello World" and Backslash: \
+}
+
+fn test_input_stream() -> void {
+    str user_name = input();
+    println("Received name: ", user_name); // EXPECT: Received name: FastDeveloper
+
+    str num_str = input();
+    println("Received number: ", num_str); // EXPECT: Received number: 42
+}
+
+fn main() -> int32 {
+    test_escape_sequences();
+    test_input_stream();
+    println("ALL 14_IO_AND_INPUT TESTS PASSED"); // EXPECT: ALL 14_IO_AND_INPUT TESTS PASSED
+    return 0;
+}

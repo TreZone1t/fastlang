@@ -1,7 +1,15 @@
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use crate::frontend::parser::ast::{Decl, Stmt};
 use crate::frontend::parser::ast::TypeMetadata;
+pub fn merge_metadata(target: &mut HashMap<String, TypeMetadata>, incoming: HashMap<String, TypeMetadata>) {
+    for (k, v) in incoming {
+        let entry = target.entry(k).or_insert_with(|| v.clone());
+        entry.methods.extend(v.methods);
+        entry.fields.extend(v.fields);
+        entry.handles.extend(v.handles);
+    }
+}
 
 pub struct LoadedModule {
     pub name: String,
@@ -140,32 +148,49 @@ impl ProjectLoader {
         &self,
         deps: &[(String, Option<Vec<String>>)],
         loaded_names: &mut HashSet<String>,
+        loaded_paths: &mut HashSet<PathBuf>,
         loaded_modules: &mut Vec<LoadedModule>,
         global_metadata: &mut HashMap<String, TypeMetadata>,
     ) -> Result<(), String> {
-        let mut pending: Vec<(String, Option<Vec<String>>)> = deps.to_vec();
-
-        while let Some((mod_name, _imports)) = pending.pop() {
-            if loaded_names.contains(&mod_name) {
+        for (mod_name, _imports) in deps {
+            if loaded_names.contains(mod_name) {
                 continue;
             }
 
-            let actual_path = self.resolve_path(&mod_name)
-                .ok_or_else(|| format!("Module '{}' not found.", mod_name))?;
+            let actual_path = match self.resolve_path(mod_name) {
+                Some(p) => p,
+                None => return Err(format!("Module '{}' not found.", mod_name)),
+            };
+            let canonical_path = Path::new(&actual_path)
+                .canonicalize()
+                .unwrap_or_else(|_| Path::new(&actual_path).to_path_buf());
+
+            if loaded_paths.contains(&canonical_path) {
+                loaded_names.insert(mod_name.clone());
+                continue;
+            }
 
             println!("Loading module {}...", mod_name);
             let mod_ast = self.parse_file(&actual_path)?;
-            global_metadata.extend(mod_ast.1.clone());
+            merge_metadata(global_metadata, mod_ast.1);
+
+            loaded_names.insert(mod_name.clone());
+            loaded_paths.insert(canonical_path);
 
             let nested_deps = Self::collect_deps_from_ast(&mod_ast.0);
-            pending.extend(nested_deps);
+            self.resolve_import_deps(
+                &nested_deps,
+                loaded_names,
+                loaded_paths,
+                loaded_modules,
+                global_metadata,
+            )?;
 
             loaded_modules.push(LoadedModule {
                 name: mod_name.clone(),
                 path: actual_path,
                 ast: mod_ast.0,
             });
-            loaded_names.insert(mod_name);
         }
 
         Ok(())
@@ -244,7 +269,7 @@ impl ProjectLoader {
         let mut global_metadata = HashMap::new();
         let main_ast = match self.parse_file(&entry_path) {
             Ok(res) => {
-                global_metadata.extend(res.1);
+                merge_metadata(&mut global_metadata, res.1);
                 res.0
             }
             Err(e) => return Err(e),
@@ -252,26 +277,49 @@ impl ProjectLoader {
 
         let deps = Self::collect_deps_from_ast(&main_ast);
 
+        let canonical_entry = Path::new(&entry_path)
+            .canonicalize()
+            .unwrap_or_else(|_| Path::new(&entry_path).to_path_buf());
+
         let mut loaded_modules = Vec::new();
         let mut loaded_names = HashSet::new();
+        let mut loaded_paths = HashSet::new();
+        loaded_paths.insert(canonical_entry);
 
         // Auto-load standard library prelude (std.fs) if available
         if let Some(std_file) = self.resolve_path("std") {
-            if Path::new(&std_file).exists() && entry_path != std_file {
+            let canonical_std = Path::new(&std_file)
+                .canonicalize()
+                .unwrap_or_else(|_| Path::new(&std_file).to_path_buf());
+            if Path::new(&std_file).exists() && !loaded_paths.contains(&canonical_std) {
                 let std_ast = self.parse_file(&std_file)?;
-                global_metadata.extend(std_ast.1.clone());
+                merge_metadata(&mut global_metadata, std_ast.1);
+                loaded_names.insert("std".to_string());
+                loaded_paths.insert(canonical_std);
+
                 let nested_deps = Self::collect_deps_from_ast(&std_ast.0);
-                self.resolve_import_deps(&nested_deps, &mut loaded_names, &mut loaded_modules, &mut global_metadata)?;
+                self.resolve_import_deps(
+                    &nested_deps,
+                    &mut loaded_names,
+                    &mut loaded_paths,
+                    &mut loaded_modules,
+                    &mut global_metadata,
+                )?;
                 loaded_modules.push(LoadedModule {
                     name: "std".to_string(),
                     path: std_file,
                     ast: std_ast.0,
                 });
-                loaded_names.insert("std".to_string());
             }
         }
 
-        self.resolve_import_deps(&deps, &mut loaded_names, &mut loaded_modules, &mut global_metadata)?;
+        self.resolve_import_deps(
+            &deps,
+            &mut loaded_names,
+            &mut loaded_paths,
+            &mut loaded_modules,
+            &mut global_metadata,
+        )?;
 
         Ok(Program {
             main_ast,

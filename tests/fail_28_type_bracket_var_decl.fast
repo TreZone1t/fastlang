@@ -1,0 +1,6 @@
+// Negative Test: Declaring variables using Type[] name is invalid in FastLang
+// Must use 'Type name[]' or 'array<Type> name'
+fn main() -> int32 {
+    int32[] x = [1, 2, 3];
+    return 0;
+}

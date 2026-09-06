@@ -1,35 +1,47 @@
 // FastLang Example: Smart Pointers & Memory Management (.fast)
 
-struct User {
-    public {
-        int32 id;
-        string name;
+class User -> {
+    public -> {
+        int32 id = 0;
+        str username = "";
     }
-    constructor {
-        init(id: int32, name: string) -> {
+    constructor -> {
+        init(id: int32, username: str) -> {
             this.id = id;
-            this.name = name;
+            this.username = username;
+        }
+    }
+    handle -> {
+        fn drop() -> void {
+            println("User dropped");
         }
     }
 }
 
 fn main() -> int32 {
-    print("=== 1. Heap Allocation with new ===");
-    name<User> user_ptr = new User(1, "Abdulhakim");
-    print("User ID: ", user_ptr.id);
-    print("User Name: ", user_ptr.name);
+    println("=== 1. Heap Allocation with new ===");
+    User user = new User(1, "Abdulhakim");
+    println("User ID: ", user.id);
+    println("User Name: ", user.username);
 
-    print("=== 2. Mutable Borrow (modify<T>) ===");
-    modify<User> editable_user = user_ptr;
-    editable_user.name = "Hakim";
-    print("Updated name: ", user_ptr.name);
+    println("=== 2. Smart Pointers (name<T> and modify<T>) ===");
+    int32 val = 100;
+    name<int32> read_ptr = &val;
+    println("Read via pointer: ", *read_ptr);
 
-    print("=== 3. Read-Only Copy (copy<T>) ===");
-    copy<int32> snapshot = user_ptr.id;
-    print("Snapshot value: ", snapshot);
+    modify<int32> mod_ptr = &val;
+    mod_ptr += 50;
+    println("Updated value: ", val);
+
+    print("=== 3. Dynamic Heap Arrays ===");
+    int32* heap_arr = new int32[](3);
+    heap_arr[0] = 10;
+    heap_arr[1] = 20;
+    heap_arr[2] = 30;
+    println("Heap item: ", heap_arr[1]);
 
     print("=== 4. Dynamic Cleanup with del ===");
-    del user_ptr;
+    del user;
 
     return 0;
 }

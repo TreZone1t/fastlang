@@ -159,11 +159,13 @@ impl Parser {
 
         meta.handles = used_handles.clone();
         for hdl in &handle_block {
-            if let Decl::FnDecl { name, params, return_type, .. } = hdl {
+            if let Decl::FnDecl { name, generics, params, return_type, .. } = hdl {
                 meta.methods.insert(name.clone(), FnType {
                     name: name.clone(),
+                    generics: generics.clone(),
                     params: params.clone(),
                     return_type: return_type.clone(),
+                    mode: ExecutionMode::Runtime,
                 });
             }
         }

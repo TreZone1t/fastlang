@@ -22,6 +22,17 @@ impl InterpreterEnv {
         }
     }
 
+    pub fn push_scope(&mut self) {
+        let old = std::mem::replace(self, InterpreterEnv::new());
+        *self = InterpreterEnv::with_parent(old);
+    }
+
+    pub fn pop_scope(&mut self) {
+        if let Some(parent) = self.parent.take() {
+            *self = *parent;
+        }
+    }
+
     pub fn define(&mut self, name: String, value: Expr) {
         self.variables.insert(name, value);
     }
@@ -44,6 +55,13 @@ impl InterpreterEnv {
             parent.get(name)
         } else {
             Err(format!("Undefined variable '{}' at compile time.", name))
+        }
+    }
+
+    pub fn remove(&mut self, name: &str) {
+        self.variables.remove(name);
+        if let Some(ref mut parent) = self.parent {
+            parent.remove(name);
         }
     }
 }

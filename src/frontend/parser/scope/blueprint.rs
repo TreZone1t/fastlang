@@ -145,6 +145,10 @@ impl Parser {
                 self.advance();
                 Ok(s)
             }
+            TokenKind::TypeType => {
+                self.advance();
+                Ok("type".to_string())
+            }
             _ => self.get_identifier("Expected target name for impl block"),
         }
     }
@@ -175,6 +179,8 @@ impl Parser {
             BaseType::Char
         } else if target == "bool" || target == "flag" {
             BaseType::Bool
+        } else if target == "type" {
+            BaseType::Type(Box::new(if target_generics.is_empty() { BaseType::Unknown } else { target_generics[0].clone() }))
         } else if target.starts_with("int") {
             BaseType::Int(Size::S32)
         } else if target.starts_with("uint") {
@@ -188,6 +194,7 @@ impl Parser {
                 name: Some(target.clone()),
                 params: vec![],
                 return_type: Box::new(BaseType::Unknown),
+                mode: ExecutionMode::Runtime,
             }
         } else {
             BaseType::Blueprint {
@@ -254,20 +261,24 @@ impl Parser {
             variants: None,
         });
         for m in &methods {
-            if let Decl::FnDecl { name, params, return_type, .. } = m {
+            if let Decl::FnDecl { name, generics, params, return_type, .. } = m {
                 entry.methods.insert(name.clone(), FnType {
                     name: name.clone(),
+                    generics: generics.clone(),
                     params: params.clone(),
                     return_type: return_type.clone(),
+                    mode: ExecutionMode::Runtime,
                 });
             }
         }
         for h in &handle_block {
-            if let Decl::FnDecl { name, params, return_type, .. } = h {
+            if let Decl::FnDecl { name, generics, params, return_type, .. } = h {
                 entry.methods.insert(name.clone(), FnType {
                     name: name.clone(),
+                    generics: generics.clone(),
                     params: params.clone(),
                     return_type: return_type.clone(),
+                    mode: ExecutionMode::Runtime,
                 });
             }
         }

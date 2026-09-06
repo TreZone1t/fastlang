@@ -77,11 +77,63 @@ fn test_methods_and_micros() -> void {
     println("micro decrement: ", val); // EXPECT: micro decrement: 9
 }
 
+fn identity<T>(val: T) -> T {
+    return val;
+}
+fn i_have_generic_in_my_call<T,S>(a: T, b: T) -> T {
+    return a;
+}
+fn add_generic<T>(a: T, b: T) -> T {
+    return a + b;
+}
+
+method pick_first<T, U>(a: T, _b: U) -> T {
+    return a;
+}
+
+fn describe_val(_x: int32) -> str {
+    return "concrete int32";
+}
+
+fn describe_val<T>(_x: T) -> str {
+    return "generic catchall";
+}
+
+fn test_generics() -> void {
+    int32 x = identity(100);
+    println("identity int32: ", x); // EXPECT: identity int32: 100
+
+    str s = identity("hello FastLang");
+    println("identity str: ", s); // EXPECT: identity str: hello FastLang
+    str res = i_have_generic_in_my_call<char>("hello", "FastLang");
+    println("i_have_generic_in_my_call: ", res); // EXPECT: i_have_generic_in_my_call: hello
+    
+    int32 sum = add_generic(25, 75);
+    println("add_generic int: ", sum); // EXPECT: add_generic int: 100
+
+    float64 fsum = add_generic(1.5, 2.5);
+    println("add_generic float: ", fsum); // EXPECT: add_generic float: 4
+
+    int32 first = pick_first(42, "ignored");
+    println("method pick_first: ", first); // EXPECT: method pick_first: 42
+
+    lambda<(int32) -> int32> auto_pipe = |a| a;
+    int32 gen_res = auto_pipe(888);
+    println("generic lambda: ", gen_res); // EXPECT: generic lambda: 888
+
+    str d_int = describe_val(555);
+    println("overload int: ", d_int); // EXPECT: overload int: concrete int32
+
+    str d_gen = describe_val("custom string");
+    println("overload gen: ", d_gen); // EXPECT: overload gen: generic catchall
+}
+
 fn main() -> int32 {
     test_overloading_and_defaults();
     test_recursion();
     test_iife_and_anon();
     test_methods_and_micros();
+    test_generics();
 
     println("ALL 03_FUNCTIONS TESTS PASSED"); // EXPECT: ALL 03_FUNCTIONS TESTS PASSED
     return 0;

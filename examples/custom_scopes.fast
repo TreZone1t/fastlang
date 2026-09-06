@@ -16,15 +16,17 @@ class Vector2D {
 
     handle -> {
         fn add(other: Vector2D) -> Vector2D {
-            return new Vector2D(this.x + other.x, this.y + other.y);
+            Vector2D res = new Vector2D(this.x + other.x, this.y + other.y);
+            return res;
         }
 
         fn sub(other: Vector2D) -> Vector2D {
-            return new Vector2D(this.x - other.x, this.y - other.y);
+            Vector2D res = new Vector2D(this.x - other.x, this.y - other.y);
+            return res;
         }
 
-        fn display() -> void {
-            print("Vector2D(", this.x, ", ", this.y, ")");
+        fn display() -> char[] {
+            return "Vector2D";
         }
     }
 }

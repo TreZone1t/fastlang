@@ -37,8 +37,18 @@ impl Parser {
             | TokenKind::TypeStr
             | TokenKind::TypeBool
             | TokenKind::Flag
-            //| TokenKind::Scope
-            | TokenKind::TypeMethod
+            | TokenKind::TypeMethod => {
+                if let Some(next) = self.tokens.get(self.current + 1) {
+                    if let TokenKind::Identifier(_) = next.kind {
+                        if let Some(after) = self.tokens.get(self.current + 2) {
+                            if after.kind == TokenKind::LParen || after.kind == TokenKind::Less {
+                                return self.parse_fn_decl().map(Stmt::Declaration).map(Some);
+                            }
+                        }
+                    }
+                }
+                self.parse_var_decl(scope).map(Stmt::Declaration)
+            }
             | TokenKind::TypeFn
             | TokenKind::TypeLambda
             /*//todo | TokenKind::TypeObject */
@@ -186,8 +196,24 @@ impl Parser {
                     self.advance(); // consume '@compile'
                     self.advance(); // consume '::'
                     let member_name = self.get_handle_identifier("Expected member after '@compile::'")?;
+                    let mut generics = Vec::new();
+                    if self.peek().kind == TokenKind::Less && self.is_generic_call_ahead() {
+                        self.advance();
+                        self.parse_generic_list(&mut generics)?;
+                        self.consume(TokenKind::Greater, "Expected '>' after generic type arguments")?;
+                    }
                     let mut args = Vec::new();
-                    if self.peek().kind != TokenKind::SemiColon {
+                    if self.peek().kind == TokenKind::LParen {
+                        self.advance();
+                        if self.peek().kind != TokenKind::RParen {
+                            args.push(self.parse_expression()?);
+                            while self.peek().kind == TokenKind::Comma {
+                                self.advance();
+                                args.push(self.parse_expression()?);
+                            }
+                        }
+                        self.consume(TokenKind::RParen, "Expected ')' after argument list")?;
+                    } else if self.peek().kind != TokenKind::SemiColon {
                         args.push(self.parse_expression()?);
                         while self.peek().kind == TokenKind::Comma {
                             self.advance();
@@ -202,8 +228,36 @@ impl Parser {
                             namespace: "@compile".to_string(),
                             property: Box::new(Expr::Identifier(member_name)),
                         }),
+                        generics,
                         args,
                     }))
+                } else if self.is_compile_validation_ahead() {
+                    self.advance(); // consume '@compile'
+                    if self.peek().kind == TokenKind::Arrow {
+                        self.advance();
+                    }
+                    self.consume(TokenKind::LBrace, "Expected '{' to open @compile validation body")?;
+                    let mut body = Vec::new();
+                    while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                        if let Some(s) = self.parse_statement(ScopeType::Block)? {
+                            body.push(s);
+                        }
+                    }
+                    self.consume(TokenKind::RBrace, "Expected '}' after @compile validation body")?;
+                    self.consume(TokenKind::LParen, "Expected '(' after @compile validation block")?;
+                    let mut args = Vec::new();
+                    if self.peek().kind != TokenKind::RParen {
+                        args.push(self.parse_expression()?);
+                        while self.peek().kind == TokenKind::Comma {
+                            self.advance();
+                            args.push(self.parse_expression()?);
+                        }
+                    }
+                    self.consume(TokenKind::RParen, "Expected ')' after @compile validation arguments")?;
+                    if self.peek().kind == TokenKind::SemiColon {
+                        self.advance();
+                    }
+                    Ok(Stmt::CompileValidation { body, args })
                 } else {
                     self.parse_compile_decl().map(Stmt::Declaration)
                 }
@@ -412,12 +466,10 @@ impl Parser {
                     let fn_decl = self.parse_extern_fn_signature(&abi)?;
                     decls.push(fn_decl);
                 } else {
-                    return Err(
-                        format!(
-                            "Syntax Error: Unexpected token '{:?}' in extern block",
-                            self.peek().kind
-                        )
-                    );
+                    return Err(format!(
+                        "Syntax Error: Unexpected token '{:?}' in extern block",
+                        self.peek().kind
+                    ));
                 }
             }
             self.consume(TokenKind::RBrace, "Expected '}' at end of extern block")?;
@@ -425,17 +477,64 @@ impl Parser {
         } else if self.peek().kind == TokenKind::Fn {
             self.parse_extern_fn_signature(&abi)
         } else {
-            Err(
-                format!(
-                    "Syntax Error: Expected '{{' or 'fn' after extern, found '{:?}'",
-                    self.peek().kind
-                )
-            )
+            Err(format!(
+                "Syntax Error: Expected '{{' or 'fn' after extern, found '{:?}'",
+                self.peek().kind
+            ))
         }
     }
 
     pub(crate) fn parse_single_param(&mut self) -> Result<Param, String> {
-        let err_msg = format!("Expected parameter name at line {}, column {}, found '{:?}'", self.peek().line, self.peek().column, self.peek().kind);
+        let mut is_variadic = if self.peek().kind == TokenKind::DotDotDot {
+            self.advance(); // consume '...'
+            true
+        } else {
+            false
+        };
+
+        let is_anonymous = if is_variadic {
+            let next_kind = self.peek_ahead(1).map(|t| &t.kind);
+            next_kind != Some(&TokenKind::Colon) && next_kind != Some(&TokenKind::Walrus)
+        } else {
+            match &self.peek().kind {
+                TokenKind::TypeInt(_)
+                | TokenKind::TypeUInt(_)
+                | TokenKind::TypeFloat(_)
+                | TokenKind::TypeUSize
+                | TokenKind::TypeISize
+                | TokenKind::TypeChar
+                | TokenKind::TypeBool
+                | TokenKind::TypeStr
+                | TokenKind::TypeVoid
+                | TokenKind::TypeType => {
+                    let next_kind = self.peek_ahead(1).map(|t| &t.kind);
+                    next_kind != Some(&TokenKind::Colon) && next_kind != Some(&TokenKind::Walrus)
+                }
+                TokenKind::Identifier(_) => {
+                    let next_kind = self.peek_ahead(1).map(|t| &t.kind);
+                    next_kind != Some(&TokenKind::Colon) && next_kind != Some(&TokenKind::Walrus)
+                }
+                _ => false,
+            }
+        };
+
+        if is_anonymous {
+            let anon_idx = self.current;
+            let type_node = self.parse_type()?;
+            return Ok(Param {
+                name: format!("__anon_param_{}", anon_idx),
+                type_node,
+                default_value: None,
+                is_variadic,
+            });
+        }
+
+        let err_msg = format!(
+            "Expected parameter name at line {}, column {}, found '{:?}'",
+            self.peek().line,
+            self.peek().column,
+            self.peek().kind
+        );
         let param_name = self.get_identifier(&err_msg)?;
         let (type_node, default_value) = if self.peek().kind == TokenKind::Walrus {
             self.advance(); // consume ':='
@@ -444,13 +543,18 @@ impl Parser {
             (t, Some(val_expr))
         } else if self.peek().kind == TokenKind::Colon {
             self.advance(); // consume ':'
+            if self.peek().kind == TokenKind::DotDotDot {
+                self.advance(); // consume '...' if written like args: ...T
+                is_variadic = true;
+            }
             let t = self.parse_type()?;
-            let default_val = if self.peek().kind == TokenKind::Assign || self.peek().kind == TokenKind::Walrus {
-                self.advance();
-                Some(self.parse_expression()?)
-            } else {
-                None
-            };
+            let default_val =
+                if self.peek().kind == TokenKind::Assign || self.peek().kind == TokenKind::Walrus {
+                    self.advance();
+                    Some(self.parse_expression()?)
+                } else {
+                    None
+                };
             (t, default_val)
         } else {
             return Err("Expected ':' or ':=' after parameter name".to_string());
@@ -459,12 +563,17 @@ impl Parser {
             name: param_name,
             type_node,
             default_value,
+            is_variadic,
         })
     }
 
     pub(crate) fn parse_extern_fn_signature(&mut self, abi: &str) -> Result<Decl, String> {
         self.consume(TokenKind::Fn, "Expected 'fn'")?;
         let name = self.get_identifier("Expected function name in extern declaration")?;
+        let mut generics: Vec<BaseType> = Vec::new();
+        if self.peek().kind == TokenKind::Less {
+            self.parse_generics(&mut generics)?;
+        }
         self.consume(TokenKind::LParen, "Expected '(' after function name")?;
         let mut params = Vec::new();
         if self.peek().kind != TokenKind::RParen {
@@ -491,10 +600,14 @@ impl Parser {
         } else {
             None
         };
-        self.consume(TokenKind::SemiColon, "Expected ';' after extern function declaration")?;
+        self.consume(
+            TokenKind::SemiColon,
+            "Expected ';' after extern function declaration",
+        )?;
         Ok(Decl::ExternFnDecl {
             abi: abi.to_string(),
             name,
+            generics,
             params,
             return_type,
             alias,
@@ -518,7 +631,7 @@ impl Parser {
         }
 
         let is_type = match &self.peek().kind {
-            | TokenKind::TypeInt(_)
+            TokenKind::TypeInt(_)
             | TokenKind::TypeUInt(_)
             | TokenKind::TypeUSize
             | TokenKind::TypeISize
@@ -535,7 +648,11 @@ impl Parser {
             _ => false,
         };
 
-        let visibility = if is_public { Visibility::Public } else { Visibility::Private };
+        let visibility = if is_public {
+            Visibility::Public
+        } else {
+            Visibility::Private
+        };
 
         if is_type {
             let t = self.parse_type()?;
@@ -562,7 +679,7 @@ impl Parser {
         self.advance(); // consume 'const'
 
         let mut decl = match &self.peek().kind {
-            | TokenKind::TypeInt(_)
+            TokenKind::TypeInt(_)
             | TokenKind::TypeUInt(_)
             | TokenKind::TypeUSize
             | TokenKind::TypeISize
@@ -583,13 +700,22 @@ impl Parser {
         };
 
         match &mut decl {
-            Decl::VarDecl { ref mut editability, .. } => {
+            Decl::VarDecl {
+                ref mut editability,
+                ..
+            } => {
                 *editability = Editability::NotEditable;
             }
-            Decl::DestructureDecl { ref mut editability, .. } => {
+            Decl::DestructureDecl {
+                ref mut editability,
+                ..
+            } => {
                 *editability = Editability::NotEditable;
             }
-            Decl::ArrayDecl { ref mut editability, .. } => {
+            Decl::ArrayDecl {
+                ref mut editability,
+                ..
+            } => {
                 *editability = Editability::NotEditable;
             }
             _ => {
@@ -604,7 +730,7 @@ impl Parser {
 
         // After export/public, we expect a valid exportable statement (fn, block, class, struct, enum, micro, blueprint, machine, define, or var)
         let mut stmt = match &self.peek().kind {
-            TokenKind::Fn => self.parse_fn_decl()?,
+            TokenKind::Fn | TokenKind::TypeMethod => self.parse_fn_decl()?,
             TokenKind::TypeClass => self.parse_class_decl()?,
             TokenKind::TypeStruct => self.parse_struct_decl()?,
             TokenKind::TypeEnum => self.parse_enum_decl()?,
@@ -615,8 +741,12 @@ impl Parser {
             TokenKind::TypeBlock => self.parse_block_scope_decl()?,
             TokenKind::Define => self.parse_define_stmt(true)?,
             TokenKind::Impl => self.parse_impl_decl()?,
-            TokenKind::LabelName(lbl) if lbl.eq_ignore_ascii_case("@compile") => self.parse_compile_decl()?,
-            TokenKind::Identifier(_) if self.is_block_decl_start() => self.parse_bare_block_decl()?,
+            TokenKind::LabelName(lbl) if lbl.eq_ignore_ascii_case("@compile") => {
+                self.parse_compile_decl()?
+            }
+            TokenKind::Identifier(_) if self.is_block_decl_start() => {
+                self.parse_bare_block_decl()?
+            }
             _ if self.is_var_decl_start() => self.parse_var_decl(ScopeType::Global)?,
             kind => {
                 return Err(
@@ -630,48 +760,120 @@ impl Parser {
 
         // Set visibility to Public
         match &mut stmt {
-            Decl::FnDecl { ref mut visibility, .. } => {
+            Decl::FnDecl {
+                ref mut visibility, ..
+            } => {
                 *visibility = Visibility::Public;
             }
-            Decl::BlockDecl { ref mut visibility, .. } => {
+            Decl::BlockDecl {
+                ref mut visibility, ..
+            } => {
                 *visibility = Visibility::Public;
             }
-            Decl::ClassDecl { ref mut visibility, .. } => {
+            Decl::ClassDecl {
+                ref mut visibility, ..
+            } => {
                 *visibility = Visibility::Public;
             }
-            Decl::StructDecl { ref mut visibility, .. } => {
+            Decl::StructDecl {
+                ref mut visibility, ..
+            } => {
                 *visibility = Visibility::Public;
             }
-            Decl::BlueprintDecl { ref mut visibility, .. } => {
+            Decl::BlueprintDecl {
+                ref mut visibility, ..
+            } => {
                 *visibility = Visibility::Public;
             }
-            Decl::EnumDecl { ref mut visibility, .. } => {
+            Decl::EnumDecl {
+                ref mut visibility, ..
+            } => {
                 *visibility = Visibility::Public;
             }
-            Decl::MicroDecl { ref mut visibility, .. } => {
+            Decl::MicroDecl {
+                ref mut visibility, ..
+            } => {
                 *visibility = Visibility::Public;
             }
-            Decl::MacroDecl { ref mut visibility, .. } => {
+            Decl::MacroDecl {
+                ref mut visibility, ..
+            } => {
                 *visibility = Visibility::Public;
             }
-            Decl::MachineDecl { ref mut visibility, .. } => {
+            Decl::MachineDecl {
+                ref mut visibility, ..
+            } => {
                 *visibility = Visibility::Public;
             }
-            Decl::DefineDecl { ref mut visibility, .. } => {
+            Decl::DefineDecl {
+                ref mut visibility, ..
+            } => {
                 *visibility = Visibility::Public;
             }
-            Decl::CompileDecl { .. } => {}
-            Decl::VarDecl { ref mut visibility, .. } => {
+            Decl::CompileDecl { ref mut decls, .. } => {
+                for d in decls {
+                    match d {
+                        Decl::FnDecl {
+                            ref mut visibility, ..
+                        }
+                        | Decl::BlockDecl {
+                            ref mut visibility, ..
+                        }
+                        | Decl::ClassDecl {
+                            ref mut visibility, ..
+                        }
+                        | Decl::StructDecl {
+                            ref mut visibility, ..
+                        }
+                        | Decl::BlueprintDecl {
+                            ref mut visibility, ..
+                        }
+                        | Decl::EnumDecl {
+                            ref mut visibility, ..
+                        }
+                        | Decl::MicroDecl {
+                            ref mut visibility, ..
+                        }
+                        | Decl::MacroDecl {
+                            ref mut visibility, ..
+                        }
+                        | Decl::MachineDecl {
+                            ref mut visibility, ..
+                        }
+                        | Decl::DefineDecl {
+                            ref mut visibility, ..
+                        }
+                        | Decl::VarDecl {
+                            ref mut visibility, ..
+                        }
+                        | Decl::DestructureDecl {
+                            ref mut visibility, ..
+                        } => {
+                            *visibility = Visibility::Public;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Decl::VarDecl {
+                ref mut visibility, ..
+            } => {
                 *visibility = Visibility::Public;
             }
             Decl::ImplDecl { .. } => {}
-            Decl::DestructureDecl { ref mut visibility, .. } => {
+            Decl::DestructureDecl {
+                ref mut visibility, ..
+            } => {
                 *visibility = Visibility::Public;
             }
-            Decl::ArrayDecl { ref mut visibility, .. } => {
+            Decl::ArrayDecl {
+                ref mut visibility, ..
+            } => {
                 *visibility = Visibility::Public;
             }
-            Decl::ObjectDecl { ref mut visibility, .. } => {
+            Decl::ObjectDecl {
+                ref mut visibility, ..
+            } => {
                 *visibility = Visibility::Public;
             }
             _ => {}
@@ -705,7 +907,18 @@ impl Parser {
             | TokenKind::TypeModify
             | TokenKind::TypeCopy
             | TokenKind::TypeType
-            | TokenKind::TypeMethod
+            | TokenKind::TypeMethod => {
+                if let Some(next) = self.tokens.get(self.current + 1) {
+                    if let TokenKind::Identifier(_) = next.kind {
+                        if let Some(after) = self.tokens.get(self.current + 2) {
+                            if after.kind == TokenKind::LParen || after.kind == TokenKind::Less {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                true
+            }
             | TokenKind::TypeFn
             | TokenKind::TypeLambda => true,
             TokenKind::Identifier(_) => {
@@ -735,9 +948,8 @@ impl Parser {
         idx += 1;
         while idx < self.tokens.len() && self.tokens[idx].kind == TokenKind::DoubleColon {
             idx += 1;
-            if
-                idx >= self.tokens.len() ||
-                !matches!(&self.tokens[idx].kind, TokenKind::Identifier(_))
+            if idx >= self.tokens.len()
+                || !matches!(&self.tokens[idx].kind, TokenKind::Identifier(_))
             {
                 return false;
             }
@@ -767,12 +979,10 @@ impl Parser {
                         idx += 1;
                         break;
                     }
-                } else if
-                    matches!(
-                        self.tokens[idx].kind,
-                        TokenKind::SemiColon | TokenKind::Assign | TokenKind::Arrow | TokenKind::EOF
-                    )
-                {
+                } else if matches!(
+                    self.tokens[idx].kind,
+                    TokenKind::SemiColon | TokenKind::Assign | TokenKind::Arrow | TokenKind::EOF
+                ) {
                     return false;
                 }
                 idx += 1;
@@ -797,15 +1007,13 @@ impl Parser {
                             idx += 1;
                             break;
                         }
-                    } else if
-                        matches!(
-                            self.tokens[idx].kind,
-                            TokenKind::SemiColon |
-                                TokenKind::Assign |
-                                TokenKind::Arrow |
-                                TokenKind::EOF
-                        )
-                    {
+                    } else if matches!(
+                        self.tokens[idx].kind,
+                        TokenKind::SemiColon
+                            | TokenKind::Assign
+                            | TokenKind::Arrow
+                            | TokenKind::EOF
+                    ) {
                         return false;
                     }
                     idx += 1;
@@ -814,9 +1022,7 @@ impl Parser {
                     return false;
                 }
             }
-            if
-                idx < self.tokens.len() &&
-                matches!(&self.tokens[idx].kind, TokenKind::Identifier(_))
+            if idx < self.tokens.len() && matches!(&self.tokens[idx].kind, TokenKind::Identifier(_))
             {
                 return true;
             }
@@ -836,9 +1042,8 @@ impl Parser {
         idx += 1;
         while idx < self.tokens.len() && self.tokens[idx].kind == TokenKind::DoubleColon {
             idx += 1;
-            if
-                idx >= self.tokens.len() ||
-                !matches!(&self.tokens[idx].kind, TokenKind::Identifier(_))
+            if idx >= self.tokens.len()
+                || !matches!(&self.tokens[idx].kind, TokenKind::Identifier(_))
             {
                 return false;
             }
@@ -890,7 +1095,10 @@ impl Parser {
                         if tok.kind == TokenKind::LBrace {
                             return true;
                         }
-                        if tok.kind == TokenKind::SemiColon || tok.kind == TokenKind::Assign || tok.kind == TokenKind::EOF {
+                        if tok.kind == TokenKind::SemiColon
+                            || tok.kind == TokenKind::Assign
+                            || tok.kind == TokenKind::EOF
+                        {
                             return false;
                         }
                         i += 1;
@@ -938,7 +1146,7 @@ impl Parser {
     pub(crate) fn parse_named_destructure_decl(
         &mut self,
         editability: Editability,
-        scope: ScopeType
+        scope: ScopeType,
     ) -> Result<Stmt, String> {
         let mut type_name = self.get_identifier("Expected type name in destructure")?;
         while self.peek().kind == TokenKind::DoubleColon {
@@ -953,12 +1161,17 @@ impl Parser {
         } else {
             self.consume(TokenKind::LBrace, "Expected '{' in struct destructure")?;
         }
-        let close_kind = if is_tuple { TokenKind::RParen } else { TokenKind::RBrace };
+        let close_kind = if is_tuple {
+            TokenKind::RParen
+        } else {
+            TokenKind::RBrace
+        };
         let mut fields = Vec::new();
         while !self.is_at_end() && self.peek().kind != close_kind {
             if self.peek().kind == TokenKind::DotDot {
                 self.advance(); // consume '..'
-                if self.peek().kind == TokenKind::SemiColon || self.peek().kind == TokenKind::Comma {
+                if self.peek().kind == TokenKind::SemiColon || self.peek().kind == TokenKind::Comma
+                {
                     self.advance();
                 }
                 continue;
@@ -985,21 +1198,22 @@ impl Parser {
             self.var_metadata.insert(name.clone(), var_meta);
             fields.push((type_node, name));
         }
-        self.consume(close_kind, "Expected closing brace/paren after destructure fields")?;
+        self.consume(
+            close_kind,
+            "Expected closing brace/paren after destructure fields",
+        )?;
         self.consume(TokenKind::Assign, "Expected '=' after destructure pattern")?;
         let rhs = self.parse_expression()?;
         if self.peek().kind == TokenKind::SemiColon {
             self.advance();
         }
-        Ok(
-            Stmt::Declaration(Decl::ObjectDestructureDecl {
-                visibility: Visibility::Private,
-                editability,
-                type_name: Some(type_name),
-                fields,
-                rhs,
-            })
-        )
+        Ok(Stmt::Declaration(Decl::ObjectDestructureDecl {
+            visibility: Visibility::Private,
+            editability,
+            type_name: Some(type_name),
+            fields,
+            rhs,
+        }))
     }
 
     pub(crate) fn is_object_destructure_start(&self) -> bool {
@@ -1033,14 +1247,18 @@ impl Parser {
     pub(crate) fn parse_object_destructure_decl(
         &mut self,
         editability: Editability,
-        scope: ScopeType
+        scope: ScopeType,
     ) -> Result<Stmt, String> {
-        self.consume(TokenKind::LBrace, "Expected '{' to start object destructure")?;
+        self.consume(
+            TokenKind::LBrace,
+            "Expected '{' to start object destructure",
+        )?;
         let mut fields = Vec::new();
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
             if self.peek().kind == TokenKind::DotDot {
                 self.advance(); // consume '..'
-                if self.peek().kind == TokenKind::SemiColon || self.peek().kind == TokenKind::Comma {
+                if self.peek().kind == TokenKind::SemiColon || self.peek().kind == TokenKind::Comma
+                {
                     self.advance();
                 }
                 continue;
@@ -1067,21 +1285,25 @@ impl Parser {
             self.var_metadata.insert(name.clone(), var_meta);
             fields.push((type_node, name));
         }
-        self.consume(TokenKind::RBrace, "Expected '}' after object destructure fields")?;
-        self.consume(TokenKind::Assign, "Expected '=' after object destructure pattern")?;
+        self.consume(
+            TokenKind::RBrace,
+            "Expected '}' after object destructure fields",
+        )?;
+        self.consume(
+            TokenKind::Assign,
+            "Expected '=' after object destructure pattern",
+        )?;
         let rhs = self.parse_expression()?;
         if self.peek().kind == TokenKind::SemiColon {
             self.advance();
         }
-        Ok(
-            Stmt::Declaration(Decl::ObjectDestructureDecl {
-                visibility: Visibility::Private,
-                editability,
-                type_name: None,
-                fields,
-                rhs,
-            })
-        )
+        Ok(Stmt::Declaration(Decl::ObjectDestructureDecl {
+            visibility: Visibility::Private,
+            editability,
+            type_name: None,
+            fields,
+            rhs,
+        }))
     }
 
     pub(crate) fn parse_for_init_stmt(&mut self) -> Result<Stmt, String> {
@@ -1143,18 +1365,18 @@ impl Parser {
                 while self.peek().kind != TokenKind::RBrace && self.peek().kind != TokenKind::EOF {
                     if self.peek().kind == TokenKind::DotDot {
                         self.advance();
-                        if self.peek().kind == TokenKind::Comma || self.peek().kind == TokenKind::SemiColon {
+                        if self.peek().kind == TokenKind::Comma
+                            || self.peek().kind == TokenKind::SemiColon
+                        {
                             self.advance();
                         }
                         continue;
                     }
-                    let fname = self.get_identifier(
-                        "Expected field identifier inside destructuring braces"
-                    )?;
+                    let fname = self
+                        .get_identifier("Expected field identifier inside destructuring braces")?;
                     fields.push(fname);
-                    if
-                        self.peek().kind == TokenKind::Comma ||
-                        self.peek().kind == TokenKind::SemiColon
+                    if self.peek().kind == TokenKind::Comma
+                        || self.peek().kind == TokenKind::SemiColon
                     {
                         self.advance();
                     }
@@ -1242,7 +1464,10 @@ impl Parser {
 
     pub(crate) fn parse_var_decl(&mut self, scope: ScopeType) -> Result<Decl, String> {
         if self.peek().kind == TokenKind::Const {
-            if let (Some(t1), Some(t2)) = (self.tokens.get(self.current + 1), self.tokens.get(self.current + 2)) {
+            if let (Some(t1), Some(t2)) = (
+                self.tokens.get(self.current + 1),
+                self.tokens.get(self.current + 2),
+            ) {
                 if matches!(&t1.kind, TokenKind::Identifier(_)) && t2.kind == TokenKind::Walrus {
                     self.advance(); // consume 'const'
                     let name = self.get_identifier("Expected variable name after 'const'")?;
@@ -1251,7 +1476,11 @@ impl Parser {
                     if self.peek().kind == TokenKind::SemiColon {
                         self.advance();
                     }
-                    let visibility = if scope == ScopeType::Global { Visibility::Public } else { Visibility::Private };
+                    let visibility = if scope == ScopeType::Global {
+                        Visibility::Public
+                    } else {
+                        Visibility::Private
+                    };
                     let var_meta = VarMetadata {
                         name: name.clone(),
                         type_node: BaseType::Unknown,
@@ -1283,7 +1512,11 @@ impl Parser {
                     if self.peek().kind == TokenKind::SemiColon {
                         self.advance();
                     }
-                    let visibility = if scope == ScopeType::Global { Visibility::Public } else { Visibility::Private };
+                    let visibility = if scope == ScopeType::Global {
+                        Visibility::Public
+                    } else {
+                        Visibility::Private
+                    };
                     let var_meta = VarMetadata {
                         name: name.clone(),
                         type_node: BaseType::Unknown,
@@ -1491,9 +1724,85 @@ impl Parser {
     // Control Flow Parsers
     // ====================================================
 
-    // --- set <target> -> <value>; -------------------------
+    // --- set <target> -> <value>; OR set name<T>(params) -> return_type; ---
     pub(crate) fn parse_reassign_stmt(&mut self) -> Result<Stmt, String> {
         self.advance(); // 'set'
+
+        // Check if this is an intrinsic signature declaration: `set name<T>(params) -> return_type;` or `set name() -> return_type;`
+        if let TokenKind::Identifier(name) = &self.peek().kind.clone() {
+            if let Some(next) = self.tokens.get(self.current + 1) {
+                if next.kind == TokenKind::Less || next.kind == TokenKind::LParen {
+                    let fn_name = name.clone();
+                    self.advance(); // consume name
+                    let mut generics = Vec::new();
+                    if self.peek().kind == TokenKind::Less {
+                        self.parse_generics(&mut generics)?;
+                        for g in &generics {
+                            if let BaseType::GenericParam(gen_name) = g {
+                                self.current_generics.insert(gen_name.clone());
+                            }
+                        }
+                    }
+
+                    self.consume(TokenKind::LParen, "Expected '(' in signature declaration")?;
+                    let mut params = Vec::new();
+                    while !self.is_at_end() && self.peek().kind != TokenKind::RParen {
+                        let p = if self.peek().kind == TokenKind::DotDotDot
+                            || self
+                                .peek_ahead(1)
+                                .map(|t| t.kind == TokenKind::Colon)
+                                .unwrap_or(false)
+                        {
+                            self.parse_single_param()?
+                        } else {
+                            let ty = self.parse_type()?;
+                            Param {
+                                name: format!("arg_{}", params.len()),
+                                type_node: ty,
+                                default_value: None,
+                                is_variadic: false,
+                            }
+                        };
+                        params.push(p);
+                        if self.peek().kind == TokenKind::Comma {
+                            self.advance();
+                        } else if self.peek().kind != TokenKind::RParen {
+                            return Err("Expected ',' or ')' in parameter list".to_string());
+                        }
+                    }
+                    self.consume(TokenKind::RParen, "Expected ')' after parameter list")?;
+
+                    let return_type = if self.peek().kind == TokenKind::Arrow {
+                        self.advance();
+                        self.parse_type()?
+                    } else {
+                        BaseType::Void
+                    };
+
+                    self.consume(
+                        TokenKind::SemiColon,
+                        "Expected ';' after signature declaration",
+                    )?;
+
+                    for g in &generics {
+                        if let BaseType::GenericParam(gen_name) = g {
+                            self.current_generics.remove(gen_name);
+                        }
+                    }
+
+                    return Ok(Stmt::Declaration(Decl::FnDecl {
+                        visibility: Visibility::Public,
+                        name: fn_name,
+                        generics,
+                        params,
+                        return_type,
+                        body: vec![],
+                        is_virtual: false,
+                        is_abstract: false,
+                    }));
+                }
+            }
+        }
 
         let target = self.parse_expression()?;
 
@@ -1581,7 +1890,10 @@ impl Parser {
         let condition = if self.peek().kind == TokenKind::LParen {
             self.advance();
             let c = self.parse_expression()?;
-            self.consume(TokenKind::RParen, "Expected ')' after switch/match condition")?;
+            self.consume(
+                TokenKind::RParen,
+                "Expected ')' after switch/match condition",
+            )?;
             c
         } else {
             self.parse_expression()?
@@ -1598,16 +1910,15 @@ impl Parser {
                 self.advance(); // consume '_'
                 self.consume(
                     TokenKind::FatArrow,
-                    "Expected '=>' after '_' in default match branch"
+                    "Expected '=>' after '_' in default match branch",
                 )?;
 
                 let def_body = if self.peek().kind == TokenKind::LBrace {
                     self.advance();
                     let b = self.parse_block("switch".to_string())?;
                     self.consume(TokenKind::RBrace, "Expected '}' to close default block")?;
-                    if
-                        self.peek().kind == TokenKind::Comma ||
-                        self.peek().kind == TokenKind::SemiColon
+                    if self.peek().kind == TokenKind::Comma
+                        || self.peek().kind == TokenKind::SemiColon
                     {
                         self.advance();
                     }
@@ -1635,10 +1946,12 @@ impl Parser {
                 let case_body = if self.peek().kind == TokenKind::LBrace {
                     self.advance();
                     let b = self.parse_block("case".to_string())?;
-                    self.consume(TokenKind::RBrace, "Expected '}' to close match branch block")?;
-                    if
-                        self.peek().kind == TokenKind::Comma ||
-                        self.peek().kind == TokenKind::SemiColon
+                    self.consume(
+                        TokenKind::RBrace,
+                        "Expected '}' to close match branch block",
+                    )?;
+                    if self.peek().kind == TokenKind::Comma
+                        || self.peek().kind == TokenKind::SemiColon
                     {
                         self.advance();
                     }
@@ -1661,7 +1974,10 @@ impl Parser {
                 });
             }
         }
-        self.consume(TokenKind::RBrace, "Expected '}' to close switch/match block")?;
+        self.consume(
+            TokenKind::RBrace,
+            "Expected '}' to close switch/match block",
+        )?;
 
         Ok(Stmt::SwitchStmt {
             name: String::new(),
@@ -1741,7 +2057,7 @@ impl Parser {
                     (
                         Some(TokenKind::Identifier(_)),
                         Some(
-                            | TokenKind::Assign
+                            TokenKind::Assign
                             | TokenKind::Arrow
                             | TokenKind::SemiColon
                             | TokenKind::LBracket,
@@ -1771,10 +2087,10 @@ impl Parser {
                             (
                                 Some(TokenKind::Identifier(_)),
                                 Some(
-                                    TokenKind::Arrow |
-                                        TokenKind::Assign |
-                                        TokenKind::SemiColon |
-                                        TokenKind::LBracket
+                                    TokenKind::Arrow
+                                        | TokenKind::Assign
+                                        | TokenKind::SemiColon
+                                        | TokenKind::LBracket
                                 ),
                             ) | (Some(TokenKind::LBrace), _)
                         )
@@ -1797,33 +2113,37 @@ impl Parser {
             let value = self.parse_expression()?;
             self.consume(TokenKind::SemiColon, "Expected ';' after arrow expression")?;
 
-            return Ok(
-                Stmt::ExpressionStmt(Expr::BinaryOp {
-                    left: Box::new(expr),
-                    operator: "->".to_string(),
-                    right: Box::new(value),
-                })
-            );
+            return Ok(Stmt::ExpressionStmt(Expr::BinaryOp {
+                left: Box::new(expr),
+                operator: "->".to_string(),
+                right: Box::new(value),
+            }));
         }
 
-        if
-            op == TokenKind::Assign ||
-            op == TokenKind::PlusAssign ||
-            op == TokenKind::MinusAssign ||
-            op == TokenKind::MulAssign ||
-            op == TokenKind::DivAssign ||
-            op == TokenKind::Walrus ||
-            op == TokenKind::Colon
+        if op == TokenKind::Assign
+            || op == TokenKind::PlusAssign
+            || op == TokenKind::MinusAssign
+            || op == TokenKind::MulAssign
+            || op == TokenKind::DivAssign
+            || op == TokenKind::Walrus
+            || op == TokenKind::Colon
         {
             self.advance(); // consume '=' or ':' or '+=' etc.
             let value = self.parse_expression()?;
-            let op_str = if op == TokenKind::Colon { "=".to_string() } else { op.as_str().to_string() };
+            let op_str = if op == TokenKind::Colon {
+                "=".to_string()
+            } else {
+                op.as_str().to_string()
+            };
             if self.peek().kind == TokenKind::Comma {
                 self.advance();
             } else if self.peek().kind == TokenKind::SemiColon {
                 self.advance();
             } else if self.peek().kind != TokenKind::RBrace {
-                self.consume(TokenKind::SemiColon, "Expected ';' or ',' after reassignment")?;
+                self.consume(
+                    TokenKind::SemiColon,
+                    "Expected ';' or ',' after reassignment",
+                )?;
             }
             return Ok(Stmt::ReassignStmt {
                 target: expr,
@@ -1834,12 +2154,12 @@ impl Parser {
 
         // Command-style macro / function invocation: `callee arg1, arg2;`
         if matches!(&expr, Expr::Identifier(_) | Expr::NamespaceAccess { .. }) {
-            if !self.is_at_end() &&
-                self.peek().kind != TokenKind::SemiColon &&
-                self.peek().kind != TokenKind::RBrace &&
-                self.peek().kind != TokenKind::RParen &&
-                self.peek().kind != TokenKind::RBracket &&
-                self.peek().kind != TokenKind::Comma
+            if !self.is_at_end()
+                && self.peek().kind != TokenKind::SemiColon
+                && self.peek().kind != TokenKind::RBrace
+                && self.peek().kind != TokenKind::RParen
+                && self.peek().kind != TokenKind::RBracket
+                && self.peek().kind != TokenKind::Comma
             {
                 let mut args = Vec::new();
                 args.push(self.parse_expression()?);
@@ -1852,6 +2172,7 @@ impl Parser {
                 }
                 return Ok(Stmt::CallStmt(Expr::Call {
                     callee: Box::new(expr),
+                    generics: Vec::new(),
                     args,
                 }));
             }
@@ -1867,18 +2188,20 @@ impl Parser {
         let expr = self.parse_expression()?;
         // --- Bare reassignment: x = 10; or this.x = 20; ---
         let op = self.peek().kind.clone();
-        if
-            op == TokenKind::Assign ||
-            op == TokenKind::Arrow ||
-            op == TokenKind::PlusAssign ||
-            op == TokenKind::MinusAssign ||
-            op == TokenKind::MulAssign ||
-            op == TokenKind::DivAssign
+        if op == TokenKind::Assign
+            || op == TokenKind::Arrow
+            || op == TokenKind::PlusAssign
+            || op == TokenKind::MinusAssign
+            || op == TokenKind::MulAssign
+            || op == TokenKind::DivAssign
         {
             self.advance(); // consume '=' or '->' or '+=' etc
             let value = self.parse_expression()?;
             let op_str = op.as_str().to_string();
-            self.consume(TokenKind::SemiColon, "Expected ';' after assignment statement")?;
+            self.consume(
+                TokenKind::SemiColon,
+                "Expected ';' after assignment statement",
+            )?;
             return Ok(Stmt::ReassignStmt {
                 target: expr,
                 value,
@@ -1886,7 +2209,10 @@ impl Parser {
             });
         }
         if self.peek().kind == TokenKind::SemiColon {
-            self.consume(TokenKind::SemiColon, "Expected ';' after expression statement")?;
+            self.consume(
+                TokenKind::SemiColon,
+                "Expected ';' after expression statement",
+            )?;
         }
         Ok(Stmt::ExpressionStmt(expr))
     }
@@ -1908,9 +2234,10 @@ impl Parser {
             self.advance();
             n
         } else {
-            return Err(
-                format!("Expected parameter name in catch block at line {}", self.peek().line)
-            );
+            return Err(format!(
+                "Expected parameter name in catch block at line {}",
+                self.peek().line
+            ));
         };
 
         self.consume(TokenKind::RParen, "Expected ')' after catch parameter")?;
@@ -1946,13 +2273,9 @@ impl Parser {
     pub(crate) fn get_handle_identifier(&mut self, err_msg: &str) -> Result<String, String> {
         match &self.peek().kind {
             TokenKind::Identifier(n) => {
-                let s = n.trim_start_matches('$').to_string();
+                let s = n.clone();
                 self.advance();
                 Ok(s)
-            }
-            TokenKind::ToString => {
-                self.advance();
-                Ok("to_string".to_string())
             }
             TokenKind::Call => {
                 self.advance();
@@ -2000,89 +2323,81 @@ pub enum RhsValue {
 fn match_destructure(
     pattern: &Pattern,
     value: &RhsValue,
-    results: &mut Vec<(String, Expr)>
+    results: &mut Vec<(String, Expr)>,
 ) -> Result<(), String> {
     match pattern {
-        Pattern::Identifier(name) => {
-            match value {
-                RhsValue::Single(expr) => {
-                    results.push((name.clone(), expr.clone()));
-                    Ok(())
-                }
-                RhsValue::Group(items) => {
-                    let mut expr_elements = Vec::new();
-                    for item in items {
-                        match item {
-                            RhsValue::Single(e) => expr_elements.push(e.clone()),
-                            RhsValue::Group(_) => {
-                                let mut sub = Vec::new();
-                                flatten_rhs(item, &mut sub);
-                                expr_elements.push(Expr::ArrayLiteral(sub));
-                            }
-                        }
-                    }
-                    results.push((name.clone(), Expr::ArrayLiteral(expr_elements)));
-                    Ok(())
-                }
+        Pattern::Identifier(name) => match value {
+            RhsValue::Single(expr) => {
+                results.push((name.clone(), expr.clone()));
+                Ok(())
             }
-        }
-        Pattern::Tuple(patterns) => {
-            match value {
-                RhsValue::Single(Expr::ArrayLiteral(elems)) if elems.len() == patterns.len() => {
-                    for (p, elem) in patterns.iter().zip(elems.iter()) {
-                        match_destructure(p, &RhsValue::Single(elem.clone()), results)?;
+            RhsValue::Group(items) => {
+                let mut expr_elements = Vec::new();
+                for item in items {
+                    match item {
+                        RhsValue::Single(e) => expr_elements.push(e.clone()),
+                        RhsValue::Group(_) => {
+                            let mut sub = Vec::new();
+                            flatten_rhs(item, &mut sub);
+                            expr_elements.push(Expr::ArrayLiteral(sub));
+                        }
                     }
-                    Ok(())
                 }
-                RhsValue::Single(expr) => {
+                results.push((name.clone(), Expr::ArrayLiteral(expr_elements)));
+                Ok(())
+            }
+        },
+        Pattern::Tuple(patterns) => match value {
+            RhsValue::Single(Expr::ArrayLiteral(elems)) if elems.len() == patterns.len() => {
+                for (p, elem) in patterns.iter().zip(elems.iter()) {
+                    match_destructure(p, &RhsValue::Single(elem.clone()), results)?;
+                }
+                Ok(())
+            }
+            RhsValue::Single(expr) => {
+                for p in patterns {
+                    match_destructure(p, &RhsValue::Single(expr.clone()), results)?;
+                }
+                Ok(())
+            }
+            RhsValue::Group(items) => {
+                if items.len() == 1 {
+                    let single_item = &items[0];
                     for p in patterns {
-                        match_destructure(p, &RhsValue::Single(expr.clone()), results)?;
+                        match_destructure(p, single_item, results)?;
                     }
                     Ok(())
-                }
-                RhsValue::Group(items) => {
-                    if items.len() == 1 {
-                        let single_item = &items[0];
-                        for p in patterns {
-                            match_destructure(p, single_item, results)?;
-                        }
-                        Ok(())
-                    } else if patterns.len() == items.len() {
-                        for (p, item) in patterns.iter().zip(items.iter()) {
-                            match_destructure(p, item, results)?;
-                        }
-                        Ok(())
-                    } else {
-                        Err(
+                } else if patterns.len() == items.len() {
+                    for (p, item) in patterns.iter().zip(items.iter()) {
+                        match_destructure(p, item, results)?;
+                    }
+                    Ok(())
+                } else {
+                    Err(
                             format!(
                                 "Semantic Error: Destructuring mismatch: {} variables on LHS vs {} values on RHS.",
                                 patterns.len(),
                                 items.len()
                             )
                         )
-                    }
                 }
             }
-        }
-        Pattern::Struct { name: _, fields } => {
-            match value {
-                RhsValue::Single(expr) => {
-                    for f in fields {
-                        let prop_access = Expr::PropertyAccess {
-                            object: Box::new(expr.clone()),
-                            property: f.clone(),
-                        };
-                        results.push((f.clone(), prop_access));
-                    }
-                    Ok(())
+        },
+        Pattern::Struct { name: _, fields } => match value {
+            RhsValue::Single(expr) => {
+                for f in fields {
+                    let prop_access = Expr::PropertyAccess {
+                        object: Box::new(expr.clone()),
+                        property: f.clone(),
+                    };
+                    results.push((f.clone(), prop_access));
                 }
-                RhsValue::Group(_) => {
-                    Err(
-                        "Semantic Error: Cannot unpack struct pattern from tuple/group RHS.".to_string()
-                    )
-                }
+                Ok(())
             }
-        }
+            RhsValue::Group(_) => Err(
+                "Semantic Error: Cannot unpack struct pattern from tuple/group RHS.".to_string(),
+            ),
+        },
     }
 }
 

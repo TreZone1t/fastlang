@@ -1,0 +1,12 @@
+// Test 92: Compile-time Validation Failure
+
+fn test_validation_fail() -> void {
+    @compile {
+       throw new Error("This is a compile-time validation failure");
+    }();
+}
+
+fn main() -> int32 {
+    test_validation_fail();
+    return 0;
+}

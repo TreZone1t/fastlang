@@ -19,14 +19,32 @@ impl Parser {
             is_abstract = true;
         }
 
-        self.consume(TokenKind::Fn, "Expected 'fn'")?;
+        if self.peek().kind == TokenKind::Fn || self.peek().kind == TokenKind::TypeMethod {
+            self.advance();
+        } else {
+            return Err("Expected 'fn' or 'method'".to_string());
+        }
         let name = self.get_identifier("Expected function name")?;
+        let mut generics: Vec<BaseType> = Vec::new();
+        if self.peek().kind == TokenKind::Less {
+            self.parse_generics(&mut generics)?;
+            for g in &generics {
+                if let BaseType::GenericParam(gen_name) = g {
+                    self.current_generics.insert(gen_name.clone());
+                }
+            }
+        }
         let mut fn_meta: FnType = FnType {
             name: name.clone(),
+            generics: generics.clone(),
             params: Vec::new(),
             return_type: return_type.clone(),
+            mode: ExecutionMode::Runtime,
         };
 
+        if self.peek().kind == TokenKind::Assign {
+            self.advance();
+        }
         self.consume(TokenKind::LParen, "Expected '(' after function name")?;
         if self.peek().kind != TokenKind::RParen {
             loop {
@@ -71,14 +89,23 @@ impl Parser {
         }
 
         fn_meta.name = name.clone();
+        fn_meta.generics = generics.clone();
         fn_meta.params = params.clone();
         fn_meta.return_type = return_type.clone();
         self.fn_metadata.insert(name.clone(), fn_meta);
+
+        for g in &generics {
+            if let BaseType::GenericParam(gen_name) = g {
+                self.current_generics.remove(gen_name);
+            }
+        }
+
         Ok(Decl::FnDecl {
             visibility: Visibility::Private,
             is_virtual,
             is_abstract,
             name,
+            generics,
             params,
             return_type,
             body: statement_block,
@@ -218,6 +245,16 @@ impl Parser {
         let name = self.get_handle_identifier("Expected macro name after 'macro'")?;
         self.macro_metadata.insert(name.clone());
 
+        let mut generics: Vec<BaseType> = Vec::new();
+        if self.peek().kind == TokenKind::Less {
+            self.parse_generics(&mut generics)?;
+            for g in &generics {
+                if let BaseType::GenericParam(gen_name) = g {
+                    self.current_generics.insert(gen_name.clone());
+                }
+            }
+        }
+
         let mut params = Vec::new();
         if self.peek().kind == TokenKind::LBracket {
             self.advance(); // consume '['
@@ -272,9 +309,16 @@ impl Parser {
             self.advance();
         }
 
+        for g in &generics {
+            if let BaseType::GenericParam(gen_name) = g {
+                self.current_generics.remove(gen_name);
+            }
+        }
+
         Ok(Decl::MacroDecl {
             visibility: Visibility::Private,
             name,
+            generics,
             params,
             body,
         })

@@ -73,10 +73,21 @@ impl Parser {
 
         self.advance(); // '<'
         while !self.is_at_end() && self.peek().kind != TokenKind::Greater {
+            let is_variadic = if self.peek().kind == TokenKind::DotDotDot {
+                self.advance();
+                true
+            } else {
+                false
+            };
             let token = self.peek().kind.clone();
             if matches!(token, TokenKind::Identifier(_)) {
                 let type_name = self.get_identifier("Unexpected error happen")?;
-                generics.push(BaseType::GenericParam(type_name));
+                let name_stored = if is_variadic {
+                    format!("...{}", type_name)
+                } else {
+                    type_name
+                };
+                generics.push(BaseType::GenericParam(name_stored));
                 continue;
             } else if token == TokenKind::Comma {
                 self.advance();
@@ -145,6 +156,7 @@ impl Parser {
 
                 allowed_handle.push(HandleMethods::Drop);
                 allowed_handle.push(HandleMethods::Copy);
+                allowed_handle.push(HandleMethods::Cast);
             }
             BaseType::Block { .. } => {
                 allowed_handle.push(HandleMethods::Display);
@@ -297,6 +309,7 @@ impl Parser {
                     is_virtual: true,
                     is_abstract: false,
                     name: method_name,
+                    generics: vec![],
                     params: method_params,
                     return_type,
                     body,

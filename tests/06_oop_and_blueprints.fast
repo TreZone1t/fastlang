@@ -52,6 +52,10 @@ class ComplexNumber -> {
         fn equal(other: ComplexNumber) -> bool {
             return (this.r == other.r) && (this.i == other.i);
         }
+
+        fn cast() -> int32 {
+            return this.r;
+        }
     }
 }
 
@@ -87,6 +91,9 @@ fn test_operator_overloading() -> void {
 
     bool is_eq = (c1 == c2);
     println("is_eq: ", is_eq); // EXPECT: is_eq: false
+
+    int32 c1_cast = c1 as int32;
+    println("c1 as int: ", c1_cast); // EXPECT: c1 as int: 3
 }
 
 fn main() -> int32 {

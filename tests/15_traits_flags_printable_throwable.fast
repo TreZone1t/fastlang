@@ -1,0 +1,92 @@
+// Comprehensive Suite 15: Type Traits, Flags, Printable, Throwable, and Default Reflection
+import std;
+
+class CustomError extends Error -> {
+    public -> {
+        str detail = "custom";
+    }
+}
+
+class PlainData -> {
+    public -> {
+        int32 val = 0;
+    }
+}
+
+class PrintableData -> {
+    public -> {
+        int32 val = 0;
+    }
+    handle -> {
+        fn display() -> str {
+            return "PrintableData";
+        }
+    }
+}
+
+class ThrowData -> {
+    public -> {
+        str msg = "";
+    }
+    handle -> {
+        fn $throw() -> Error {
+            Error err = new Error(this.msg);
+            return err;
+        }
+    }
+}
+
+fn test_primitive_traits() -> void {
+    int32 num = 42;
+    bool is_prim = typeof(num).is_primitive;
+    println("int32 is_primitive: ", is_prim); // EXPECT: int32 is_primitive: true
+
+    bool is_print = typeof(num).printable;
+    println("int32 printable: ", is_print); // EXPECT: int32 printable: true
+
+    bool is_copy = typeof(num).copyable;
+    println("int32 copyable: ", is_copy); // EXPECT: int32 copyable: true
+
+    bool is_throw = typeof(num).throwable;
+    println("int32 throwable: ", is_throw); // EXPECT: int32 throwable: false
+}
+
+fn test_custom_traits() -> void {
+    PlainData plain = new PlainData();
+    println("PlainData printable: ", typeof(plain).printable); // EXPECT: PlainData printable: false
+    println("PlainData copyable: ", typeof(plain).copyable); // EXPECT: PlainData copyable: false
+    println("PlainData throwable: ", typeof(plain).throwable); // EXPECT: PlainData throwable: false
+
+    PrintableData print_obj = new PrintableData();
+    println("PrintableData printable: ", typeof(print_obj).printable); // EXPECT: PrintableData printable: true
+    println("PrintableData throwable: ", typeof(print_obj).throwable); // EXPECT: PrintableData throwable: false
+
+    ThrowData throw_obj = new ThrowData();
+    println("ThrowData throwable: ", typeof(throw_obj).throwable); // EXPECT: ThrowData throwable: true
+    println("ThrowData printable: ", typeof(throw_obj).printable); // EXPECT: ThrowData printable: false
+
+    CustomError err = new CustomError();
+    println("CustomError throwable: ", typeof(err).throwable); // EXPECT: CustomError throwable: true
+}
+
+fn test_default_values() -> void {
+    int32 d_int = int32.default();
+    println("int32.default: ", d_int); // EXPECT: int32.default: 0
+
+    int32 d_typeof = typeof(d_int).default();
+    println("typeof.default: ", d_typeof); // EXPECT: typeof.default: 0
+
+    Option<int32> opt_paren = ();
+    println("Option paren is_None: ", opt_paren.is_None()); // EXPECT: Option paren is_None: true
+
+    Option<int32> opt_def = Option<int32>.default();
+    println("Option.default is_None: ", opt_def.is_None()); // EXPECT: Option.default is_None: true
+}
+
+fn main() -> int32 {
+    test_primitive_traits();
+    test_custom_traits();
+    test_default_values();
+    println("ALL 15_TRAITS_FLAGS TESTS PASSED"); // EXPECT: ALL 15_TRAITS_FLAGS TESTS PASSED
+    return 0;
+}

@@ -1,7 +1,8 @@
 #[derive(Debug, PartialEq, Clone)]
 pub enum TokenKind {
     // 1. Data Types
-    Int(i64),
+    Int(i128),
+    UInt(u128),
     Float(f64),
     String(String),
     Char(char),
@@ -76,8 +77,6 @@ pub enum TokenKind {
     // but i don't think so
 
     // built-in fn
-    SizeOf, // sizeof()
-    TypeOf, // typeof()
     ToString, // to_string()
 
     TypeName, // name
@@ -171,6 +170,7 @@ impl TokenKind {
     pub fn as_str(&self) -> &str {
         match self {
             TokenKind::Int(_) => "int",
+            TokenKind::UInt(_) => "uint",
             TokenKind::Float(_) => "float",
             TokenKind::String(_) => "str",
             TokenKind::Char(_) => "char",
@@ -224,7 +224,6 @@ impl TokenKind {
             TokenKind::Private => "private",
             TokenKind::Public => "public",
             TokenKind::Static => "static",
-            TokenKind::SizeOf => "sizeof",
             TokenKind::Statement => "statement",
             TokenKind::Init => "init",
             TokenKind::TypeBluePrint => "blueprint",

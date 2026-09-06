@@ -6,6 +6,13 @@ impl CodeGenerator {
     pub(crate) fn visit_expression(&mut self, expr: &Expr) -> String {
         match expr {
             Expr::LiteralInt(val) => val.to_string(),
+            Expr::LiteralUInt(val) => {
+                if *val > i64::MAX as u128 {
+                    format!("{}ULL", val)
+                } else {
+                    val.to_string()
+                }
+            }
             Expr::LiteralFloat(f) => format!("{:?}", f),
             Expr::LiteralString(s) => {
                 let mut escaped = String::new();
@@ -79,7 +86,12 @@ impl CodeGenerator {
                 }
             }
             Expr::Spread(inner) => {
-                self.visit_expression(inner)
+                let inner_code = self.visit_expression(inner);
+                if self.variadic_packs.contains(&inner_code) {
+                    format!("{}...", inner_code)
+                } else {
+                    format!("fastlang_spread({})", inner_code)
+                }
             }
             Expr::ObjectLiteral(stmts) => {
                 let mut struct_code = "([]() { struct __Anon {\n".to_string();
@@ -105,26 +117,7 @@ impl CodeGenerator {
                 }
             }
             Expr::Identifier(name) => {
-                match name.as_str() {
-                    "bool" => "1".to_string(),
-                    "int8" => "2".to_string(),
-                    "int16" => "3".to_string(),
-                    "int32" | "int" => "4".to_string(),
-                    "int64" => "5".to_string(),
-                    "uint8" => "7".to_string(),
-                    "uint16" => "8".to_string(),
-                    "uint32" | "uint" => "9".to_string(),
-                    "uint64" => "10".to_string(),
-                    "float32" => "12".to_string(),
-                    "float64" | "float" => "13".to_string(),
-                    "char" => "15".to_string(),
-                    "byte" => "16".to_string(),
-                    "usize" => "17".to_string(),
-                    "isize" => "18".to_string(),
-                    "string" => "19".to_string(),
-                    "type" => "20".to_string(),
-                    _ => name.clone(),
-                }
+                crate::backend::cpp::stmt::cpp_safe_name(name)
             }
             Expr::This => {
                 if self.in_primitive_impl || self.in_machine {
@@ -140,6 +133,18 @@ impl CodeGenerator {
                 let r = self.visit_expression(right);
                 if operator == "->" {
                     format!("([&]() {{ fastlang_arrow({}, {}); return {}; }}())", l, r, l)
+                } else if operator == "+" {
+                    let l_is_str_lit = l.starts_with('"') && l.ends_with('"');
+                    let r_is_str_lit = r.starts_with('"') && r.ends_with('"');
+                    let l_is_char = matches!(&**left, Expr::LiteralChar(_)) || (l.starts_with('\'') && l.ends_with('\''));
+                    let r_is_char = matches!(&**right, Expr::LiteralChar(_)) || (r.starts_with('\'') && r.ends_with('\''));
+                    if l_is_str_lit && r_is_char {
+                        format!("(fastlang_str({}) + {})", l, r)
+                    } else if l_is_char && r_is_str_lit {
+                        format!("({} + fastlang_str({}))", l, r)
+                    } else {
+                        format!("({} {} {})", l, operator, r)
+                    }
                 } else {
                     format!("({} {} {})", l, operator, r)
                 }
@@ -190,8 +195,13 @@ impl CodeGenerator {
                 format!("{}({})", callee_code, args_code.join(", "))
             }
 
-            Expr::Call { callee, args } => {
+            Expr::Call { callee, generics, args } => {
                 if let Expr::PropertyAccess { object, property } = &**callee {
+                    if property == "default" {
+                        if let Some(cpp_t) = self.extract_cpp_type_from_expr(object) {
+                            return format!("fastlang_type_default<{}>()", cpp_t);
+                        }
+                    }
                     if let Some(target) = self.primitive_impl_methods.get(property).cloned() {
                         let obj_code = self.visit_expression(object);
                         let mut args_code = Vec::new();
@@ -207,22 +217,27 @@ impl CodeGenerator {
                 let callee_code = match &**callee {
                     Expr::PropertyAccess { object, property } => {
                         let obj_code = self.visit_expression(object);
+                        let safe_prop = crate::backend::cpp::stmt::cpp_safe_name(property);
                         if obj_code == "::" {
-                            format!("::{}", property)
+                            format!("::{}", safe_prop)
                         } else if self.enum_types.contains(&obj_code) {
-                            format!("{}::{}", obj_code, property)
+                            format!("{}::{}", obj_code, safe_prop)
                         } else if obj_code == "super" || obj_code == "this" {
-                            format!("this->{}", property)
+                            format!("this->{}", safe_prop)
                         } else if self.pointer_vars.contains(&obj_code) || obj_code.ends_with("current") || obj_code.ends_with("head") || obj_code.ends_with("next") || obj_code.ends_with("temp") {
-                            format!("{}->{}", obj_code, property)
+                            format!("{}->{}", obj_code, safe_prop)
                         } else {
-                            format!("{}.{}", obj_code, property)
+                            format!("{}.{}", obj_code, safe_prop)
                         }
                     }
                     Expr::NamespaceAccess { namespace, property } => {
                         let prop_code = self.visit_expression(property);
                         let clean_prop = prop_code.trim_end_matches("()");
-                        format!("{}::{}", namespace, clean_prop)
+                        if namespace == "@compile" {
+                            clean_prop.to_string()
+                        } else {
+                            format!("{}::{}", namespace, clean_prop)
+                        }
                     }
                     _ => self.visit_expression(callee),
                 };
@@ -232,10 +247,17 @@ impl CodeGenerator {
                     args_code.push(self.visit_expression(arg));
                 }
 
-                if self.custom_scope_types.contains(&callee_code) {
-                    format!("{}()({})", callee_code, args_code.join(", "))
+                let gen_code = if !generics.is_empty() {
+                    let gen_strs: Vec<String> = generics.iter().map(type_to_cpp).collect();
+                    format!("<{}>", gen_strs.join(", "))
                 } else {
-                    format!("{}({})", callee_code, args_code.join(", "))
+                    "".to_string()
+                };
+
+                if self.custom_scope_types.contains(&callee_code) {
+                    format!("{}{}()({})", callee_code, gen_code, args_code.join(", "))
+                } else {
+                    format!("{}{}({})", callee_code, gen_code, args_code.join(", "))
                 }
             }
             Expr::Instantiate { target, args } => {
@@ -309,25 +331,25 @@ impl CodeGenerator {
                 format!("{}({})", target_code, args_code.join(", "))
             }
             Expr::PropertyAccess { object, property } => {
+                if property == "default" {
+                    if let Some(cpp_t) = self.extract_cpp_type_from_expr(object) {
+                        return format!("fastlang_type_default<{}>()", cpp_t);
+                    }
+                }
                 let obj_code = self.visit_expression(object);
+                let safe_prop = crate::backend::cpp::stmt::cpp_safe_name(property);
                 if obj_code == "::" {
-                    format!("::{}", property)
+                    format!("::{}", safe_prop)
                 } else if self.enum_types.contains(&obj_code) {
-                    format!("{}::{}", obj_code, property)
+                    format!("{}::{}", obj_code, safe_prop)
                 } else if obj_code == "super" || obj_code == "this" {
-                    format!("this->{}", property)
+                    format!("this->{}", safe_prop)
                 } else if self.pointer_vars.contains(&obj_code) || obj_code.ends_with("current") || obj_code.ends_with("head") || obj_code.ends_with("next") || obj_code.ends_with("temp") {
-                    format!("{}->{}", obj_code, property)
+                    format!("{}->{}", obj_code, safe_prop)
                 } else if property == "length" || property == "len" {
                     format!("((int32_t)fastlang_len({}))", obj_code)
-                } else if property == "printable" || property == "is_printable" {
-                    format!("(has_display<std::decay_t<decltype({})>>::value || std::is_arithmetic_v<std::decay_t<decltype({})>> || std::is_same_v<std::decay_t<decltype({})>, std::string>)", obj_code, obj_code, obj_code)
-                } else if property == "throwable" || property == "is_throwable" {
-                    format!("(is_throwable<std::decay_t<decltype({})>>::value || std::is_base_of_v<std::exception, std::decay_t<decltype({})>>)", obj_code, obj_code)
-                } else if property == "compilable" || property == "is_compilable" {
-                    "false".to_string()
                 } else {
-                    format!("{}.{}", obj_code, property)
+                    format!("{}.{}", obj_code, safe_prop)
                 }
             }
             Expr::NamespaceAccess { namespace, property } => {
@@ -380,11 +402,11 @@ impl CodeGenerator {
                     }
                 }
             }
-            Expr::Lambda { params, return_type, body } => {
+            Expr::Lambda { params, return_type, body, .. } => {
                 let p_list: Vec<String> = params
                     .iter()
                     .map(|p| {
-                        if p.type_node == BaseType::Unknown {
+                        if p.type_node == BaseType::Unknown || matches!(p.type_node, BaseType::GenericParam(_)) {
                             format!("auto {}", p.name)
                         } else {
                             format!("{} {}", type_to_cpp(&p.type_node), p.name)
@@ -411,7 +433,26 @@ impl CodeGenerator {
                     "    ".repeat(self.indent_level)
                 )
             }
-            _ => "/* unimplemented expr */".to_string(),
+            Expr::Cast { expr, target_type } => {
+                let expr_code = self.visit_expression(expr);
+                let cpp_type = type_to_cpp(target_type);
+                format!("static_cast<{}>({})", cpp_type, expr_code)
+            }
+        }
+    }
+
+    pub(crate) fn extract_cpp_type_from_expr(&mut self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Identifier(name) => {
+                let bt = BaseType::from_str(name);
+                if bt != BaseType::Unknown {
+                    Some(type_to_cpp(&bt))
+                } else {
+                    Some(crate::backend::cpp::stmt::cpp_safe_name(name))
+                }
+            }
+            _ => None,
         }
     }
 }
+

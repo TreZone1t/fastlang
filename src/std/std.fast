@@ -1,69 +1,8 @@
-// FastLang Standard Library: Core Prelude, Option & Error
+// FastLang Standard Library: Core Prelude, Option & Base Types
+import std::error;
+import std::io;
 import std::string;
 import std::range;
-import @c "clib/io.h";
-
-extern @c {
-    fn fast_print_str(s: str) -> void;
-    fn fast_println(s: str) -> void;
-    fn fast_print_int(val: int64) -> void;
-    fn fast_print_double(val: float64) -> void;
-    fn fast_print_char(val: int32) -> void;
-    fn fast_print_bool(val: int32) -> void;
-}
-
-public fn print(s: str) -> void {
-    fast_print_str(s);
-}
-
-public fn print(n: int32) -> void {
-    fast_print_int(n);
-}
-
-public fn print(n: int64) -> void {
-    fast_print_int(n);
-}
-
-public fn print(f: float64) -> void {
-    fast_print_double(f);
-}
-
-public fn print(c: char) -> void {
-    fast_print_char(c);
-}
-
-public fn print(b: bool) -> void {
-    fast_print_bool(b);
-}
-
-public fn println(s: str) -> void {
-    fast_println(s);
-}
-
-public fn println(n: int32) -> void {
-    fast_print_int(n);
-    fast_println("");
-}
-
-public fn println(n: int64) -> void {
-    fast_print_int(n);
-    fast_println("");
-}
-
-public fn println(f: float64) -> void {
-    fast_print_double(f);
-    fast_println("");
-}
-
-public fn println(c: char) -> void {
-    fast_print_char(c);
-    fast_println("");
-}
-
-public fn println(b: bool) -> void {
-    fast_print_bool(b);
-    fast_println("");
-}
 
 public enum Option<T> -> {
     Some(T),
@@ -80,45 +19,85 @@ public micro stop = ()-> {
     break;
 }
 
-public class Error -> {
-    public -> {
-        str message = "";
-        int32 code = 0;
+public @compile -> {
+
+    set typeof<T>(T) -> type;
+    set sizeof<T>(T) -> uint32;
+    set rand<T>() -> T;
+    set rand<T>(T) -> T;
+    set rand<T>(T, T) -> T;
+    set rand<T>(T, T, T) -> T;
+    set print<...T>(...T) -> void;
+    impl type<T> -> {
+        set printable() -> bool;
+        set is_pointer() -> bool;
+        set is_array() -> bool;
+        set is_primitive() -> bool;
+        set throwable() -> bool;
+        set copyable() -> bool;
+        set as_str() -> str;
+        set default() -> T;
+        set castable() -> bool;
+        set castable_to(type) -> bool;
+        set size() -> uint32;
     }
 
-    constructor -> {
-        init(err: Error) -> {
-            this.message = err.message;
-            this.code = err.code;
+    method cast<Target, Source>(val: Source) -> Target {
+        if (!Source.is_primitive()) {
+            throw new Error("casting not supported for non primitive types");
         }
-        init(msg: str) -> {
-            this.message = msg;
-            this.code = 0;
+        if (!Target.is_primitive()) {
+            throw new Error("target type is not a primitive type");
         }
-        init(code: int32) -> {
-            this.message = "Error happened with code";
-            this.code = code;
-        }
-        init(msg: str, code: int32) -> {
-            this.message = msg;
-            this.code = code;
+        if (Source.castable_to(Target)) {
+            return val as Target;
+        } else {
+            throw new Error("Type " + Source.as_str() + " cannot be casted to " + Target.as_str());
         }
     }
 
-    handle -> {
-        fn $throw() -> Error {
-            return this;
-        }
-    }
 }
 
-public @compile -> {
-    macro $throw[e: Error] -> {
-        throw e;
-    }
+// cast wrapper
+public method cast<Target, Source>(val: Source) -> Target {
+    return @compile::cast<Target>(val);
+}
+
+public method typeof<T>(val: T) -> type {
+    return @compile::typeof(val);
+}
+
+public method sizeof<T>(val: T) -> uint32 {
+    return @compile::sizeof(val);
+}
+
+public fn rand<T>() -> T {
+    return @compile::rand<T>();
+}
+
+public fn rand<T>(max: T) -> T {
+    return @compile::rand<T>(max);
+}
+
+public fn rand<T>(min: T, max: T) -> T {
+    return @compile::rand<T>(min, max);
+}
+
+public fn rand<T>(min: T, max: T, step: T) -> T {
+    return @compile::rand<T>(min, max, step);
+}
+
+public method deepCopy<T>(val: T) -> modify<T> {
+    copy<T> temp = val;
+    return temp;
 }
 
 public impl str -> {
+    handle -> {
+        fn default() -> str {
+            return "";
+        }
+    }
     fn is_empty() -> bool {
         return this.len == 0;
     }
@@ -139,6 +118,11 @@ public impl str -> {
 }
 
 public impl char -> {
+    handle -> {
+        fn default() -> char {
+            return ' ';
+        }
+    }
     fn is_digit() -> bool {
         return this >= '0' && this <= '9';
     }
@@ -171,6 +155,15 @@ public impl char -> {
 }
 
 public impl array<T> -> {
+    handle -> { 
+        fn default() -> T[] {
+            T arr[] = new T[this.len || 0];
+            for (int32 i = 0; i < this.len; i = i + 1) {
+                arr[i] = ();
+            }
+            return arr;
+        }
+    }
     fn is_empty() -> bool {
         return this.len == 0;
     }
@@ -194,4 +187,8 @@ public impl array<T> -> {
             this[i] = transform(this[i]);
         }
     }
+    // todo: chain test in for in
+ fn chain(other: T[]) -> T[] {
+    return [...this, ...other];
+}
 }

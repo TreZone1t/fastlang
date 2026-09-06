@@ -653,11 +653,21 @@ itr := iter(arr7);
         throw e;
     }
     // we may use $ or # or ~ or `name` we need to decide
+    set typeof<T>(T) -> type;
+    set sizeof<T>(T) -> uint32;
+}
+// typeof wrapper 
+method typeof<T>(value:T) -> type {
+    return @compile::typeof(value);
+}
+// sizeof wrapper 
+method sizeof<T>(value:T) -> uint32 {
+    return @compile::sizeof(value);
 }
 // so this an example of compile time error
 @compile::throw new Error("hi from compile time");
 // and this an example of compile time check type in print
-fn print<...T>(...args:...T){
+fn print<T>(...args:...T){
     for arg in args {
     if(typeof(arg).printable){  // that is only to explaining the .. part
 
@@ -709,3 +719,244 @@ println(s.x,"\n",s.y);
 S s2 = S {};
 println(s2.x,"\n",s2.y); // y will throw error cause it not defined
 // func<(<params>) -> <return_type>>
+
+fn inspect_value<T>(val: T) -> void {
+    // 1. فحص هل هو مؤشر
+    if (typeof(val).is_pointer) -> {
+        println("Value is a pointer address");
+    }
+
+    // 2. فحص هل هو مصفوفة
+    if (typeof(val).is_array) -> {
+        println("Value is an array of length: ", val.len);
+    }
+
+    // 3. مقارنة نوع صريحة
+    if (typeof(val) == type<str>) -> {
+        println("Value is a string");
+    }
+}
+inspect_value(10);
+fn safe_print<T>(val: T) -> void {
+    // إذا كان النوع لا يدعم الطباعة، نرفض ترجمة البرنامج فوراً!
+    if (!typeof(val).printable) -> {
+        @compile::throw new Error("safe_print error: Type does not implement display handle!");
+    }
+
+    println(val);
+}
+safe_print(10);
+@compile -> {
+    // دالة تحقق هندسية بحتة وقت الترجمة
+    fn assert_word_size(t : type) -> void {
+        if (sizeof(t) > 8) -> {
+            @compile::throw new Error("Type size exceeds 64-bit register word!");
+        }
+    }
+
+    // ماكرو أو دالة لفحص السلامة
+    fn verify_buffer_capacity(int32 capacity) -> void {
+        if (capacity <= 0 || capacity > 4096) -> {
+            @compile::throw new Error("Invalid static buffer capacity!");
+        }
+    }
+}
+
+// استخدامها داخل كود عادي:
+fn create_fast_packet<T>(T data) -> void {
+    @compile::assert_word_size(typeof(data));
+    // بقية كود الدالة الطبيعي...
+}
+create_fast_packet(10);
+fn serialize_item<T>(T item) -> void {
+   // if (typeof(item).has_handle("serialize")) -> {
+     //   item.serialize();
+    //} else
+     if (typeof(item).printable) -> {
+        println(item);
+    } else -> {
+        @compile::throw new Error("Type must either implement 'serialize' or 'display'");
+    }
+}
+
+// biultin copy method
+method deepCopy<T>(val) -> modify<T> {
+    copy<T> temp = val;
+    return temp;
+}
+// to use it
+blueprint Node<T> {
+ T x;
+ T y;
+}
+impl Node {
+    handle {
+        fn copy() -> Node {
+            Node temp = Node {
+                x = this.x;
+                y = this.y;
+            };
+            return temp;
+        }
+    }
+}
+Node<int> node = Node<int> {
+   x = 1;
+   y = 2;
+};
+Node<int> x = deepCopy(node); // this is a copy of node it 
+// or 
+modify<Node> y = deepCopy(node);
+ 
+// time for casting
+// we will use as <Type> to cast 
+// ex :
+int x = 10 + 5.545 as int; // that only to show the syntax 
+// we support int x = 10 + 5.545; and x will = 15 as expected
+// but  for x := 10 + 5.545; it will be 15.545 and with the type float
+// we also may make a handle for casting will take a type T : type
+// for example dum int 
+impl Node<T> {
+    handle {
+        cast(t: type) ->  Node<t> {
+            Node temp = Node<t> {
+                x = this.x as t;
+                y = this.y as t;
+            };
+            return temp;
+        }
+    }
+}
+// to use it 
+Node<float32> n = node as float32;
+
+// for fixing cast we need to allow this cast<T>(<val>);
+// ex :
+@compile {
+method cast<T1,T2> (val : T1) -> T2 {
+    return val as T2;
+}
+}
+//to use it
+int i = @compile::cast<int>(10.2); // T1 = float32  , T2 = int32
+// int i = 10; 
+println(i);
+// what will we do for @compile to make it easer for the compiler 
+// so i think for type we will may change some stuff to make a runtime version of it
+// the same for typeof and sizeof but they all will be biulded in std or implemented it
+// for using a @compile  we may allow to use a @compile block 
+// ex
+fn safe_print_2<T>(s : T) -> void {
+    // this is the only way to create a compile validation block
+    @compile {
+        if(!typeof(s).printable()) -> {
+            throw Error("you must implement the handle display to allow printing");
+        }
+    }(s);
+    fn(s : T)->void{
+           //this is a ghost fn
+            println(s);
+    }(s);
+    {
+        println("i am inside a ghost block");
+    }();
+}
+safe_print_2(10);
+// a default example of using @compile validation block and campilable block 
+
+
+
+
+// some cases that i think we need to see
+
+
+//first a fully compile time block
+fn i_throw_in_compile_time() -> void {
+    @compile {
+        throw new Error("i am in compile time");
+    }();
+}
+// or 
+fn i_also_throw_in_compile_time() -> void {
+    @compile::throw new Error("i am in compile time");
+}
+// or 
+method i_throw_in_compile_time< T> = (val: T) -> void {
+    if(!typeof(val).printable){
+        @compile::throw new Error("can not print this type");
+    }else{
+        @compile::throw new Error("i will not print this type");
+    }
+}
+// errors
+// 1
+method i_cannot_throw_in_compile_time< T> = (val: T) -> void {
+    if(!typeof(val).printable){
+        @compile::throw new Error("can not print this type");
+    }else{
+        println("i am in compile time"); // that will cause an error
+        // you can not use a runtime code in a compile time block 
+        @compile::throw new Error("i will not print this type");
+    }
+}
+//2
+fn i_cannot_throw_in_compile_time< T>(val: T) -> void {
+    println(val); // that will cause an error
+    // you can not use a runtime code in a compile time block 
+    @compile::throw new Error("i will not print this type");
+}
+// 3 runtime condition have compile time block
+method i_cannot_throw_in_compile_time< T> = (val: T) -> void {
+    if(val != input()){
+        @compile::throw new Error("can not print this type");
+    }else{
+        println("i am in compile time"); // that will cause an error
+    }
+}
+
+// that is all of what i can think of might happen
+// for the the compile time block that will be replaced in the runtime code by a generated code
+// ex:
+// 1
+method i_print< T> = (val: T) -> void {
+    if(!typeof(val).printable){
+        @compile::throw new Error("can not print this type");
+    }else{
+       println(val); // that will create the method in the 913 line
+    }
+}
+method generated_method<T> = (val: T) -> void {
+    println(val);
+}
+// 2
+fn i_print_also< T>(val: T) -> void {
+    @compile {
+        //compile time validation block
+        if(!typeof(val).printable){
+            @compile::throw new Error("can not print this type");
+        }
+    }(val);
+    println(val); 
+}
+//that will generate the method in the 913 line also
+// 3
+method i_print_even_not_printable< T> = (val: T) -> void {
+    if(!typeof(val).printable){
+       println("can not print this type");
+    }else{
+        println(val); 
+    }
+} // that will generate the method in the 913 line also and another one for the another branch
+method generated_method_for_the_another_branch<T> = (val: T) -> void {
+    println("can not print this type");
+}
+// if !typeof(val).printable is true that will call the generated_method_for_the_another_branch<T> and if it is false that will call the generated_method<T>
+// 4 : i have a another condition but i don't know how to do it
+method i_add_casted_then_print< T , U , V> = (val: T , val2: U) -> void {
+    res := (cast<V>(val) + cast<V>(val2));
+    println(res);
+}
+// i don't know what to do with that but i think we can throw an error like *you can not use a runtime code in a compile time block * one
+// so we will not allow it also 
+// in the end
+// runtime code we don't need examples for it 
