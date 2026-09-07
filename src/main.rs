@@ -119,6 +119,301 @@ fn inject_module_exports(
     Ok(())
 }
 
+fn prune_ast_for_reachability(
+    ast: &[Stmt],
+    reachable: &HashSet<String>,
+    fn_overloads: &HashMap<String, Vec<crate::middle_end::semantic::environment::FnSignature>>,
+    is_main_file: bool,
+) -> Vec<Stmt> {
+    let mut pruned = Vec::new();
+    for stmt in ast {
+        match stmt {
+            Stmt::Declaration(decl) => {
+                if let Some(pruned_decl) = prune_decl_for_reachability(decl, reachable, fn_overloads, is_main_file) {
+                    pruned.push(Stmt::Declaration(pruned_decl));
+                }
+            }
+            other => {
+                pruned.push(other.clone());
+            }
+        }
+    }
+    pruned
+}
+
+fn prune_decl_for_reachability(
+    decl: &Decl,
+    reachable: &HashSet<String>,
+    fn_overloads: &HashMap<String, Vec<crate::middle_end::semantic::environment::FnSignature>>,
+    is_main_file: bool,
+) -> Option<Decl> {
+    match decl {
+        Decl::FnDecl {
+            name,
+            params,
+            ..
+        } => {
+            if name == "main" {
+                return Some(decl.clone());
+            }
+            let sig_key = crate::middle_end::semantic::analyzer::decl::make_sig_key(name, params);
+            let has_multiple_overloads = fn_overloads
+                .get(name)
+                .map_or(0, |sigs| {
+                    let mut distinct = HashSet::new();
+                    for s in sigs {
+                        distinct.insert(crate::middle_end::semantic::analyzer::decl::make_sig_key(&s.name, &s.params));
+                    }
+                    distinct.len()
+                }) > 1;
+
+            let is_kept = if has_multiple_overloads {
+                reachable.contains(&sig_key)
+            } else {
+                reachable.contains(name)
+            };
+
+            if is_kept {
+                Some(decl.clone())
+            } else {
+                None
+            }
+        }
+
+        Decl::ClassDecl {
+            visibility,
+            name,
+            extends,
+            handles,
+            public_block,
+            private_block,
+            static_block,
+            generics,
+            handle_block,
+            constructor,
+        } => {
+            if !reachable.contains(name) {
+                return None;
+            }
+
+
+            // For module files (stdlib), keep ALL methods of reachable types.
+            // We can't guarantee tracking all internal method-to-method calls,
+            // so we only prune methods for user-defined types in the main file.
+            if !is_main_file {
+                return Some(decl.clone());
+            }
+
+            let filter_methods = |block: &[Decl]| -> Vec<Decl> {
+                block
+                    .iter()
+                    .filter(|d| match d {
+                        Decl::FnDecl { name: m_name, .. } => {
+                            let full_m = format!("{}::{}", name, m_name);
+                            reachable.contains(&full_m)
+                        }
+                        _ => true,
+                    })
+                    .cloned()
+                    .collect()
+            };
+
+            Some(Decl::ClassDecl {
+                visibility: visibility.clone(),
+                name: name.clone(),
+                extends: extends.clone(),
+                handles: handles.clone(),
+                public_block: filter_methods(public_block),
+                private_block: filter_methods(private_block),
+                static_block: filter_methods(static_block),
+                generics: generics.clone(),
+                handle_block: handle_block.clone(),
+                constructor: constructor.clone(),
+            })
+        }
+
+
+        Decl::StructDecl {
+            visibility,
+            name,
+            handles,
+            public_block,
+            private_block,
+            handle_block,
+            static_block,
+            constructor,
+        } => {
+            if !reachable.contains(name) {
+                return None;
+            }
+
+            // For module files, keep all methods of reachable types.
+            if !is_main_file {
+                return Some(decl.clone());
+            }
+
+            let filter_methods = |block: &[Decl]| -> Vec<Decl> {
+                block
+                    .iter()
+                    .filter(|d| match d {
+                        Decl::FnDecl { name: m_name, .. } => {
+                            let full_m = format!("{}::{}", name, m_name);
+                            reachable.contains(&full_m)
+                        }
+                        _ => true,
+                    })
+                    .cloned()
+                    .collect()
+            };
+
+            Some(Decl::StructDecl {
+                visibility: visibility.clone(),
+                name: name.clone(),
+                handles: handles.clone(),
+                public_block: filter_methods(public_block),
+                private_block: filter_methods(private_block),
+                handle_block: handle_block.clone(),
+                static_block: filter_methods(static_block),
+                constructor: constructor.clone(),
+            })
+        }
+
+        Decl::ImplDecl {
+            target,
+            target_generics,
+            is_handle_impl,
+            methods,
+            handle_block,
+        } => {
+            // For module files, keep entire ImplDecl if the target type is reachable.
+            if !is_main_file && reachable.contains(target) {
+                return Some(decl.clone());
+            }
+
+            let filter_methods: Vec<Decl> = methods
+                .iter()
+                .filter(|d| match d {
+                    Decl::FnDecl { name: m_name, .. } => {
+                        let full_m = format!("{}::{}", target, m_name);
+                        reachable.contains(&full_m)
+                    }
+                    _ => true,
+                })
+                .cloned()
+                .collect();
+
+            if filter_methods.is_empty() && handle_block.is_empty() {
+                None
+            } else {
+                Some(Decl::ImplDecl {
+                    target: target.clone(),
+                    target_generics: target_generics.clone(),
+                    is_handle_impl: *is_handle_impl,
+                    methods: filter_methods,
+                    handle_block: handle_block.clone(),
+                })
+            }
+        }
+
+        Decl::EnumDecl {
+            visibility,
+            name,
+            generics,
+            handles,
+            handle_block,
+            variants,
+        } => {
+            if !reachable.contains(name) {
+                return None;
+            }
+
+            // For module files, keep all handles of reachable enum types.
+            if !is_main_file {
+                return Some(decl.clone());
+            }
+
+            Some(Decl::EnumDecl {
+                visibility: visibility.clone(),
+                name: name.clone(),
+                generics: generics.clone(),
+                handles: handles.clone(),
+                handle_block: handle_block.clone(),
+                variants: variants.clone(),
+            })
+        }
+
+
+        Decl::BlueprintDecl {
+            name,
+            ..
+        } => {
+            if !reachable.contains(name) {
+                return None;
+            }
+            Some(decl.clone())
+        }
+
+        Decl::MachineDecl {
+            name,
+            ..
+        } => {
+            if !reachable.contains(name) {
+                return None;
+            }
+            Some(decl.clone())
+        }
+
+        Decl::ObjectDecl {
+            name,
+            ..
+        } => {
+            if !reachable.contains(name) {
+                return None;
+            }
+            Some(decl.clone())
+        }
+
+        Decl::ExternFnDecl { name, alias, .. } => {
+            let is_kept = reachable.contains(name)
+                || alias.as_ref().map_or(false, |a| reachable.contains(a));
+            if is_kept {
+                Some(decl.clone())
+            } else {
+                None
+            }
+        }
+
+        Decl::ExternBlockDecl { abi, decls } => {
+            let filtered_decls: Vec<Decl> = decls
+                .iter()
+                .filter_map(|d| prune_decl_for_reachability(d, reachable, fn_overloads, is_main_file))
+                .collect();
+            if filtered_decls.is_empty() {
+                None
+            } else {
+                Some(Decl::ExternBlockDecl {
+                    abi: abi.clone(),
+                    decls: filtered_decls,
+                })
+            }
+        }
+
+        Decl::VarDecl { name, .. } => {
+            if is_main_file {
+                Some(decl.clone())
+            } else {
+                if reachable.contains(name) {
+                    Some(decl.clone())
+                } else {
+                    None
+                }
+            }
+        }
+
+        _ => Some(decl.clone()),
+    }
+}
+
 fn print_help() {
     println!(r#"FastLang Compiler (fast_lang) v0.1.0
 High-performance compiled language with zero-cost custom scopes and Coroutine State Machines.
@@ -267,6 +562,7 @@ fn main() {
     let mut analyzed_modules = HashSet::new();
 
     let mut all_module_dep_graphs: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut all_module_class_hierarchies: HashMap<String, String> = HashMap::new();
 
     // Analyze dependency modules in dependency order (e.g. std before std/list).
     while analyzed_modules.len() < program.modules.len() {
@@ -300,6 +596,9 @@ fn main() {
             for (k, v) in analyzer.dependency_graph {
                 all_module_dep_graphs.entry(k).or_default().extend(v);
             }
+            for (k, v) in analyzer.class_hierarchy {
+                all_module_class_hierarchies.insert(k, v);
+            }
             envs.insert(module.name.clone(), analyzer.current_env);
             all_fn_overloads.insert(module.name.clone(), analyzer.fn_overloads.clone());
             analyzed_modules.insert(module.name.clone());
@@ -322,6 +621,9 @@ fn main() {
     main_analyzer.current_context = Some("main".to_string());
     for (k, v) in all_module_dep_graphs {
         main_analyzer.dependency_graph.entry(k).or_default().extend(v);
+    }
+    for (k, v) in all_module_class_hierarchies {
+        main_analyzer.class_hierarchy.insert(k, v);
     }
 
     if envs.contains_key("std") {
@@ -355,6 +657,26 @@ fn main() {
         }
     }
 
+    let mut combined_fn_overloads: HashMap<String, Vec<crate::middle_end::semantic::environment::FnSignature>> = HashMap::new();
+    for (_, mod_overloads) in &all_fn_overloads {
+        for (fn_name, sigs) in mod_overloads {
+            combined_fn_overloads.entry(fn_name.clone()).or_default().extend(sigs.clone());
+        }
+    }
+    for (fn_name, sigs) in &main_analyzer.fn_overloads {
+        combined_fn_overloads.entry(fn_name.clone()).or_default().extend(sigs.clone());
+    }
+
+    let reachable_symbols = main_analyzer.get_reachable_symbols();
+    if debug {
+        println!("\n=== Reachable Symbols (Tree-Shaking) ===");
+        let mut sorted_reachable: Vec<_> = reachable_symbols.iter().collect();
+        sorted_reachable.sort();
+        for sym in sorted_reachable {
+            println!("  reachable: {}", sym);
+        }
+    }
+
     // Compile-Time AST Evaluation & Constant Folding Pass via Interpreter
     let mut interp = crate::middle_end::interpreter::eval::Interpreter::new();
     interp.current_env = Some(main_analyzer.current_env.clone());
@@ -373,6 +695,95 @@ fn main() {
     }
 
     // Code Generation
+    let (out_path, exe_path, build_dir, out_path_base) = if let Some(ref out) = custom_output {
+        if out.ends_with(".cpp") {
+            let exe = out.trim_end_matches(".cpp").to_string() + if cfg!(windows) { ".exe" } else { "" };
+            let p = std::path::Path::new(out);
+            let b_dir = p.parent().unwrap_or(std::path::Path::new("")).to_path_buf();
+            let stem = p.file_stem().unwrap_or(std::ffi::OsStr::new("output")).to_string_lossy();
+            let base = b_dir.join(format!("{}", stem)).to_string_lossy().into_owned();
+            (out.clone(), exe, b_dir, base)
+        } else if out.ends_with(".exe") || out.ends_with(".out") {
+            let p = std::path::Path::new(out);
+            let b_dir = p.parent().unwrap_or(std::path::Path::new("")).to_path_buf();
+            let stem = p.file_stem().unwrap_or(std::ffi::OsStr::new("output")).to_string_lossy();
+            let cpp = b_dir.join(format!("{}.cpp", stem)).to_string_lossy().into_owned();
+            let base = b_dir.join(format!("{}", stem)).to_string_lossy().into_owned();
+            (cpp, out.clone(), b_dir, base)
+        } else {
+            let out_p = std::path::Path::new(out);
+            if out_p.is_dir() || !out.contains('.') {
+                let _ = std::fs::create_dir_all(out_p);
+                let stem = std::path::Path::new(&path).file_stem().unwrap_or(std::ffi::OsStr::new("output")).to_string_lossy();
+                let cpp = out_p.join(format!("{}.cpp", stem)).to_string_lossy().into_owned();
+                let exe = out_p.join(if cfg!(windows) { format!("{}.exe", stem) } else { format!("{}", stem) }).to_string_lossy().into_owned();
+                let base = out_p.join(format!("{}", stem)).to_string_lossy().into_owned();
+                (cpp, exe, out_p.to_path_buf(), base)
+            } else {
+                let b_dir = out_p.parent().unwrap_or(std::path::Path::new("")).to_path_buf();
+                let base = out.clone();
+                (out.clone() + ".cpp", out.clone(), b_dir, base)
+            }
+        }
+    } else {
+        let source_path = std::path::Path::new(&path);
+        let parent_dir = source_path.parent().unwrap_or(std::path::Path::new(""));
+        let build_dir = parent_dir.join("build");
+        let stem = source_path.file_stem().unwrap_or(std::ffi::OsStr::new("output")).to_string_lossy();
+        if !build_dir.exists() {
+            std::fs::create_dir_all(&build_dir).unwrap();
+        }
+        let cpp = build_dir.join(format!("{}.cpp", stem)).to_string_lossy().into_owned();
+        let exe = build_dir.join(if cfg!(windows) { format!("{}.exe", stem) } else { format!("{}", stem) }).to_string_lossy().into_owned();
+        let base = build_dir.join(format!("{}", stem)).to_string_lossy().into_owned();
+        (cpp, exe, build_dir, base)
+    };
+
+    let lib_dir = build_dir.join("lib");
+    let clib_dir = build_dir.join("clib");
+    let _ = std::fs::create_dir_all(&lib_dir);
+    let _ = std::fs::create_dir_all(&clib_dir);
+
+    // Copy C library headers/sources to build/clib
+    let std_clib = std::path::Path::new("src/std/clib");
+    if std_clib.exists() {
+        for entry in std::fs::read_dir(std_clib).into_iter().flatten().flatten() {
+            let target2 = clib_dir.join(entry.file_name());
+            let _ = std::fs::copy(entry.path(), target2);
+        }
+    }
+
+    // Write build/clib/fast_runtime.h
+    let runtime_header = crate::backend::cpp::runtime::generate_runtime_header();
+    let runtime_path = clib_dir.join("fast_runtime.h");
+    let _ = std::fs::write(&runtime_path, &runtime_header);
+
+    // Compile all C files in build/clib into .o files using gcc -c
+    let mut clib_objects = Vec::new();
+    if clib_dir.exists() {
+        for entry in std::fs::read_dir(&clib_dir).into_iter().flatten().flatten() {
+            let p = entry.path();
+            if p.extension().and_then(|e| e.to_str()) == Some("c") {
+                let obj_path = p.with_extension("o");
+                let status = std::process::Command::new("gcc")
+                    .arg("-c")
+                    .arg("-ffunction-sections")
+                    .arg("-fdata-sections")
+                    .arg(&p)
+                    .arg("-o")
+                    .arg(&obj_path)
+                    .status();
+                if let Ok(s) = status {
+                    if s.success() {
+                        clib_objects.push(obj_path);
+                    } else {
+                        eprintln!("Warning: Failed to compile C source: {}", p.display());
+                    }
+                }
+            }
+        }
+    }
+
     if backend == "cranelift" {
         if debug {
             println!("\n=== Code Generation (Cranelift IR) ===");
@@ -411,48 +822,30 @@ fn main() {
         }
 
         if use_aot {
-            let (out_path_base, exe_path, _build_dir) = if let Some(ref out) = custom_output {
-                let p = std::path::Path::new(out);
-                let b_dir = p.parent().unwrap_or(std::path::Path::new("")).to_path_buf();
-                let stem = p.file_stem().unwrap_or(std::ffi::OsStr::new("output")).to_string_lossy();
-                if !b_dir.exists() && b_dir != std::path::Path::new("") {
-                    std::fs::create_dir_all(&b_dir).unwrap();
-                }
-                (b_dir.join(format!("{}", stem)).to_string_lossy().into_owned(), out.clone(), b_dir)
-            } else {
-                let source_path = std::path::Path::new(&path);
-                let parent_dir = source_path.parent().unwrap_or(std::path::Path::new(""));
-                let build_dir = parent_dir.join("build");
-                let stem = source_path.file_stem().unwrap_or(std::ffi::OsStr::new("output")).to_string_lossy();
-                if !build_dir.exists() {
-                    std::fs::create_dir_all(&build_dir).unwrap();
-                }
-                (build_dir.join(format!("{}", stem)).to_string_lossy().into_owned(), build_dir.join(if cfg!(windows) { format!("{}.exe", stem) } else { format!("{}", stem) }).to_string_lossy().into_owned(), build_dir)
-            };
-
             let ir_file = format!("{}.ir", out_path_base);
             std::fs::write(&ir_file, format!("{}", ir_module)).ok();
 
-            let out_path = format!("{}.o", out_path_base);
+            let out_o = format!("{}.o", out_path_base);
 
             let mut aot_backend = crate::backend::cranelift::aot::CraneliftAotBackend::new();
             aot_backend.compile_module(&ir_module);
-            aot_backend.finalize(&out_path);
+            aot_backend.finalize(&out_o);
 
-            println!("Linking {} into {}...", out_path, exe_path);
-            let linker_status = std::process::Command::new("gcc")
-                .arg(&out_path)
-                .arg("src/std/clib/io.c")
-                .arg("-o")
-                .arg(&exe_path)
-                .status();
+            println!("Linking {} into {}...", out_o, exe_path);
+            let mut gcc_cmd = std::process::Command::new("gcc");
+            gcc_cmd.arg(&out_o);
+            for obj in &clib_objects {
+                gcc_cmd.arg(obj);
+            }
+            gcc_cmd.arg("-Wl,--gc-sections").arg("-o").arg(&exe_path);
+            let linker_status = gcc_cmd.status();
 
             match linker_status {
                 Ok(s) if s.success() => {
                     println!("Native compilation successful! Executable is {} 🚀", exe_path);
                 }
                 _ => {
-                    eprintln!("Linker failed to produce executable from {}", out_path);
+                    eprintln!("Linker failed to produce executable from {}", out_o);
                 }
             }
         } else {
@@ -467,20 +860,22 @@ fn main() {
     if debug {
         println!("\n=== Code Generation (C++) ===");
     }
-    let mut final_cpp = String::new();
-
-    let mut header_gen = cpp::generator::CodeGenerator::new();
-    final_cpp.push_str(&header_gen.generate(&vec![], true, false));
 
     let mut accumulated_custom_scopes = std::collections::HashSet::new();
     let mut accumulated_primitive_impl_methods = std::collections::HashMap::new();
-    let reachable_symbols = main_analyzer.get_reachable_symbols();
+
+    let base_std_names = ["std/error", "std/io", "std/string", "std/range", "std"];
+    let mut base_std_headers = Vec::new();
+    let mut other_module_headers = Vec::new();
 
     for module in &program.modules {
         let raw_ns = module.name.split('/').next().unwrap_or(&module.name).replace("-", "_");
         let cpp_namespace = if raw_ns == "std" { "fast_std".to_string() } else { raw_ns };
 
-        // Filter module declarations to only include reachable symbols
+        // For module files, we do NOT prune at the AST level.
+        // The C++ linker's --gc-sections handles dead code elimination for library code.
+        // AST-level pruning of modules would corrupt shared .hpp files in concurrent
+        // test scenarios where different tests need different symbol subsets.
         let filtered_ast: Vec<Stmt> = module.ast.iter().filter_map(|stmt| {
             match stmt {
                 Stmt::Declaration(decl) => {
@@ -496,57 +891,10 @@ fn main() {
                                     == crate::frontend::parser::ast::ExecutionMode::FullyCompilable;
                             if is_comptime {
                                 None
-                            } else if reachable_symbols.contains(name) {
+                            } else {
                                 Some(stmt.clone())
-                            } else {
-                                None
                             }
                         }
-                        Decl::MicroDecl { name, .. }
-                        | Decl::ClassDecl { name, .. }
-                        | Decl::StructDecl { name, .. }
-                        | Decl::MachineDecl { name, .. }
-                        | Decl::BlockDecl { name, .. }
-                        | Decl::BlueprintDecl { name, .. }
-                        | Decl::EnumDecl { name, .. }
-                        | Decl::VarDecl { name, .. }
-                        | Decl::ArrayDecl { name, .. } => {
-                            if reachable_symbols.contains(name) {
-                                Some(stmt.clone())
-                            } else {
-                                None
-                            }
-                        }
-                        Decl::ImplDecl { target, target_generics, is_handle_impl, methods, handle_block } => {
-                            let filtered_methods: Vec<Decl> = methods.iter().filter(|m| {
-                                if let Decl::FnDecl { name, .. } = m {
-                                    reachable_symbols.contains(name) || reachable_symbols.contains(target)
-                                } else {
-                                    true
-                                }
-                            }).cloned().collect();
-
-                            let filtered_handles: Vec<Decl> = handle_block.iter().filter(|h| {
-                                if let Decl::FnDecl { name, .. } = h {
-                                    reachable_symbols.contains(name) || reachable_symbols.contains(target)
-                                } else {
-                                    true
-                                }
-                            }).cloned().collect();
-
-                            if filtered_methods.is_empty() && filtered_handles.is_empty() {
-                                None
-                            } else {
-                                Some(Stmt::Declaration(Decl::ImplDecl {
-                                    target: target.clone(),
-                                    target_generics: target_generics.clone(),
-                                    is_handle_impl: *is_handle_impl,
-                                    methods: filtered_methods,
-                                    handle_block: filtered_handles,
-                                }))
-                            }
-                        }
-                        Decl::Import { .. } | Decl::ExternBlockDecl { .. } | Decl::ExternFnDecl { .. } | Decl::DefineDecl { .. } => Some(stmt.clone()),
                         _ => Some(stmt.clone()),
                     }
                 }
@@ -554,84 +902,82 @@ fn main() {
             }
         }).collect();
 
-        let has_relevant_decls = filtered_ast.iter().any(|s| {
-            matches!(s, Stmt::Declaration(d) if !matches!(d, Decl::Import { .. }))
-        });
 
-        if !has_relevant_decls {
-            continue;
-        }
-
-        final_cpp.push_str(&format!("namespace {} {{\n", cpp_namespace));
         let mut codegen = cpp::generator::CodeGenerator::new();
         codegen.custom_scope_types = accumulated_custom_scopes.clone();
         codegen.primitive_impl_methods = accumulated_primitive_impl_methods.clone();
         let module_cpp = codegen.generate(&filtered_ast, false, false);
         accumulated_custom_scopes.extend(codegen.custom_scope_types.clone());
         accumulated_primitive_impl_methods.extend(codegen.primitive_impl_methods.clone());
-        final_cpp.push_str(&module_cpp);
-        final_cpp.push_str(&format!("\n}} // namespace {}\n\n", cpp_namespace));
-        if cpp_namespace == "fast_std" {
-            final_cpp.push_str("using namespace fast_std;\n\n");
+
+        let safe_name = module.name.replace('/', "_") + ".hpp";
+        let mut header_content = String::new();
+        header_content.push_str("#pragma once\n");
+        header_content.push_str("#include <clib/fast_runtime.h>\n");
+        for inc in &codegen.c_includes {
+            header_content.push_str(&format!("{}\n", inc));
+        }
+        if !base_std_names.contains(&module.name.as_str()) {
+            header_content.push_str("#include <lib/fast_std.hpp>\n");
+        }
+        for (dep, _) in module_import_deps(&module.ast) {
+            let dep_safe = dep.replace('/', "_") + ".hpp";
+            header_content.push_str(&format!("#include <lib/{}>\n", dep_safe));
+        }
+        header_content.push_str("\n");
+        header_content.push_str(&format!("namespace {} {{\n", cpp_namespace));
+        header_content.push_str(&module_cpp);
+        header_content.push_str(&format!("\n}} // namespace {}\n", cpp_namespace));
+
+        let header_path = lib_dir.join(&safe_name);
+        let _ = std::fs::write(&header_path, &header_content);
+
+        if base_std_names.contains(&module.name.as_str()) {
+            base_std_headers.push(safe_name);
+        } else {
+            other_module_headers.push(safe_name);
         }
     }
+
+    // Generate build/lib/fast_std.hpp
+    let mut fast_std_content = String::new();
+    fast_std_content.push_str("#pragma once\n");
+    fast_std_content.push_str("#include <clib/fast_runtime.h>\n");
+    for h in &base_std_headers {
+        fast_std_content.push_str(&format!("#include <lib/{}>\n", h));
+    }
+    let fast_std_path = lib_dir.join("fast_std.hpp");
+    let _ = std::fs::write(&fast_std_path, &fast_std_content);
 
     let mut main_codegen = cpp::generator::CodeGenerator::new();
     main_codegen.custom_scope_types = accumulated_custom_scopes;
     main_codegen.primitive_impl_methods = accumulated_primitive_impl_methods;
-    let main_cpp = main_codegen.generate(&program.main_ast, false, true);
-    final_cpp.push_str(&main_cpp);
+    let pruned_main_ast = prune_ast_for_reachability(&program.main_ast, &reachable_symbols, &combined_fn_overloads, true);
+    let main_cpp = main_codegen.generate(&pruned_main_ast, false, true);
 
-    let (out_path, exe_path, build_dir) = if let Some(ref out) = custom_output {
-        if out.ends_with(".cpp") {
-            let exe = out.trim_end_matches(".cpp").to_string() + if cfg!(windows) { ".exe" } else { "" };
-            let p = std::path::Path::new(out);
-            let b_dir = p.parent().unwrap_or(std::path::Path::new("")).to_path_buf();
-            (out.clone(), exe, b_dir)
-        } else if out.ends_with(".exe") || out.ends_with(".out") {
-            let p = std::path::Path::new(out);
-            let b_dir = p.parent().unwrap_or(std::path::Path::new("")).to_path_buf();
-            let stem = p.file_stem().unwrap_or(std::ffi::OsStr::new("output")).to_string_lossy();
-            let cpp = b_dir.join(format!("{}.cpp", stem)).to_string_lossy().into_owned();
-            (cpp, out.clone(), b_dir)
-        } else {
-            let out_p = std::path::Path::new(out);
-            if out_p.is_dir() || !out.contains('.') {
-                let _ = std::fs::create_dir_all(out_p);
-                let stem = std::path::Path::new(&path).file_stem().unwrap_or(std::ffi::OsStr::new("output")).to_string_lossy();
-                (out_p.join(format!("{}.cpp", stem)).to_string_lossy().into_owned(), out_p.join(format!("{}.exe", stem)).to_string_lossy().into_owned(), out_p.to_path_buf())
-            } else {
-                let b_dir = out_p.parent().unwrap_or(std::path::Path::new("")).to_path_buf();
-                (out.clone() + ".cpp", out.clone(), b_dir)
-            }
-        }
-    } else {
-        let source_path = std::path::Path::new(&path);
-        let parent_dir = source_path.parent().unwrap_or(std::path::Path::new(""));
-        let build_dir = parent_dir.join("build");
-        let stem = source_path.file_stem().unwrap_or(std::ffi::OsStr::new("output")).to_string_lossy();
-        if !build_dir.exists() {
-            std::fs::create_dir_all(&build_dir).unwrap();
-        }
-        (
-            build_dir.join(format!("{}.cpp", stem)).to_string_lossy().into_owned(),
-            build_dir.join(format!("{}.exe", stem)).to_string_lossy().into_owned(),
-            build_dir,
-        )
-    };
+    let mut final_cpp = String::new();
+    final_cpp.push_str("#include <clib/fast_runtime.h>\n");
 
-    // Copy C library headers/sources to build/clib
-    let lib_dir = build_dir.join("lib");
-    let clib_dir = build_dir.join("clib");
-    let _ = std::fs::create_dir_all(&lib_dir);
-    let _ = std::fs::create_dir_all(&clib_dir);
-    let std_clib = std::path::Path::new("src/std/clib");
-    if std_clib.exists() {
-        for entry in std::fs::read_dir(std_clib).into_iter().flatten().flatten() {
-            let target2 = clib_dir.join(entry.file_name());
-            let _ = std::fs::copy(entry.path(), target2);
+    if envs.contains_key("std") || !base_std_headers.is_empty() {
+        final_cpp.push_str("#include <lib/fast_std.hpp>\n");
+    }
+
+    for (dep_mod, _) in &program.main_deps {
+        let safe_name = dep_mod.replace('/', "_") + ".hpp";
+        if !base_std_headers.contains(&safe_name) {
+            final_cpp.push_str(&format!("#include <lib/{}>\n", safe_name));
         }
     }
+
+    for inc in &main_codegen.c_includes {
+        final_cpp.push_str(&format!("{}\n", inc));
+    }
+
+    if envs.contains_key("std") || !base_std_headers.is_empty() {
+        final_cpp.push_str("\nusing namespace fast_std;\n\n");
+    }
+
+    final_cpp.push_str(&main_cpp);
 
     let mut write_success = false;
     for _ in 0..10 {
@@ -657,18 +1003,25 @@ fn main() {
         println!("Compiling to {}...", exe_path);
     }
 
-    let status = std::process::Command::new("g++")
-        .arg(&out_path)
+    let mut gpp_cmd = std::process::Command::new("g++");
+    gpp_cmd.arg(&out_path);
+    for obj in &clib_objects {
+        gpp_cmd.arg(obj);
+    }
+    gpp_cmd
         .arg("-o")
         .arg(&exe_path)
         .arg("-std=c++17")
+        .arg("-ffunction-sections")
+        .arg("-fdata-sections")
+        .arg("-Wl,--gc-sections")
         .arg("-I.")
         .arg(format!("-I{}", build_dir.display()))
-        .arg(format!("-I{}", clib_dir.display()))
         .arg(format!("-I{}", lib_dir.display()))
         .arg("-Isrc/std")
-        .arg("-Isrc")
-        .status();
+        .arg("-Isrc");
+
+    let status = gpp_cmd.status();
 
     match status {
         Ok(s) if s.success() => {

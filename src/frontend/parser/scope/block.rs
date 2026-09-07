@@ -306,7 +306,7 @@ impl Parser {
 
                 handle_fn.push(Decl::FnDecl {
                     visibility: Visibility::Private,
-                    is_virtual: true,
+                    is_virtual: false,
                     is_abstract: false,
                     name: method_name,
                     generics: vec![],

@@ -1,5 +1,7 @@
 // Test 91: Compile-time Validation Block
-
+micro test_micro_in_compile = ()-> {
+    @compile::print("test_micro_in_compile");
+}
 fn test_validation() -> void {
     int32 x = rand<int32>();
     @compile {
@@ -8,9 +10,9 @@ fn test_validation() -> void {
         }else{
         @compile::print("x is ", x);
         }
+        test_micro_in_compile();
     }(x);
 }
-
 fn main() -> int32 {
     test_validation();
     println("COMPILE VALIDATION PASSED");

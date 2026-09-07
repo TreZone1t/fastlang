@@ -9,9 +9,63 @@ public enum Option<T> -> {
     None,
 }
 
-impl handle for Option -> {
-    fn default() -> Option<T> {
-        return Option::None;
+impl Option<T> -> {
+    fn is_Some() -> bool {
+        match this {
+            Some(_) => return true,
+            None => return false,
+        }
+    }
+    fn is_None() -> bool {
+        match this {
+            Some(_) => return false,
+            None => return true,
+        }
+    }
+    fn get() -> T {
+        match this {
+            Some(val) => {
+                return val;
+            }
+            None => {
+                throw new Error("Option is None");
+            }
+        }
+    }
+    fn get_or(default_val: T) -> T {
+        match this {
+            Some(val) => {
+                return val;
+            }
+            None => {
+                return default_val;
+            }
+        }
+    }
+    fn as_str() -> str {
+        match this {
+            Some(val) => {
+                return "Some(" + val + ")";
+            }
+            None => {
+                return "None";
+            }
+        }
+    }
+    handle -> {
+        fn default() -> Option<T> {
+            return Option::None;
+        }
+        fn display() -> str {
+            match this {
+                Some(val) => {
+                    return "Some(" + val + ")";
+                }
+                None => {
+                    return "None";
+                }
+            }
+        }
     }
 }
 
@@ -41,7 +95,9 @@ public @compile -> {
         set castable_to(type) -> bool;
         set size() -> uint32;
     }
-
+    micro todo = (msg: str) -> {
+        throw new Error("TODO: " + msg);
+    }
     method cast<Target, Source>(val: Source) -> Target {
         if (!Source.is_primitive()) {
             throw new Error("casting not supported for non primitive types");
@@ -57,8 +113,11 @@ public @compile -> {
     }
 
 }
+// @compile wrapper
+public micro todo = (msg: str) -> void {
+    @compile::todo(msg);
+}
 
-// cast wrapper
 public method cast<Target, Source>(val: Source) -> Target {
     return @compile::cast<Target>(val);
 }

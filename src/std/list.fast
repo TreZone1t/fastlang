@@ -4,7 +4,7 @@
 public class node<T> -> {
     private -> {
         T value;
-        Option<name<node<T>>> next = None;
+        Option<modify<node<T>>> next = None;
         int i = 0;
     }
     public -> {
@@ -14,11 +14,14 @@ public class node<T> -> {
         fn set_value(v: T) -> void {
             this.value = v;
         }
-        fn get_next() -> Option<name<node<T>>> {
+        fn get_next() -> Option<modify<node<T>>> {
             return this.next;
         }
         fn set_next(n: Option<name<node<T>>>) -> void {
             this.next = n;
+        }
+        fn as_str() -> str {
+            return "{ value: " + this.value + ", next: " + this.next.as_str() + " }";
         }
     }
     constructor -> {
@@ -27,20 +30,33 @@ public class node<T> -> {
             this.next = None;
         }
     }
+    handle -> {
+        fn drop() -> void {
+            if (this.next.is_Some()) {
+                del this.next;
+            }
+        }
+        fn display() -> char[] {
+            return this.as_str();
+        }
+    }
 }
 
 public class list<T> -> {
     private -> {
-        Option<name<node<T>>> head = None;
-        Option<name<node<T>>> current = None;
+        Option<modify<node<T>>> head = None;
+        Option<modify<node<T>>> current = None;
         int32 length = 0;
     }
     public -> {
       fn set_head(node_ptr: Option<name<node<T>>>) -> void {
+        if (this.head.is_Some()) {
+            del this.head;
+        }
         this.head = node_ptr;
         this.length = this.length + 1;
       }
-      fn get_head() -> Option<name<node<T>>> {
+      fn get_head() -> Option<modify<node<T>>> {
         return this.head;
       }
       fn push(item: T) -> void {
@@ -103,8 +119,16 @@ public class list<T> -> {
           }
         }
       }
+      fn drop() -> void {
+          del this.head;
+          if(this.current.is_Some()){
+            del this.current;
+          }
+      }
+      fn display() -> char[] {
+          return "{ head: " + this.head.as_str() + ", length: " + this.length + " }";
+      }
     }
-
     constructor -> {
       init() -> {
         this.head = None;

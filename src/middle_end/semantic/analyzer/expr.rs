@@ -392,6 +392,7 @@ impl SemanticAnalyzer {
                     };
 
                     if let Some(method_sig) = bp_method_info {
+                        self.record_dependency(format!("{}::{}", type_name, property));
                         self.record_dependency(property.clone());
                         self.record_dependency(type_name.clone());
                         for dep in extract_all_type_names(&method_sig.return_type.as_str()) {
@@ -427,7 +428,11 @@ impl SemanticAnalyzer {
                     let method_deps_and_ret =
                         if let Some(meta) = self.global_metadata.get(&type_name) {
                             if let Some(fn_type) = meta.methods.get(property) {
-                                let mut deps = vec![property.clone(), type_name.clone()];
+                                let mut deps = vec![
+                                    format!("{}::{}", type_name, property),
+                                    property.clone(),
+                                    type_name.clone(),
+                                ];
                                 for dep in extract_all_type_names(&fn_type.return_type.as_str()) {
                                     deps.push(dep);
                                 }
@@ -464,6 +469,9 @@ impl SemanticAnalyzer {
                             return_type
                         };
                         return Ok(ret_type.as_str());
+                    }
+                    if property == "as_str" && args.is_empty() {
+                        return Ok("str".to_string());
                     }
                 }
                 let mut arg_types = Vec::new();
@@ -514,7 +522,12 @@ impl SemanticAnalyzer {
 
                 if let Some(ref name) = name_opt {
                     self.record_dependency(name.clone());
-                    self.record_dependency(name.clone());
+                    if name == "print" || name == "println" {
+                        for a_ty in &arg_types {
+                            let type_clean = a_ty.trim_start_matches("name<").trim_end_matches('>');
+                            self.record_dependency(format!("{}::display", type_clean));
+                        }
+                    }
                     self.current_env.borrow_mut().mark_used(name);
                     if let Some(info) = self.current_env.borrow().lookup(name) {
                         if let SymbolKind::Variable { type_node, .. } = &info.kind {
@@ -639,10 +652,10 @@ impl SemanticAnalyzer {
                             return Ok(call_sig.return_type.as_str());
                         }
                     }
-                    if let Some(sigs) = self.fn_overloads.get(name) {
+                    if let Some(sigs) = self.fn_overloads.get(name).cloned() {
                         let mut best_match = None;
                         // Pass 1: Prioritize exact concrete overloads
-                        for sig in sigs {
+                        for sig in &sigs {
                             let is_variadic =
                                 sig.params.last().map(|p| p.is_variadic).unwrap_or(false);
                             let min_args = sig
@@ -673,6 +686,8 @@ impl SemanticAnalyzer {
                                         self.types_are_compatible(&p.type_node.as_str(), a_ty)
                                     });
                                     if matches {
+                                        let sig_key = crate::middle_end::semantic::analyzer::decl::make_sig_key(name, &sig.params);
+                                        self.record_dependency(sig_key);
                                         best_match = Some(sig.return_type.as_str());
                                         break;
                                     }
@@ -682,7 +697,7 @@ impl SemanticAnalyzer {
 
                         // Pass 2: Generic fallback/catch-all overloads
                         if best_match.is_none() {
-                            for sig in sigs {
+                            for sig in &sigs {
                                 let is_variadic =
                                     sig.params.last().map(|p| p.is_variadic).unwrap_or(false);
                                 let min_args = sig
@@ -734,6 +749,8 @@ impl SemanticAnalyzer {
                                         }
                                     }
                                     if matches {
+                                        let sig_key = crate::middle_end::semantic::analyzer::decl::make_sig_key(name, &sig.params);
+                                        self.record_dependency(sig_key);
                                         let generic_map = resolve_call_generics(
                                             &sig.generics,
                                             &sig.params,
@@ -846,9 +863,30 @@ impl SemanticAnalyzer {
                         "Semantic Error: Cannot use undefined value in operation".to_string()
                     );
                 }
-                if (left_type == "str" || left_type == "char" || left_type == "array<char>")
-                    && (right_type == "str" || right_type == "char" || right_type == "array<char>")
-                    && operator == "+"
+                let op_handle = match operator.as_str() {
+                    "+" => Some("add"),
+                    "-" => Some("sub"),
+                    "*" => Some("mul"),
+                    "/" => Some("div"),
+                    "%" => Some("mod"),
+                    "==" => Some("equal"),
+                    "!=" => Some("not_equal"),
+                    "<" => Some("less_than"),
+                    ">" => Some("greater_than"),
+                    "<=" => Some("less_than_equal"),
+                    ">=" => Some("greater_than_equal"),
+                    _ => None,
+                };
+                if let Some(h) = op_handle {
+                    self.record_dependency(format!("{}::{}", left_type, h));
+                }
+                if operator == "+"
+                    && (left_type == "str"
+                        || left_type == "char"
+                        || left_type == "array<char>"
+                        || right_type == "str"
+                        || right_type == "char"
+                        || right_type == "array<char>")
                 {
                     return Ok("str".to_string());
                 }
@@ -935,25 +973,41 @@ impl SemanticAnalyzer {
                 if current_type != "unknown" {
                     let bp_name = extract_blueprint_name_from_type(&obj_type)
                         .unwrap_or_else(|| obj_type.clone());
-                    if let Some(bp) = self.current_env.borrow().lookup_blueprint(&bp_name) {
-                        if bp.handles.contains(&HandleMethods::IndexAccess)
-                            || bp.methods.contains_key("index_access")
-                        {
-                            if let Some(ret_sig) = bp.methods.get("index_access") {
-                                return Ok(ret_sig.return_type.as_str());
+                    let bp_match = {
+                        let env = self.current_env.borrow();
+                        if let Some(bp) = env.lookup_blueprint(&bp_name) {
+                            if bp.handles.contains(&HandleMethods::IndexAccess)
+                                || bp.methods.contains_key("index_access")
+                            {
+                                let ret = bp.methods.get("index_access").map(|s| s.return_type.as_str()).unwrap_or_else(|| "int32".to_string());
+                                Some(ret)
+                            } else {
+                                None
                             }
-                            return Ok("int32".to_string());
+                        } else {
+                            None
                         }
+                    };
+                    if let Some(ret_sig) = bp_match {
+                        self.record_dependency(format!("{}::index_access", bp_name));
+                        return Ok(ret_sig);
                     }
-                    if let Some(meta) = self.global_metadata.get(&bp_name) {
+
+                    let meta_match = if let Some(meta) = self.global_metadata.get(&bp_name) {
                         if meta.handles.contains(&HandleMethods::IndexAccess)
                             || meta.methods.contains_key("index_access")
                         {
-                            if let Some(ret_ty) = meta.methods.get("index_access") {
-                                return Ok(ret_ty.return_type.as_str());
-                            }
-                            return Ok("int32".to_string());
+                            let ret = meta.methods.get("index_access").map(|s| s.return_type.as_str()).unwrap_or_else(|| "int32".to_string());
+                            Some(ret)
+                        } else {
+                            None
                         }
+                    } else {
+                        None
+                    };
+                    if let Some(ret_ty) = meta_match {
+                        self.record_dependency(format!("{}::index_access", bp_name));
+                        return Ok(ret_ty);
                     }
                     Err(
                         format!("Semantic Error: Type '{}' does not support index access (make a index_access handle for it).", obj_type)
@@ -1053,10 +1107,12 @@ impl SemanticAnalyzer {
                 }
                 if let Expr::Identifier(n) = &**target {
                     self.record_dependency(n.clone());
+                    self.record_dependency(format!("{}::init", n));
                     return Ok(n.clone());
                 }
                 if let Expr::NamespaceAccess { namespace, .. } = &**target {
                     self.record_dependency(namespace.clone());
+                    self.record_dependency(format!("{}::init", namespace));
                     if self.global_metadata.contains_key(namespace)
                         || self
                             .current_env
@@ -1074,7 +1130,8 @@ impl SemanticAnalyzer {
                 self.visit_expression(target)?;
                 let type_str = type_node.as_str();
                 for dep in extract_all_type_names(&type_str) {
-                    self.record_dependency(dep);
+                    self.record_dependency(dep.clone());
+                    self.record_dependency(format!("{}::init", dep));
                 }
                 Ok(type_str)
             }

@@ -42,6 +42,7 @@ pub struct SemanticAnalyzer {
     pub current_machine: Option<String>,
     pub machine_labels: HashMap<String, HashMap<String, HashMap<String, BaseType>>>,
     pub in_generic_template: bool,
+    pub class_hierarchy: HashMap<String, String>,
 }
 
 
@@ -67,6 +68,7 @@ impl SemanticAnalyzer {
             current_machine: None,
             machine_labels: HashMap::new(),
             in_generic_template: false,
+            class_hierarchy: HashMap::new(),
         };
         analyzer.import_metadata();
         analyzer
@@ -204,6 +206,57 @@ impl SemanticAnalyzer {
         }
 
         while let Some(curr) = queue.pop() {
+            // 1. If curr is a qualified method "Type::method":
+            if let Some(idx) = curr.find("::") {
+                let (type_part, method_part) = curr.split_at(idx);
+                let method_name = &method_part[2..];
+                // Check if type_part has a base class
+                if let Some(base) = self.class_hierarchy.get(type_part) {
+                    let base_method = format!("{}::{}", base, method_name);
+                    if reachable.insert(base_method.clone()) {
+                        queue.push(base_method);
+                    }
+                }
+                // Check if any derived class of type_part is in reachable
+                for (derived, base) in &self.class_hierarchy {
+                    if base == type_part && reachable.contains(derived) {
+                        let derived_method = format!("{}::{}", derived, method_name);
+                        if reachable.insert(derived_method.clone()) {
+                            queue.push(derived_method);
+                        }
+                    }
+                }
+            } else {
+                // curr is a top-level symbol or type name
+                // If it's a type name: automatically include its init and drop if defined
+                let init_sym = format!("{}::init", curr);
+                if self.dependency_graph.contains_key(&init_sym) {
+                    if reachable.insert(init_sym.clone()) {
+                        queue.push(init_sym);
+                    }
+                }
+                let drop_sym = format!("{}::drop", curr);
+                if self.dependency_graph.contains_key(&drop_sym) {
+                    if reachable.insert(drop_sym.clone()) {
+                        queue.push(drop_sym);
+                    }
+                }
+                // If curr is a derived class, check if any virtual methods of its base were already reached
+                if let Some(base) = self.class_hierarchy.get(&curr) {
+                    for sym in &reachable.clone() {
+                        if let Some(idx) = sym.find("::") {
+                            let (t, m) = sym.split_at(idx);
+                            if t == base {
+                                let derived_m = format!("{}::{}", curr, &m[2..]);
+                                if reachable.insert(derived_m.clone()) {
+                                    queue.push(derived_m);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if let Some(deps) = self.dependency_graph.get(&curr) {
                 for dep in deps {
                     if reachable.insert(dep.clone()) {

@@ -69,11 +69,38 @@ fn test_struct_payload_enum() -> void {
     }
 }
 
+fn test_pattern_alternation() -> void {
+    int32 val = 2;
+    match (val) -> {
+        1 | 2 | 3 => {
+            println("val is 1, 2, or 3"); // EXPECT: val is 1, 2, or 3
+        }
+        _ => {
+            println("val is something else");
+        }
+    }
+
+    int32 other = 5;
+    match (other) -> {
+        1 | 2 | 3 => {
+            println("other is 1, 2, or 3");
+        }
+        4 | 5 | 6 => {
+            println("other is 4, 5, or 6"); // EXPECT: other is 4, 5, or 6
+        }
+        _ => {
+            println("other is something else");
+        }
+    }
+}
+
 fn main() -> int32 {
     test_number_match();
     test_using_and_tuple_payload();
     test_struct_payload_enum();
+    test_pattern_alternation();
 
     println("ALL 07_ENUMS TESTS PASSED"); // EXPECT: ALL 07_ENUMS TESTS PASSED
     return 0;
 }
+

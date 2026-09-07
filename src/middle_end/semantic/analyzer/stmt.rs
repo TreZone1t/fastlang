@@ -153,6 +153,15 @@ impl SemanticAnalyzer {
             } => {
                 let iterable_type = self.visit_expression(iterable)?;
                 let (base_name, type_args) = extract_type_args_from_str(&iterable_type);
+                let bp_opt = self.current_env.borrow().lookup_blueprint(&base_name);
+                let meta_opt = if bp_opt.is_none() {
+                    self.global_metadata
+                        .get(&base_name)
+                        .or_else(|| self.global_metadata.get(&iterable_type))
+                        .cloned()
+                } else {
+                    None
+                };
                 let item_type = if iterable_type.starts_with("array<")
                     || iterable_type.ends_with("[]")
                 {
@@ -163,7 +172,10 @@ impl SemanticAnalyzer {
                         .to_string()
                 } else if iterable_type == "str" {
                     "char".to_string()
-                } else if let Some(bp) = self.current_env.borrow().lookup_blueprint(&base_name) {
+                } else if let Some(bp) = bp_opt {
+                    self.record_dependency(base_name.clone());
+                    self.record_dependency(format!("{}::next", base_name));
+                    self.record_dependency(format!("{}::has_next", base_name));
                     let specialized_bp = bp.specialize(&type_args);
                     if let Some(sig) = specialized_bp.methods.get("next") {
                         extract_iter_payload_type(&sig.return_type)
@@ -178,11 +190,10 @@ impl SemanticAnalyzer {
                             format!("Semantic Error: Type '{}' does not implement 'next' handle for for-in iteration", iterable_type)
                         );
                     }
-                } else if let Some(meta) = self
-                    .global_metadata
-                    .get(&base_name)
-                    .or_else(|| self.global_metadata.get(&iterable_type))
-                {
+                } else if let Some(meta) = meta_opt {
+                    self.record_dependency(base_name.clone());
+                    self.record_dependency(format!("{}::next", base_name));
+                    self.record_dependency(format!("{}::has_next", base_name));
                     if let Some(next_fn) = meta.methods.get("next") {
                         let mut map = HashMap::new();
                         let generics = match &meta.ty {
@@ -346,6 +357,9 @@ impl SemanticAnalyzer {
                 self.enter_scope();
                 self.active_flags.push("+has_break".to_string());
                 for s in cases {
+                    if let Stmt::CaseStmt { option, .. } = s {
+                        Self::validate_match_pattern(option)?;
+                    }
                     self.visit_statement(s)?;
                 }
                 self.active_flags.retain(|f| f != "+has_break");
@@ -966,6 +980,22 @@ impl SemanticAnalyzer {
             },
             _ => false,
         }
+    }
+
+    pub(crate) fn validate_match_pattern(expr: &Expr) -> Result<(), String> {
+        match expr {
+            Expr::BinaryOp { left, operator, right } => {
+                if operator == "||" || operator == "or" {
+                    return Err(
+                        "Semantic Error: Use single pipe '|' for pattern alternation in match, '||' and 'or' are not allowed in match patterns.".to_string()
+                    );
+                }
+                Self::validate_match_pattern(left)?;
+                Self::validate_match_pattern(right)?;
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
 }

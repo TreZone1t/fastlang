@@ -78,7 +78,7 @@ fn test_std_list() -> void {
     li.push(4);
     int32 len = li.size();
     println("list len: ", len); // EXPECT: list len: 4
-
+    println("list: ", li); // EXPECT: list: { head: Some({ value: 4, next: Some({ value: 3, next: Some({ value: 2, next: Some({ value: 1, next: None }) }) }) }), length: 4 }
     match (li.pop()) -> {
         Some(val) => {
             println("popped: ", val); // EXPECT: popped: 4

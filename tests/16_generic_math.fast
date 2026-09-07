@@ -1,0 +1,23 @@
+// Test 16: Generic Math Functions in std::math
+import std::math;
+
+fn main() -> int32 {
+    int32 n = 144;
+    float64 r = sqrt(n);
+    println("sqrt(144): ", r); // EXPECT: sqrt(144): 12
+
+    int32 sq_int = square(5);
+    println("square(5): ", sq_int); // EXPECT: square(5): 25
+
+    float64 sq_flt = square(2.5);
+    println("square(2.5): ", sq_flt); // EXPECT: square(2.5): 6.25
+
+    int32 a = abs(-50);
+    println("abs(-50): ", a); // EXPECT: abs(-50): 50
+
+    float64 p = pow(2, 3);
+    println("pow(2, 3): ", p); // EXPECT: pow(2, 3): 8
+
+    println("ALL 16_GENERIC_MATH TESTS PASSED"); // EXPECT: ALL 16_GENERIC_MATH TESTS PASSED
+    return 0;
+}

@@ -1,7 +1,39 @@
-public fn sum(a: int32, b: int32) -> int32 {
-    return a + b;
+import @c "clib/math.h";
+
+extern @c {
+    fn fast_sqrt(x: float64) -> float64;
+    fn fast_pow(base: float64, exp: float64) -> float64;
+    fn fast_sin(x: float64) -> float64;
+    fn fast_cos(x: float64) -> float64;
+    fn fast_tan(x: float64) -> float64;
+}
+public fn sqrt<T>(x: T) -> float64 {
+    return fast_sqrt(x as float64);
 }
 
-fn private_helper() {
-    log("this should not be visible to main.fs");
+public fn pow<T, U>(base: T, exp: U) -> float64 {
+    return fast_pow(base as float64, exp as float64);
+}
+
+public fn sin<T>(x: T) -> float64 {
+    return fast_sin(x as float64);
+}
+
+public fn cos<T>(x: T) -> float64 {
+    return fast_cos(x as float64);
+}
+
+public fn tan<T>(x: T) -> float64 {
+    return fast_tan(x as float64);
+}
+
+public fn square<T>(x: T) -> T {
+    return x * x;
+}
+
+public fn abs<T>(x: T) -> T {
+    if (x < 0) {
+        return -x;
+    }
+    return x;
 }

@@ -1,5 +1,10 @@
 use super::*;
 
+pub fn make_sig_key(name: &str, params: &[Param]) -> String {
+    let types: Vec<String> = params.iter().map(|p| p.type_node.as_str()).collect();
+    format!("{}#{}", name, types.join(","))
+}
+
 impl SemanticAnalyzer {
     pub fn pre_register_decl(&mut self, decl: &Decl) -> Result<(), String> {
         match decl {
@@ -394,6 +399,8 @@ impl SemanticAnalyzer {
                 let info = self.make_blueprint_symbol(name, visibility.clone());
                 self.current_env.borrow_mut().define(name.clone(), info)?;
                 for v in variants {
+                    self.dependency_graph.entry(v.name.clone()).or_default().insert(name.clone());
+                    self.dependency_graph.entry(name.clone()).or_default().insert(v.name.clone());
                     let var_symbol = SymbolInfo {
                         name: v.name.clone(),
                         kind: SymbolKind::Variable {
@@ -416,9 +423,18 @@ impl SemanticAnalyzer {
                 self.enter_scope();
                 let prev = self.in_custom_scope;
                 self.in_custom_scope = true;
+                let prev_type = self.current_type_name.clone();
+                self.current_type_name = Some(name.clone());
                 for d in handle_block {
+                    if let Decl::FnDecl { is_virtual: true, .. } = d {
+                        return Err(format!(
+                            "Semantic Error: 'virtual' modifier is only allowed in 'class' methods, not in enum '{}'",
+                            name
+                        ));
+                    }
                     self.visit_declaration(d)?;
                 }
+                self.current_type_name = prev_type;
                 self.leave_scope();
                 self.in_custom_scope = prev;
             }
@@ -674,6 +690,12 @@ impl SemanticAnalyzer {
                         ..
                     } = d
                     {
+                        if *is_virtual {
+                            return Err(format!(
+                                "Semantic Error: 'virtual' modifier is only allowed in 'class' methods, not in machine '{}'",
+                                name
+                            ));
+                        }
                         bp.methods.insert(
                             f_name.clone(),
                             crate::middle_end::semantic::environment::FnSignature {
@@ -708,6 +730,12 @@ impl SemanticAnalyzer {
                 generics,
                 ..
             } => {
+                if *is_virtual && self.current_context.is_none() && !self.in_custom_scope {
+                    return Err(format!(
+                        "Semantic Error: 'virtual' modifier is only allowed in 'class' methods, not in standalone function '{}'",
+                        name
+                    ));
+                }
                 let mut resolved_params = params.clone();
                 for p in &mut resolved_params {
                     if let Some(ref def_val) = p.default_value {
@@ -893,7 +921,14 @@ impl SemanticAnalyzer {
                 let prev_heap = self.heap_allocated_vars.clone();
                 self.deleted_vars.clear();
                 self.heap_allocated_vars.clear();
-                self.current_context = Some(name.clone());
+                let ctx_name = if let Some(ref tname) = self.current_type_name {
+                    format!("{}::{}", tname, name)
+                } else {
+                    name.clone()
+                };
+                self.current_context = Some(ctx_name.clone());
+                let sig_key = make_sig_key(name, &resolved_params);
+                self.dependency_graph.entry(sig_key).or_default().insert(ctx_name.clone());
                 self.active_flags.push("+has_return".to_string());
                 self.active_flags.push("+has_throw".to_string());
                 self.active_flags.push("+has_yield".to_string());
@@ -1132,6 +1167,47 @@ impl SemanticAnalyzer {
                     ));
                 }
 
+                let expected_generics = if let Some(meta) = &meta_opt {
+                    match &meta.ty {
+                        BaseType::Enum { generics, .. }
+                        | BaseType::Blueprint { generics, .. }
+                        | BaseType::Class { generics, .. }
+                        | BaseType::Struct { generics, .. } => generics.len(),
+                        BaseType::Array { .. } => 1,
+                        _ => 0,
+                    }
+                } else if let Some(bp) = self.current_env.borrow().lookup_blueprint(target) {
+                    bp.generics.len()
+                } else {
+                    0
+                };
+
+                if expected_generics > 0 && target_generics.len() != expected_generics {
+                    return Err(format!(
+                        "Semantic Error: Type '{}' requires {} generic parameter(s) in 'impl {}<...>', found {}",
+                        target, expected_generics, target, target_generics.len()
+                    ));
+                }
+
+                let is_target_class = if let Some(meta) = &meta_opt {
+                    matches!(&meta.ty, BaseType::Class { .. })
+                } else if let Some(bp) = self.current_env.borrow().lookup_blueprint(target) {
+                    bp.is_class
+                } else {
+                    false
+                };
+
+                if !is_target_class {
+                    for m in methods.iter().chain(handle_block.iter()) {
+                        if let Decl::FnDecl { is_virtual: true, .. } = m {
+                            return Err(format!(
+                                "Semantic Error: 'virtual' modifier is only allowed in 'class' methods, not in '{}'",
+                                target
+                            ));
+                        }
+                    }
+                }
+
                 if self.global_metadata.get(target).is_none() {
                     self.global_metadata.insert(
                         target.clone(),
@@ -1361,9 +1437,6 @@ impl SemanticAnalyzer {
                     self.visit_declaration(h)?;
                     if let Decl::FnDecl {
                         name,
-                        generics,
-                        params,
-                        return_type,
                         ..
                     } = h
                     {
@@ -1372,16 +1445,6 @@ impl SemanticAnalyzer {
                             if hk != HandleMethods::NotFound && !meta.handles.contains(&hk) {
                                 meta.handles.push(hk);
                             }
-                            meta.methods.insert(
-                                name.clone(),
-                                FnType {
-                                    name: name.clone(),
-                                    generics: generics.clone(),
-                                    params: params.clone(),
-                                    return_type: return_type.clone(),
-                                    mode: ExecutionMode::Runtime,
-                                },
-                            );
                         }
                     }
                 }
@@ -1603,6 +1666,24 @@ impl SemanticAnalyzer {
         let declared_type = type_node.as_str();
         for dep in extract_all_type_names(&declared_type) {
             self.record_dependency(dep);
+        }
+
+        // Propagate deps recorded under the var name into the containing function context.
+        // This ensures tree-shaking can trace: fn_context -> deps_used_in_var_init.
+        if let Some(ref prev_ctx) = prev_context.clone() {
+            let var_deps: Vec<String> = self
+                .dependency_graph
+                .get(name)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            for dep in var_deps {
+                self.dependency_graph
+                    .entry(prev_ctx.clone())
+                    .or_default()
+                    .insert(dep);
+            }
         }
 
         if expr_type != "unknown" {
@@ -1966,6 +2047,10 @@ impl SemanticAnalyzer {
             type_node.clone()
         };
 
+        for dep in extract_all_type_names(&final_type_node.as_str()) {
+            self.record_dependency(dep);
+        }
+
         let is_custom_or_struct = match &final_type_node {
             BaseType::Class { .. }
             | BaseType::Struct { .. }
@@ -2041,7 +2126,18 @@ impl SemanticAnalyzer {
         let prev_context = self.current_context.clone();
         self.current_context = Some(name.to_string());
         if let Some(parent) = extends {
+            self.class_hierarchy.insert(name.to_string(), parent.to_string());
             self.record_dependency(parent.to_string());
+        }
+        if !is_class {
+            for d in private_block.iter().chain(public_block).chain(static_block).chain(handle_block) {
+                if let Decl::FnDecl { is_virtual: true, .. } = d {
+                    return Err(format!(
+                        "Semantic Error: 'virtual' modifier is only allowed in 'class' methods, not in struct '{}'",
+                        name
+                    ));
+                }
+            }
         }
         for d in private_block.iter().chain(public_block).chain(static_block) {
             if let Decl::VarDecl { type_node, .. } = d {
@@ -2226,6 +2322,8 @@ impl SemanticAnalyzer {
         }
 
         if let Some(constructors) = constructor {
+            let prev_ctor_ctx = self.current_context.clone();
+            self.current_context = Some(format!("{}::init", name));
             for ctor in constructors {
                 self.enter_scope();
                 for param in &ctor.params {
@@ -2255,6 +2353,7 @@ impl SemanticAnalyzer {
                 self.in_statement_scope = prev_stmt;
                 self.leave_scope();
             }
+            self.current_context = prev_ctor_ctx;
         }
 
         self.leave_scope();

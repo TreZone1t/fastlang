@@ -1,0 +1,16 @@
+﻿// Test 93 (Expected Failure): virtual fn in enum
+enum Color -> {
+    Red,
+    Green,
+    Blue,
+}
+
+impl Color -> {
+    virtual fn is_red() -> bool {
+        return true;
+    }
+}
+
+fn main() -> int32 {
+    return 0;
+}

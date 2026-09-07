@@ -88,7 +88,7 @@ pub enum HandleLookupResult {
 //   "int32"          -> None
 // ─────────────────────────────────────────────────────────────────────────────
 pub fn extract_blueprint_name_from_type(type_str: &str) -> Option<String> {
-    const PREFIXES: &[&str] = &["class<", "struct<", "enum<", "blueprint<", "machine<", "block<", "name<", "pointer<"];
+    const PREFIXES: &[&str] = &["class<", "struct<", "enum<", "blueprint<", "machine<", "block<", "name<", "pointer<", "modify<", "copy<"];
     for prefix in PREFIXES {
         if let Some(rest) = type_str.strip_prefix(prefix) {
             let base_name = rest.split('<').next().unwrap_or(rest).trim_end_matches('>').to_string();
@@ -174,7 +174,7 @@ pub fn build_blueprint_from_base_type(
                         generics: fn_type.generics.clone(),
                         params: fn_type.params.clone(),
                         return_type: fn_type.return_type.clone(),
-                        is_virtual: true,
+                        is_virtual: false,
                         is_abstract: false,
                     },
                 );
@@ -239,7 +239,7 @@ pub fn build_blueprint_from_base_type(
                         generics: fn_type.generics.clone(),
                         params: fn_type.params.clone(),
                         return_type: fn_type.return_type.clone(),
-                        is_virtual: true,
+                        is_virtual: false,
                         is_abstract: false,
                     },
                 );
@@ -271,7 +271,7 @@ pub fn build_blueprint_from_base_type(
                         generics: fn_type.generics.clone(),
                         params: fn_type.params.clone(),
                         return_type: fn_type.return_type.clone(),
-                        is_virtual: true,
+                        is_virtual: false,
                         is_abstract: false,
                     },
                 );
@@ -290,7 +290,7 @@ pub fn build_blueprint_from_base_type(
                         generics: fn_type.generics.clone(),
                         params: fn_type.params.clone(),
                         return_type: fn_type.return_type.clone(),
-                        is_virtual: true,
+                        is_virtual: false,
                         is_abstract: false,
                     },
                 );
@@ -312,6 +312,7 @@ pub fn build_blueprint_from_metadata(
     for (f_name, f_type) in &meta.fields {
         bp.fields.entry(f_name.clone()).or_insert_with(|| f_type.clone());
     }
+    let is_class = bp.is_class;
     for (m_name, fn_type) in &meta.methods {
         let hk = HandleMethods::from_str(m_name.as_str());
         if hk != HandleMethods::NotFound {
@@ -322,7 +323,7 @@ pub fn build_blueprint_from_metadata(
             generics: fn_type.generics.clone(),
             params: fn_type.params.clone(),
             return_type: fn_type.return_type.clone(),
-            is_virtual: true,
+            is_virtual: is_class,
             is_abstract: false,
         });
     }

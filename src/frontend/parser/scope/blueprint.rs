@@ -272,14 +272,11 @@ impl Parser {
             }
         }
         for h in &handle_block {
-            if let Decl::FnDecl { name, generics, params, return_type, .. } = h {
-                entry.methods.insert(name.clone(), FnType {
-                    name: name.clone(),
-                    generics: generics.clone(),
-                    params: params.clone(),
-                    return_type: return_type.clone(),
-                    mode: ExecutionMode::Runtime,
-                });
+            if let Decl::FnDecl { name, .. } = h {
+                let hk = HandleMethods::from_str(name.as_str());
+                if hk != HandleMethods::NotFound && !entry.handles.contains(&hk) {
+                    entry.handles.push(hk);
+                }
             }
         }
 

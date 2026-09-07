@@ -1,0 +1,13 @@
+// Negative Test: Pattern alternation in match only supports single pipe '|', '||' and 'or' are rejected.
+fn main() -> int32 {
+    int32 x = 5;
+    match (x) -> {
+        4 || 5 => {
+            println("bad");
+        }
+        _ => {
+            println("default");
+        }
+    }
+    return 0;
+}

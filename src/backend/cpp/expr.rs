@@ -136,15 +136,17 @@ impl CodeGenerator {
                 } else if operator == "+" {
                     let l_is_str_lit = l.starts_with('"') && l.ends_with('"');
                     let r_is_str_lit = r.starts_with('"') && r.ends_with('"');
-                    let l_is_char = matches!(&**left, Expr::LiteralChar(_)) || (l.starts_with('\'') && l.ends_with('\''));
-                    let r_is_char = matches!(&**right, Expr::LiteralChar(_)) || (r.starts_with('\'') && r.ends_with('\''));
-                    if l_is_str_lit && r_is_char {
-                        format!("(fastlang_str({}) + {})", l, r)
-                    } else if l_is_char && r_is_str_lit {
-                        format!("({} + fastlang_str({}))", l, r)
+                    let l_wrapped = if l_is_str_lit {
+                        format!("fastlang_str({})", l)
                     } else {
-                        format!("({} {} {})", l, operator, r)
-                    }
+                        l
+                    };
+                    let r_wrapped = if r_is_str_lit {
+                        format!("fastlang_str({})", r)
+                    } else {
+                        r
+                    };
+                    format!("({} + {})", l_wrapped, r_wrapped)
                 } else {
                     format!("({} {} {})", l, operator, r)
                 }
@@ -202,6 +204,10 @@ impl CodeGenerator {
                             return format!("fastlang_type_default<{}>()", cpp_t);
                         }
                     }
+                    if property == "as_str" && args.is_empty() {
+                        let obj_code = self.visit_expression(object);
+                        return format!("fastlang_as_str({})", obj_code);
+                    }
                     if let Some(target) = self.primitive_impl_methods.get(property).cloned() {
                         let obj_code = self.visit_expression(object);
                         let mut args_code = Vec::new();
@@ -224,7 +230,7 @@ impl CodeGenerator {
                             format!("{}::{}", obj_code, safe_prop)
                         } else if obj_code == "super" || obj_code == "this" {
                             format!("this->{}", safe_prop)
-                        } else if self.pointer_vars.contains(&obj_code) || obj_code.ends_with("current") || obj_code.ends_with("head") || obj_code.ends_with("next") || obj_code.ends_with("temp") {
+                        } else if self.pointer_vars.contains(&obj_code) {
                             format!("{}->{}", obj_code, safe_prop)
                         } else {
                             format!("{}.{}", obj_code, safe_prop)
@@ -344,7 +350,7 @@ impl CodeGenerator {
                     format!("{}::{}", obj_code, safe_prop)
                 } else if obj_code == "super" || obj_code == "this" {
                     format!("this->{}", safe_prop)
-                } else if self.pointer_vars.contains(&obj_code) || obj_code.ends_with("current") || obj_code.ends_with("head") || obj_code.ends_with("next") || obj_code.ends_with("temp") {
+                } else if self.pointer_vars.contains(&obj_code) {
                     format!("{}->{}", obj_code, safe_prop)
                 } else if property == "length" || property == "len" {
                     format!("((int32_t)fastlang_len({}))", obj_code)

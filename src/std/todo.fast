@@ -960,3 +960,16 @@ method i_add_casted_then_print< T , U , V> = (val: T , val2: U) -> void {
 // so we will not allow it also 
 // in the end
 // runtime code we don't need examples for it 
+
+// we need to support or in match
+match (x) {
+    1 | 2 | 3 => {
+        println("x is 1, 2, or 3");
+    }
+    4 or 5 || 6 => {
+        println("x is 4, 5, or 6");
+    }
+    _ => {
+        println("x is something else");
+    }
+}

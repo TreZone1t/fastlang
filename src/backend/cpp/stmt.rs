@@ -558,9 +558,10 @@ impl CodeGenerator {
                 condition, cases, ..
             } => {
                 let cond_code = self.visit_expression(condition);
+                let cond_val = if cond_code == "this" { "(*this)".to_string() } else { cond_code };
                 self.emit("{");
                 self.indent_level += 1;
-                self.emit(&format!("auto&& __match_val = {};", cond_code));
+                self.emit(&format!("auto&& __match_val = {};", cond_val));
 
                 let mut first = true;
                 for s in cases {
@@ -612,13 +613,27 @@ impl CodeGenerator {
                                             })
                                             .collect();
                                         if !var_names.is_empty() {
+                                            let mut unused_counter = 0;
+                                            let cpp_var_names: Vec<String> = var_names
+                                                .iter()
+                                                .map(|vn| {
+                                                    if vn == "_" {
+                                                        unused_counter += 1;
+                                                        format!("__unused_{}", unused_counter)
+                                                    } else {
+                                                        vn.clone()
+                                                    }
+                                                })
+                                                .collect();
                                             for vn in &var_names {
-                                                self.pointer_vars.insert(vn.clone());
+                                                if vn != "_" {
+                                                    self.pointer_vars.insert(vn.clone());
+                                                }
                                             }
                                             self.emit(
                                                 &format!(
                                                     "auto [{}] = std::get<typename std::decay_t<decltype(__match_val)>::{}_Payload>(__match_val.data);",
-                                                    var_names.join(", "),
+                                                    cpp_var_names.join(", "),
                                                     variant_name
                                                 )
                                             );
@@ -747,6 +762,61 @@ impl CodeGenerator {
                                             )
                                         );
                                     }
+                                    self.indent_level += 1;
+                                    for case_stmt in body {
+                                        self.visit_statement(case_stmt);
+                                    }
+                                    self.indent_level -= 1;
+                                    self.emit("}");
+                                }
+                                Expr::BinaryOp { operator, .. } if operator == "|" => {
+                                    fn flatten_pipe<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
+                                        if let Expr::BinaryOp { left, operator, right } = e {
+                                            if operator == "|" {
+                                                flatten_pipe(left, out);
+                                                flatten_pipe(right, out);
+                                                return;
+                                            }
+                                        }
+                                        out.push(e);
+                                    }
+                                    let mut patterns = Vec::new();
+                                    flatten_pipe(option, &mut patterns);
+
+                                    let mut cond_strs = Vec::new();
+                                    for pat in patterns {
+                                        match pat {
+                                            Expr::NamespaceAccess { namespace, property } => {
+                                                let prop_code = self.visit_expression(property);
+                                                let variant_name = prop_code.trim_end_matches("()");
+                                                if self.simple_enum_types.contains(namespace) {
+                                                    cond_strs.push(format!("(__match_val == {}::{})", namespace, variant_name));
+                                                } else {
+                                                    cond_strs.push(format!("(__match_val.tag == std::decay_t<decltype(__match_val)>::Tag::{})", variant_name));
+                                                }
+                                            }
+                                            Expr::PropertyAccess { object, property } => {
+                                                let obj_code = self.visit_expression(object);
+                                                if self.simple_enum_types.contains(&obj_code) {
+                                                    cond_strs.push(format!("(__match_val == {}::{})", obj_code, property));
+                                                } else {
+                                                    cond_strs.push(format!("(__match_val.tag == std::decay_t<decltype(__match_val)>::Tag::{})", property));
+                                                }
+                                            }
+                                            Expr::Identifier(ident) => {
+                                                cond_strs.push(format!("fastlang_match_eq(__match_val, {})", ident));
+                                            }
+                                            _ => {
+                                                let val_code = self.visit_expression(pat);
+                                                cond_strs.push(format!("fastlang_match_eq(__match_val, {})", val_code));
+                                            }
+                                        }
+                                    }
+                                    self.emit(&format!(
+                                        "{} ({}) {{",
+                                        branch_prefix,
+                                        cond_strs.join(" || ")
+                                    ));
                                     self.indent_level += 1;
                                     for case_stmt in body {
                                         self.visit_statement(case_stmt);
@@ -1015,7 +1085,7 @@ impl CodeGenerator {
                     }
 
                     self.emit(&format!(
-                        "inline std::ostream& operator<<(std::ostream& os, const {}& obj) {{",
+                        "inline fastlang_str fastlang_as_str(const {}& obj) {{",
                         name
                     ));
                     self.indent_level += 1;
@@ -1023,13 +1093,13 @@ impl CodeGenerator {
                     self.indent_level += 1;
                     for variant in variants.iter() {
                         self.emit(&format!(
-                            "case {}::{}: os << \"{}\"; break;",
+                            "case {}::{}: return \"{}\";",
                             name, variant.name, variant.name
                         ));
                     }
                     self.indent_level -= 1;
                     self.emit("}");
-                    self.emit("return os;");
+                    self.emit("return \"\";");
                     self.indent_level -= 1;
                     self.emit("}");
                 } else {
@@ -1164,10 +1234,6 @@ impl CodeGenerator {
                                 );
                             }
                         }
-                        self.emit(&format!(
-                            "bool is_{}() const {{ return tag == Tag::{}; }}",
-                            v.name, v.name
-                        ));
                     }
 
                     let default_variant = variants
@@ -1224,14 +1290,14 @@ impl CodeGenerator {
                     if is_generic && variants.iter().any(|v| v.name == "Some") {
                         self.emit(
                             &format!(
-                                "template <typename... U> {}(const {}<U...>& other) : tag(static_cast<Tag>(other.tag)) {{ if (other.is_Some()) {{ data = Some_Payload{{ T(std::get<1>(other.data)._0) }}; }} }}",
+                                "template <typename... U> {}(const {}<U...>& other) : tag(static_cast<Tag>(other.tag)) {{ if (tag == Tag::Some) {{ data = Some_Payload{{ T(std::get<1>(other.data)._0) }}; }} }}",
                                 name,
                                 name
                             )
                         );
                         self.emit(
                             &format!(
-                                "template <typename... U> {}& operator=(const {}<U...>& other) {{ tag = static_cast<Tag>(other.tag); if (other.is_Some()) {{ data = Some_Payload{{ T(std::get<1>(other.data)._0) }}; }} return *this; }}",
+                                "template <typename... U> {}& operator=(const {}<U...>& other) {{ tag = static_cast<Tag>(other.tag); if (tag == Tag::Some) {{ data = Some_Payload{{ T(std::get<1>(other.data)._0) }}; }} return *this; }}",
                                 name,
                                 name
                             )
@@ -1247,6 +1313,18 @@ impl CodeGenerator {
                         "bool operator!=(const {}& other) const {{ return tag != other.tag; }}",
                         name
                     ));
+
+                    if let Some(methods) = self.target_impl_methods.get(name).cloned() {
+                        let old_in_class = self.in_class_or_scope;
+                        self.in_class_or_scope = true;
+                        for m in &methods {
+                            self.visit_declaration(m);
+                        }
+                        self.in_class_or_scope = old_in_class;
+                    }
+                    if let Some(handles) = self.target_handle_methods.get(name).cloned() {
+                        self.emit_operator_overloads(&Some(handles));
+                    }
 
                     self.indent_level -= 1;
                     self.emit("};");
@@ -1316,22 +1394,40 @@ impl CodeGenerator {
                         name.clone()
                     };
 
+                    let fn_decl_sig = if generics.is_empty() {
+                        format!("template <typename _T = {}> inline fastlang_str fastlang_as_str(const {}& obj) {{", name, name)
+                    } else {
+                        format!("{}inline fastlang_str fastlang_as_str(const {}& obj) {{", template_prefix, obj_type_str)
+                    };
+                    self.emit(&fn_decl_sig);
+                    self.indent_level += 1;
+                    let target_t = if generics.is_empty() { "_T" } else { &obj_type_str };
                     self.emit(&format!(
-                        "{}inline std::ostream& operator<<(std::ostream& os, const {}& obj) {{",
-                        template_prefix, obj_type_str
+                        "if constexpr (fastlang_has_as_str<{}>::value) {{",
+                        target_t
                     ));
+                    self.indent_level += 1;
+                    self.emit(&format!("return const_cast<{}&>(obj).as_str();", target_t));
+                    self.indent_level -= 1;
+                    self.emit(&format!("}} else if constexpr (has_display<{}>::value) {{", target_t));
+                    self.indent_level += 1;
+                    self.emit(&format!("return const_cast<{}&>(obj).display();", target_t));
+                    self.indent_level -= 1;
+                    self.emit("} else {");
                     self.indent_level += 1;
                     self.emit("switch (obj.tag) {");
                     self.indent_level += 1;
                     for v in variants.iter() {
                         self.emit(&format!(
-                            "case {}::Tag::{}: os << \"{}\"; break;",
+                            "case {}::Tag::{}: return \"{}\";",
                             obj_type_str, v.name, v.name
                         ));
                     }
                     self.indent_level -= 1;
                     self.emit("}");
-                    self.emit("return os;");
+                    self.emit("return \"\";");
+                    self.indent_level -= 1;
+                    self.emit("}");
                     self.indent_level -= 1;
                     self.emit("}");
                 }
@@ -1608,6 +1704,7 @@ impl CodeGenerator {
                     ));
                 } else if val_code.starts_with("fastlang_slice")
                     || (len_str.is_empty() && !val_code.starts_with("{"))
+                    || val_code == "{}"
                 {
                     self.emit(&format!(
                         "{}fastlang_slice<{}> {} = {};",
@@ -1684,41 +1781,6 @@ impl CodeGenerator {
                     || decls_use_flag(handle_block, "continued")
                 {
                     self.emit("bool continued = false;");
-                }
-
-                let display_fn = handle_block.iter().find_map(|h| {
-                    if let Decl::FnDecl {
-                        name: fn_name,
-                        return_type,
-                        ..
-                    } = h
-                    {
-                        if fn_name == "display" {
-                            Some(return_type.clone())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                });
-
-                if let Some(_ret_type) = display_fn {
-                    self.emit(&format!(
-                        "friend std::ostream& operator<<(std::ostream& os, const {}& obj) {{",
-                        name
-                    ));
-                    self.emit(&format!("    os << const_cast<{}&>(obj).display();", name));
-                    self.emit("    return os;");
-                    self.emit("}");
-                } else {
-                    self.emit(&format!(
-                        "friend std::ostream& operator<<(std::ostream& os, const {}& obj) {{",
-                        name
-                    ));
-                    self.emit(&format!("    os << \"[object {}]\";", name));
-                    self.emit("    return os;");
-                    self.emit("}");
                 }
 
                 self.emit_operator_overloads(&Some(handle_block.clone()));
@@ -1811,7 +1873,7 @@ impl CodeGenerator {
                             );
                             self.emit(
                                 &format!(
-                                    "{}(const char* s) : {}(fastlang_slice<char>(s, s ? std::char_traits<char>::length(s) : 0)) {{}}",
+                                    "{}(const char* s) : {}(fastlang_slice<char>(s, s ? strlen(s) : 0)) {{}}",
                                     name,
                                     name
                                 )
@@ -1914,44 +1976,6 @@ impl CodeGenerator {
                         self.indent_level -= 1;
                         self.emit("}");
                     }
-                }
-                let display_fn = handle_block.iter().find_map(|h| {
-                    if let Decl::FnDecl {
-                        name: fn_name,
-                        return_type,
-                        ..
-                    } = h
-                    {
-                        if fn_name == "display" {
-                            Some(return_type.clone())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                });
-
-                if let Some(ret_type) = display_fn {
-                    self.emit(&format!(
-                        "friend std::ostream& operator<<(std::ostream& os, const {}& obj) {{",
-                        name
-                    ));
-                    if ret_type == BaseType::Void {
-                        self.emit(&format!("    const_cast<{}&>(obj).display();", name));
-                    } else {
-                        self.emit(&format!("    os << const_cast<{}&>(obj).display();", name));
-                    }
-                    self.emit("    return os;");
-                    self.emit("}");
-                } else {
-                    self.emit(&format!(
-                        "friend std::ostream& operator<<(std::ostream& os, const {}& obj) {{",
-                        name
-                    ));
-                    self.emit(&format!("    os << \"[struct {}]\";", name));
-                    self.emit("    return os;");
-                    self.emit("}");
                 }
 
                 self.emit_operator_overloads(&Some(handle_block.clone()));
@@ -2064,13 +2088,19 @@ impl CodeGenerator {
                     return;
                 }
 
-                let virtual_prefix = if *is_virtual || (self.in_class_or_scope && name != "main") {
+                let virtual_prefix = if *is_virtual {
                     "virtual "
                 } else {
                     ""
                 };
+                let inline_prefix = if !self.in_class_or_scope && safe_name != "main" && !*is_virtual {
+                    "inline "
+                } else {
+                    ""
+                };
                 self.emit(&format!(
-                    "{}{} {}({}) {{",
+                    "{}{}{} {}({}) {{",
+                    inline_prefix,
                     virtual_prefix,
                     ret_type_str,
                     safe_name,
@@ -2334,20 +2364,22 @@ impl CodeGenerator {
                             || header.ends_with(".hpp")
                             || !header.contains('/')
                         {
-                            if header.starts_with('<') || header.starts_with('"') {
-                                self.emit(&format!("#include {}", header));
+                            let inc = if header.starts_with('<') || header.starts_with('"') {
+                                format!("#include {}", header)
                             } else {
-                                self.emit(&format!("#include <{}>", header));
-                            }
+                                format!("#include <{}>", header)
+                            };
+                            self.c_includes.insert(inc);
                         }
                     }
                 } else if let Some(header) = module_path.first() {
                     if header.ends_with(".h") || header.ends_with(".hpp") {
-                        if header.starts_with('<') || header.starts_with('"') {
-                            self.emit(&format!("#include {}", header));
+                        let inc = if header.starts_with('<') || header.starts_with('"') {
+                            format!("#include {}", header)
                         } else {
-                            self.emit(&format!("#include <{}>", header));
-                        }
+                            format!("#include <{}>", header)
+                        };
+                        self.c_includes.insert(inc);
                     }
                 }
             }
@@ -2781,15 +2813,6 @@ impl CodeGenerator {
                         ));
                     }
                 }
-
-                // friend ostream
-                self.emit(&format!(
-                    "friend std::ostream& operator<<(std::ostream& os, const {}& obj) {{",
-                    name
-                ));
-                self.emit(&format!("    os << \"[machine {}]\";", name));
-                self.emit("    return os;");
-                self.emit("}");
 
                 self.indent_level -= 1;
                 self.emit("};");

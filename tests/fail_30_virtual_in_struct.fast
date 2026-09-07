@@ -1,0 +1,10 @@
+﻿// Test 92 (Expected Failure): virtual fn in struct
+struct Foo -> {
+    public -> {
+        virtual fn bar() -> void {}
+    }
+}
+
+fn main() -> int32 {
+    return 0;
+}

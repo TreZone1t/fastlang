@@ -1034,6 +1034,14 @@ impl Parser {
                     body: vec![Stmt::ReturnStmt(Some(body_expr))],
                 })
             }
+            TokenKind::Underscore => {
+                self.advance();
+                Ok(Expr::Identifier("_".to_string()))
+            }
+            TokenKind::Handle => {
+                self.advance();
+                Ok(Expr::Identifier("handle".to_string()))
+            }
             // --- Keywords used as identifier expressions (e.g. `flag && check`) ---
             // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             other => {
@@ -1310,6 +1318,7 @@ impl Parser {
 
     pub(crate) fn infix_binding_power(&self) -> Option<(u8, u8)> {
         match &self.peek().kind {
+            TokenKind::Pipe => Some((1, 2)),
             TokenKind::Or => Some((1, 2)),  // left-associative
             TokenKind::And => Some((3, 4)), // left-associative
             TokenKind::Eq => Some((5, 6)),  // left-associative
@@ -1341,6 +1350,7 @@ impl Parser {
             TokenKind::LessEq => "<=".to_string(),
             TokenKind::And => "&&".to_string(),
             TokenKind::Or => "||".to_string(),
+            TokenKind::Pipe => "|".to_string(),
             other => format!("{:?}", other),
         }
     }
