@@ -281,6 +281,7 @@ pub fn expr_to_json(expr: &Expr) -> Value {
         Expr::LiteralFloat(v) => json!({ "type": "LiteralFloat", "value": v }),
         Expr::LiteralString(v) => json!({ "type": "LiteralString", "value": v }),
         Expr::LiteralChar(v) => json!({ "type": "LiteralChar", "value": v }),
+        Expr::LiteralUChar(v) => json!({ "type": "LiteralUChar", "value": v }),
         Expr::LiteralBool(v) => json!({ "type": "LiteralBool", "value": v }),
         Expr::Identifier(v) => json!({ "type": "Identifier", "name": v }),
         Expr::BinaryOp { left, operator, right } =>
@@ -314,6 +315,13 @@ pub fn expr_to_json(expr: &Expr) -> Value {
             "type": "PropertyAccess",
             "object": expr_to_json(object),
             "property": property
+        }),
+        Expr::HandleCall { object, handle_name, args } =>
+            json!({
+            "type": "HandleCall",
+            "object": expr_to_json(object),
+            "handle_name": handle_name,
+            "args": args.iter().map(expr_to_json).collect::<Vec<_>>()
         }),
         Expr::ArrayLiteral(elems) =>
             json!({

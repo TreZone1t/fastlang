@@ -20,6 +20,8 @@ pub struct Parser {
     pub(crate) fn_metadata: HashMap<String, FnType>,
     pub(crate) macro_metadata: std::collections::HashSet<String>,
     pub(crate) current_generics: std::collections::HashSet<String>,
+    pub(crate) type_aliases: HashMap<String, BaseType>,
+    pub(crate) in_match_pattern: bool,
 }
 
 impl Parser {
@@ -43,6 +45,8 @@ impl Parser {
             fn_metadata: HashMap::new(),
             macro_metadata,
             current_generics: std::collections::HashSet::new(),
+            type_aliases: HashMap::new(),
+            in_match_pattern: false,
         }
     }
 

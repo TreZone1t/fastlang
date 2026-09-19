@@ -39,6 +39,7 @@ impl Parser {
             constructor: None,
             methods: HashMap::new(),
             handles: Vec::new(),
+            handle_signatures: HashMap::new(),
             vars: HashMap::new(),
             variants: None,
         };
@@ -160,7 +161,7 @@ impl Parser {
         meta.handles = used_handles.clone();
         for hdl in &handle_block {
             if let Decl::FnDecl { name, generics, params, return_type, .. } = hdl {
-                meta.methods.insert(name.clone(), FnType {
+                meta.handle_signatures.insert(name.clone(), FnType {
                     name: name.clone(),
                     generics: generics.clone(),
                     params: params.clone(),

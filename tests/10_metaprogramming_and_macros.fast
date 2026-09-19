@@ -98,7 +98,10 @@ fn main() -> int32 {
     forward_variadic("fwd", 123);
     // EXPECT: fwd
     // EXPECT: 123
-
+    mutRef<int32> m = new int32(10);
+    if (typeof(m) == mutRef<int32>) {
+        println("mutRef generic type check passed"); // EXPECT: mutRef generic type check passed
+    }
     println("ALL 10_METAPROGRAMMING TESTS PASSED"); // EXPECT: ALL 10_METAPROGRAMMING TESTS PASSED
     return 0;
 }

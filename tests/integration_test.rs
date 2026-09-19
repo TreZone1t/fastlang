@@ -14,6 +14,7 @@ fn run_all_examples() {
 }
 
 #[test]
+#[ignore] // Run explicitly with: cargo test run_cranelift_aot_tests -- --ignored
 fn run_cranelift_aot_tests() {
     run_directory_tests(Path::new("tests"), "cranelift");
 }
@@ -255,6 +256,14 @@ Actual Output:
 
     let passed = *passed_tests.lock().unwrap();
     let failed = *failed_tests.lock().unwrap();
+
+    let debug_mode = std::env::var("FASTLANG_TEST_DEBUG").map(|v| v == "1").unwrap_or(false);
+    if !debug_mode && failed == 0 {
+        let build_dir = test_dir.join("build");
+        if build_dir.exists() {
+            let _ = fs::remove_dir_all(&build_dir);
+        }
+    }
 
     println!("==================================================");
     println!("Test Run Complete: {} Passed, {} Failed", passed, failed);

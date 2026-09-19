@@ -24,12 +24,12 @@ fn main() -> int32 {
     println("User ID: ", user.id);
     println("User Name: ", user.username);
 
-    println("=== 2. Smart Pointers (name<T> and modify<T>) ===");
+    println("=== 2. Smart Pointers (ref<T> and mutRef<T>) ===");
     int32 val = 100;
-    name<int32> read_ptr = &val;
+    ref<int32> read_ptr = &val;
     println("Read via pointer: ", *read_ptr);
 
-    modify<int32> mod_ptr = &val;
+    mutRef<int32> mod_ptr = &val;
     mod_ptr += 50;
     println("Updated value: ", val);
 

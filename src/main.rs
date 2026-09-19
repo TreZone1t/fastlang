@@ -171,6 +171,10 @@ fn prune_decl_for_reachability(
                 reachable.contains(&sig_key)
             } else {
                 reachable.contains(name)
+                    || (name.contains("_br") && {
+                        let base = name.split("_br").next().unwrap();
+                        reachable.contains(base)
+                    })
             };
 
             if is_kept {
@@ -436,6 +440,10 @@ OPTIONS:
     --emit-ir, --print-ir          Print intermediate representation (IR) output
     --aot                          Enable Ahead-Of-Time (AOT) compilation
     --target <TARGET>              Specify target architecture/platform
+    --clean                        Remove temporary C++ and library files after successful build
+
+SUBCOMMANDS:
+    clean [PATH]                   Delete build/ directory and cached artifacts in PATH (or cwd)
 
 EXAMPLES:
     fast_lang app.fs
@@ -443,6 +451,7 @@ EXAMPLES:
     fast_lang app.fs --ast-file app_ast.json
     fast_lang app.fs --emit-cpp
     fast_lang app.fs -I ./std/ -d
+    fast_lang clean
 "#);
 }
 
@@ -450,6 +459,29 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() == 1 || args.contains(&"--help".to_string()) || args.contains(&"-h".to_string()) || args.contains(&"-help".to_string()) {
         print_help();
+        return;
+    }
+
+    if args.len() > 1 && args[1] == "clean" {
+        let target_dir = if args.len() > 2 {
+            std::path::PathBuf::from(&args[2])
+        } else {
+            std::path::PathBuf::from(".")
+        };
+        let build_dir = if target_dir.file_name().and_then(|s| s.to_str()) == Some("build") {
+            target_dir
+        } else {
+            target_dir.join("build")
+        };
+        if build_dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&build_dir) {
+                eprintln!("Failed to clean {}: {}", build_dir.display(), e);
+                std::process::exit(1);
+            }
+            println!("Cleaned build directory: {}", build_dir.display());
+        } else {
+            println!("Nothing to clean. ({}) does not exist.", build_dir.display());
+        }
         return;
     }
 
@@ -465,6 +497,7 @@ fn main() {
     let mut custom_output: Option<String> = None;
     let mut ast_output_file: Option<String> = None;
     let mut emit_ast = false;
+    let mut clean_artifacts = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -519,6 +552,9 @@ fn main() {
         } else if (args[i] == "-o" || args[i] == "--output") && i + 1 < args.len() {
             custom_output = Some(args[i + 1].clone());
             i += 2;
+        } else if args[i] == "--clean" {
+            clean_artifacts = true;
+            i += 1;
         } else if args[i] == "--aot" {
             use_aot = true;
             i += 1;
@@ -579,6 +615,9 @@ fn main() {
 
             let mut analyzer = SemanticAnalyzer::new(program.global_metadata.clone());
             analyzer.current_file = module.name.clone();
+            if envs.contains_key("std/types") && module.name != "std/types" {
+                inject_module_exports(&mut analyzer, "std/types", &None, &envs, &all_fn_overloads, debug).ok();
+            }
             if envs.contains_key("std") && module.name != "std" {
                 inject_module_exports(&mut analyzer, "std", &None, &envs, &all_fn_overloads, debug).ok();
             }
@@ -626,6 +665,9 @@ fn main() {
         main_analyzer.class_hierarchy.insert(k, v);
     }
 
+    if envs.contains_key("std/types") {
+        inject_module_exports(&mut main_analyzer, "std/types", &None, &envs, &all_fn_overloads, debug).ok();
+    }
     if envs.contains_key("std") {
         inject_module_exports(&mut main_analyzer, "std", &None, &envs, &all_fn_overloads, debug).ok();
     }
@@ -758,28 +800,13 @@ fn main() {
     let runtime_path = clib_dir.join("fast_runtime.h");
     let _ = std::fs::write(&runtime_path, &runtime_header);
 
-    // Compile all C files in build/clib into .o files using gcc -c
-    let mut clib_objects = Vec::new();
+    // Collect all C source files in build/clib to pass directly to g++/gcc
+    let mut clib_c_files = Vec::new();
     if clib_dir.exists() {
         for entry in std::fs::read_dir(&clib_dir).into_iter().flatten().flatten() {
             let p = entry.path();
             if p.extension().and_then(|e| e.to_str()) == Some("c") {
-                let obj_path = p.with_extension("o");
-                let status = std::process::Command::new("gcc")
-                    .arg("-c")
-                    .arg("-ffunction-sections")
-                    .arg("-fdata-sections")
-                    .arg(&p)
-                    .arg("-o")
-                    .arg(&obj_path)
-                    .status();
-                if let Ok(s) = status {
-                    if s.success() {
-                        clib_objects.push(obj_path);
-                    } else {
-                        eprintln!("Warning: Failed to compile C source: {}", p.display());
-                    }
-                }
+                clib_c_files.push(p);
             }
         }
     }
@@ -834,8 +861,8 @@ fn main() {
             println!("Linking {} into {}...", out_o, exe_path);
             let mut gcc_cmd = std::process::Command::new("gcc");
             gcc_cmd.arg(&out_o);
-            for obj in &clib_objects {
-                gcc_cmd.arg(obj);
+            for c_file in &clib_c_files {
+                gcc_cmd.arg(c_file);
             }
             gcc_cmd.arg("-Wl,--gc-sections").arg("-o").arg(&exe_path);
             let linker_status = gcc_cmd.status();
@@ -863,8 +890,10 @@ fn main() {
 
     let mut accumulated_custom_scopes = std::collections::HashSet::new();
     let mut accumulated_primitive_impl_methods = std::collections::HashMap::new();
+    let mut accumulated_property_access_types = std::collections::HashSet::new();
+    let mut accumulated_type_own_members = std::collections::HashMap::new();
 
-    let base_std_names = ["std/error", "std/io", "std/string", "std/range", "std"];
+    let base_std_names = ["std/types", "std/error", "std/io", "std/string", "std/range", "std"];
     let mut base_std_headers = Vec::new();
     let mut other_module_headers = Vec::new();
 
@@ -906,9 +935,25 @@ fn main() {
         let mut codegen = cpp::generator::CodeGenerator::new();
         codegen.custom_scope_types = accumulated_custom_scopes.clone();
         codegen.primitive_impl_methods = accumulated_primitive_impl_methods.clone();
+        codegen.property_access_types = accumulated_property_access_types.clone();
+        codegen.type_own_members = accumulated_type_own_members.clone();
         let module_cpp = codegen.generate(&filtered_ast, false, false);
         accumulated_custom_scopes.extend(codegen.custom_scope_types.clone());
-        accumulated_primitive_impl_methods.extend(codegen.primitive_impl_methods.clone());
+        for (k, v) in codegen.primitive_impl_methods {
+            let list = accumulated_primitive_impl_methods.entry(k).or_insert_with(Vec::new);
+            for t in v {
+                if !list.contains(&t) {
+                    list.push(t);
+                }
+            }
+        }
+        accumulated_property_access_types.extend(codegen.property_access_types.clone());
+        for (k, v) in codegen.type_own_members {
+            accumulated_type_own_members
+                .entry(k)
+                .or_insert_with(std::collections::HashSet::new)
+                .extend(v);
+        }
 
         let safe_name = module.name.replace('/', "_") + ".hpp";
         let mut header_content = String::new();
@@ -926,6 +971,7 @@ fn main() {
         }
         header_content.push_str("\n");
         header_content.push_str(&format!("namespace {} {{\n", cpp_namespace));
+        header_content.push_str("using ::fastlang_as_str;\n");
         header_content.push_str(&module_cpp);
         header_content.push_str(&format!("\n}} // namespace {}\n", cpp_namespace));
 
@@ -938,6 +984,13 @@ fn main() {
             other_module_headers.push(safe_name);
         }
     }
+
+    base_std_headers.sort_by_key(|h| {
+        base_std_names.iter().position(|name| {
+            let safe = name.replace('/', "_") + ".hpp";
+            &safe == h
+        }).unwrap_or(usize::MAX)
+    });
 
     // Generate build/lib/fast_std.hpp
     let mut fast_std_content = String::new();
@@ -952,6 +1005,8 @@ fn main() {
     let mut main_codegen = cpp::generator::CodeGenerator::new();
     main_codegen.custom_scope_types = accumulated_custom_scopes;
     main_codegen.primitive_impl_methods = accumulated_primitive_impl_methods;
+    main_codegen.property_access_types = accumulated_property_access_types;
+    main_codegen.type_own_members = accumulated_type_own_members;
     let pruned_main_ast = prune_ast_for_reachability(&program.main_ast, &reachable_symbols, &combined_fn_overloads, true);
     let main_cpp = main_codegen.generate(&pruned_main_ast, false, true);
 
@@ -974,7 +1029,7 @@ fn main() {
     }
 
     if envs.contains_key("std") || !base_std_headers.is_empty() {
-        final_cpp.push_str("\nusing namespace fast_std;\n\n");
+        final_cpp.push_str("\nusing namespace fast_std;\nusing ::fastlang_as_str;\n\n");
     }
 
     final_cpp.push_str(&main_cpp);
@@ -1005,13 +1060,13 @@ fn main() {
 
     let mut gpp_cmd = std::process::Command::new("g++");
     gpp_cmd.arg(&out_path);
-    for obj in &clib_objects {
-        gpp_cmd.arg(obj);
+    for c_file in &clib_c_files {
+        gpp_cmd.arg(c_file);
     }
     gpp_cmd
         .arg("-o")
         .arg(&exe_path)
-        .arg("-std=c++17")
+        .arg("-std=c++20")
         .arg("-ffunction-sections")
         .arg("-fdata-sections")
         .arg("-Wl,--gc-sections")
@@ -1026,6 +1081,11 @@ fn main() {
     match status {
         Ok(s) if s.success() => {
             println!("Compilation successful! Executable is {} 🚀", exe_path);
+            if clean_artifacts {
+                let _ = fs::remove_file(&out_path);
+                let _ = fs::remove_dir_all(&lib_dir);
+                let _ = fs::remove_dir_all(&clib_dir);
+            }
         }
         _ => {
             eprintln!("C++ compilation failed! Check {} for errors.", out_path);

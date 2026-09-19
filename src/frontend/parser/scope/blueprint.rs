@@ -16,11 +16,34 @@ impl Parser {
             self.advance();
         }
 
+        let mut share_directive: Option<BlueprintShareDirective> = None;
         let definition = if self.peek().kind == TokenKind::LBrace {
             self.advance();
             // Parse Explicit definition: { int(32) x; int(32) y; } or { x := default; str y; }
             let mut fields = Vec::new();
             while self.peek().kind != TokenKind::RBrace && !self.is_at_end() {
+                if self.peek().kind == TokenKind::Share {
+                    self.advance(); // consume 'share'
+                    let target_name = self.get_identifier("Expected target field name after 'share'")?;
+                    let condition = if self.peek().kind == TokenKind::If {
+                        self.advance(); // consume 'if'
+                        self.consume(TokenKind::LParen, "Expected '(' after 'if'")?;
+                        let expr = self.parse_expression()?;
+                        self.consume(TokenKind::RParen, "Expected ')' after share condition")?;
+                        Some(expr)
+                    } else {
+                        None
+                    };
+                    if self.peek().kind == TokenKind::SemiColon {
+                        self.advance();
+                    }
+                    share_directive = Some(BlueprintShareDirective {
+                        target_field: target_name,
+                        condition,
+                    });
+                    continue;
+                }
+
                 let mut is_static = false;
                 if self.peek().kind == TokenKind::Static {
                     self.advance();
@@ -37,9 +60,19 @@ impl Parser {
                     let p = self.parse_single_param()?;
                     (p.name, p.type_node, p.default_value)
                 } else {
-                    let type_node = self.parse_type()?;
+                    let mut type_node = self.parse_type()?;
                     let field_name = self.get_identifier("Expected field name")?;
-                    let default_value = if self.peek().kind == TokenKind::Assign || self.peek().kind == TokenKind::Walrus {
+                    while self.peek().kind == TokenKind::LBracket {
+                        self.advance();
+                        self.consume(TokenKind::RBracket, "Expected ']' after '['")?;
+                        type_node = BaseType::Array {
+                            base_type: Box::new(type_node),
+                            size: Box::new(None),
+                        };
+                    }
+                    let default_value = if self.peek().kind == TokenKind::Assign
+                        || self.peek().kind == TokenKind::Walrus
+                    {
                         self.advance();
                         Some(self.parse_expression()?)
                     } else {
@@ -48,7 +81,8 @@ impl Parser {
                     (field_name, type_node, default_value)
                 };
 
-                if self.peek().kind == TokenKind::SemiColon || self.peek().kind == TokenKind::Comma {
+                if self.peek().kind == TokenKind::SemiColon || self.peek().kind == TokenKind::Comma
+                {
                     self.advance();
                 }
 
@@ -62,9 +96,7 @@ impl Parser {
             self.consume(TokenKind::RBrace, "Expected '}'")?;
             BlueprintDef::Explicit(fields)
         } else {
-            return Err(
-                "Syntax Error: Expected '{' after blueprint declaration.".to_string()
-            );
+            return Err("Syntax Error: Expected '{' after blueprint declaration.".to_string());
         };
 
         // Match optional semicolon after blueprint block (like tests/20_blueprint.fs: blueprint Point -> {int(32) x; int(32) y;};)
@@ -84,13 +116,15 @@ impl Parser {
             constructor: None,
             methods: std::collections::HashMap::new(),
             handles: Vec::new(),
+            handle_signatures: std::collections::HashMap::new(),
             vars: std::collections::HashMap::new(),
             variants: None,
         };
 
         if let BlueprintDef::Explicit(ref fields) = definition {
             for field in fields {
-                meta.fields.insert(field.name.clone(), field.type_node.clone());
+                meta.fields
+                    .insert(field.name.clone(), field.type_node.clone());
             }
         }
         self.metadata.insert(name.clone(), meta);
@@ -100,6 +134,7 @@ impl Parser {
             name,
             generics,
             definition,
+            share_directive,
         })
     }
 
@@ -114,9 +149,9 @@ impl Parser {
                 self.advance();
                 Ok("char".to_string())
             }
-            TokenKind::TypeStr => {
+            TokenKind::TypeUChar => {
                 self.advance();
-                Ok("str".to_string())
+                Ok("uchar".to_string())
             }
             TokenKind::TypeBool | TokenKind::Flag => {
                 self.advance();
@@ -158,7 +193,10 @@ impl Parser {
 
         let is_handle_impl = if self.peek().kind == TokenKind::Handle {
             self.advance(); // consume 'handle'
-            self.consume(TokenKind::For, "Expected 'for' after 'handle' in 'impl handle for'")?;
+            self.consume(
+                TokenKind::For,
+                "Expected 'for' after 'handle' in 'impl handle for'",
+            )?;
             true
         } else {
             false
@@ -172,7 +210,11 @@ impl Parser {
 
         let target_type = if target == "array" {
             BaseType::Array {
-                base_type: Box::new(if target_generics.is_empty() { BaseType::Unknown } else { target_generics[0].clone() }),
+                base_type: Box::new(if target_generics.is_empty() {
+                    BaseType::Unknown
+                } else {
+                    target_generics[0].clone()
+                }),
                 size: Box::new(None),
             }
         } else if target == "char" {
@@ -180,7 +222,11 @@ impl Parser {
         } else if target == "bool" || target == "flag" {
             BaseType::Bool
         } else if target == "type" {
-            BaseType::Type(Box::new(if target_generics.is_empty() { BaseType::Unknown } else { target_generics[0].clone() }))
+            BaseType::Type(Box::new(if target_generics.is_empty() {
+                BaseType::Unknown
+            } else {
+                target_generics[0].clone()
+            }))
         } else if target.starts_with("int") {
             BaseType::Int(Size::S32)
         } else if target.starts_with("uint") {
@@ -250,33 +296,75 @@ impl Parser {
             self.consume(TokenKind::SemiColon, "Expected ';'")?;
         }
 
-        let entry = self.metadata.entry(target.clone()).or_insert_with(|| TypeMetadata {
-            name: target.clone(),
-            ty: target_type.clone(),
-            methods: std::collections::HashMap::new(),
-            fields: std::collections::HashMap::new(),
-            constructor: None,
-            handles: vec![],
-            vars: std::collections::HashMap::new(),
-            variants: None,
-        });
+        let spec_key = if target_generics.is_empty()
+            || target_generics
+                .iter()
+                .all(|g| matches!(g, BaseType::GenericParam(_)))
+        {
+            target.clone()
+        } else {
+            let g_str: Vec<String> = target_generics.iter().map(|g| g.as_str()).collect();
+            format!("{}<{}>", target, g_str.join(", "))
+        };
+
+        let entry = self
+            .metadata
+            .entry(spec_key.clone())
+            .or_insert_with(|| TypeMetadata {
+                name: spec_key.clone(),
+                ty: target_type.clone(),
+                methods: std::collections::HashMap::new(),
+                fields: std::collections::HashMap::new(),
+                constructor: None,
+                handles: vec![],
+                handle_signatures: std::collections::HashMap::new(),
+                vars: std::collections::HashMap::new(),
+                variants: None,
+            });
         for m in &methods {
-            if let Decl::FnDecl { name, generics, params, return_type, .. } = m {
-                entry.methods.insert(name.clone(), FnType {
-                    name: name.clone(),
-                    generics: generics.clone(),
-                    params: params.clone(),
-                    return_type: return_type.clone(),
-                    mode: ExecutionMode::Runtime,
-                });
+            if let Decl::FnDecl {
+                name,
+                generics,
+                params,
+                return_type,
+                ..
+            } = m
+            {
+                entry.methods.insert(
+                    name.clone(),
+                    FnType {
+                        name: name.clone(),
+                        generics: generics.clone(),
+                        params: params.clone(),
+                        return_type: return_type.clone(),
+                        mode: ExecutionMode::Runtime,
+                    },
+                );
             }
         }
         for h in &handle_block {
-            if let Decl::FnDecl { name, .. } = h {
+            if let Decl::FnDecl {
+                name,
+                generics,
+                params,
+                return_type,
+                ..
+            } = h
+            {
                 let hk = HandleMethods::from_str(name.as_str());
                 if hk != HandleMethods::NotFound && !entry.handles.contains(&hk) {
                     entry.handles.push(hk);
                 }
+                entry.handle_signatures.insert(
+                    name.clone(),
+                    FnType {
+                        name: name.clone(),
+                        generics: generics.clone(),
+                        params: params.clone(),
+                        return_type: return_type.clone(),
+                        mode: ExecutionMode::Runtime,
+                    },
+                );
             }
         }
 

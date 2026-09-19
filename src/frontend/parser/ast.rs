@@ -55,14 +55,11 @@ pub enum BaseType {
     ISize,
     Float(Size),
     Char,
-    Str,
+    UChar,
     Bool,
     Void,
-    //It will contain a Generic BaseType
-    Name(Box<BaseType>), // name<T,T2,T3> //T , T2 , T3 are the expected types for the name but after
-    Modify(Box<BaseType>), // modify<T> we for now only support modify<T> for name but we may add the pointer also
-    Copy(Box<BaseType>), // copy<T> we for now only support copy<T> for name but we may add all the other types also
-    Pointer(Box<BaseType>),
+    RawPointer(Box<BaseType>),
+    Address(Box<BaseType>),
     Type(Box<BaseType>),
     Array {
         base_type: Box<BaseType>,
@@ -144,7 +141,12 @@ pub enum BaseType {
     GenericParam(String),
 
     Unknown,
-    Error,
+    Object,
+    Function {
+        name: Option<String>,
+        params: Vec<BaseType>,
+        return_type: Box<BaseType>,
+    },
     New(String),
 }
 impl BaseType {
@@ -157,6 +159,8 @@ impl BaseType {
             BaseType::Block { name, .. } => name.clone(),
             BaseType::Machine { name, .. } => name.clone(),
             BaseType::Label { name, .. } => name.clone(),
+            BaseType::Object => "object".to_string(),
+            BaseType::Function { .. } => "function".to_string(),
             _ => self.as_str(),
         }
     }
@@ -169,17 +173,15 @@ impl BaseType {
             BaseType::ISize => "isize".to_string(),
             BaseType::Float(s) => format!("float{}", s.as_str()),
             BaseType::Char => "char".to_string(),
-            BaseType::Str => "str".to_string(),
+            BaseType::UChar => "uchar".to_string(),
             BaseType::Bool => "bool".to_string(),
             BaseType::Flag => "flag".to_string(),
             BaseType::Block { name, .. } => format!("block<{}>", name),
             BaseType::Machine { name, .. } => format!("machine<{}>", name),
             BaseType::Label { name, .. } => format!("label<{}>", name),
             BaseType::Void => "void".to_string(),
-            BaseType::Modify(t) => format!("modify<{}>", t.as_str()),
-            BaseType::Copy(t) => format!("copy<{}>", t.as_str()),
-            BaseType::Name(t) => format!("name<{}>", t.as_str()),
-            BaseType::Pointer(t) => format!("pointer<{}>", t.as_str()),
+            BaseType::RawPointer(t) => format!("raw_ptr<{}>", t.as_str()),
+            BaseType::Address(t) => format!("address<{}>", t.as_str()),
             BaseType::Type(t) => format!("type<{}>", t.as_str()),
             BaseType::Array { base_type, size } => {
                 if let Some(s) = size.as_ref() {
@@ -190,34 +192,34 @@ impl BaseType {
             }
             BaseType::Struct { name, generics, .. } => {
                 if generics.is_empty() {
-                    format!("struct<{}>", name)
+                    format!("struct::{}", name)
                 } else {
                     let g_strs: Vec<String> = generics.iter().map(|g| g.as_str()).collect();
-                    format!("struct<{}<{}> >", name, g_strs.join(", "))
+                    format!("struct::{}<{}>", name, g_strs.join(", "))
                 }
             }
             BaseType::Class { name, generics, .. } => {
                 if generics.is_empty() {
-                    format!("class<{}>", name)
+                    format!("class::{}", name)
                 } else {
                     let g_strs: Vec<String> = generics.iter().map(|g| g.as_str()).collect();
-                    format!("class<{}<{}> >", name, g_strs.join(", "))
+                    format!("class::{}<{}>", name, g_strs.join(", "))
                 }
             }
             BaseType::Enum { name, generics, .. } => {
                 if generics.is_empty() {
-                    format!("enum<{}>", name)
+                    format!("enum::{}", name)
                 } else {
                     let g_strs: Vec<String> = generics.iter().map(|g| g.as_str()).collect();
-                    format!("enum<{}<{}> >", name, g_strs.join(", "))
+                    format!("enum::{}<{}>", name, g_strs.join(", "))
                 }
             }
             BaseType::Blueprint { name, generics, .. } => {
                 if generics.is_empty() {
-                    format!("blueprint<{}>", name)
+                    format!("blueprint::{}", name)
                 } else {
                     let g_strs: Vec<String> = generics.iter().map(|g| g.as_str()).collect();
-                    format!("blueprint<{}<{}> >", name, g_strs.join(", "))
+                    format!("blueprint::{}<{}>", name, g_strs.join(", "))
                 }
             }
             BaseType::Method {
@@ -315,7 +317,34 @@ impl BaseType {
                 strs.join(", ")
             }
             BaseType::Unknown => "unknown".to_string(),
-            BaseType::Error => "error".to_string(),
+            BaseType::Object => "object".to_string(),
+            BaseType::Function {
+                name,
+                params,
+                return_type,
+            } => {
+                let p_strs: Vec<String> = params.iter().map(|p| p.as_str()).collect();
+                if name.is_none() {
+                    if params.is_empty()
+                        && matches!(**return_type, BaseType::Unknown | BaseType::Void)
+                    {
+                        "function".to_string()
+                    } else {
+                        format!(
+                            "function<({}), {}>",
+                            p_strs.join(", "),
+                            return_type.as_str()
+                        )
+                    }
+                } else {
+                    format!(
+                        "function::{}<({}), {}>",
+                        name.as_ref().unwrap().as_str(),
+                        p_strs.join(", "),
+                        return_type.as_str()
+                    )
+                }
+            }
             BaseType::New(t) => format!("new<{}>", t),
         }
     }
@@ -337,13 +366,8 @@ impl BaseType {
             "float64" => BaseType::Float(Size::S64),
             "float128" => BaseType::Float(Size::S128),
             "char" => BaseType::Char,
-            "str" => BaseType::Str,
             "bool" => BaseType::Bool,
             "void" => BaseType::Void,
-            "name" => BaseType::Name(Box::new(BaseType::Generic(Vec::new()))), // name<T,T2,T3> //T , T2 , T3 are the expected types for the name but after
-            "modify" => BaseType::Modify(Box::new(BaseType::Unknown)),
-            "copy" => BaseType::Copy(Box::new(BaseType::Unknown)),
-            "pointer" => BaseType::Pointer(Box::new(BaseType::Unknown)),
             "type" => BaseType::Type(Box::new(BaseType::Unknown)),
             "macro" => BaseType::Macro {
                 name: None,
@@ -352,9 +376,14 @@ impl BaseType {
                 mode: ExecutionMode::Runtime,
             },
             "unknown" => BaseType::Unknown,
-            "error" => BaseType::Error,
+            "object" => BaseType::Object,
+            "function" => BaseType::Function {
+                name: None,
+                params: vec![],
+                return_type: Box::new(BaseType::Unknown),
+            },
             _ => {
-                if s.starts_with("blueprint<") && s.ends_with('>') {
+                if s.starts_with("blueprint::") {
                     let inner = &s[10..s.len() - 1];
                     BaseType::Blueprint {
                         name: inner.to_string(),
@@ -387,20 +416,16 @@ impl BaseType {
                         methods: Box::new(std::collections::HashMap::new()),
                         generics: vec![],
                     }
-                } else if s.starts_with("pointer<") && s.ends_with('>') {
+                } else if s.starts_with("raw_ptr<") && s.ends_with('>') {
                     let inner = &s[8..s.len() - 1];
-                    BaseType::Pointer(Box::new(BaseType::from_str(inner)))
-                } else if s.starts_with("modify<") && s.ends_with('>') {
-                    let inner = &s[7..s.len() - 1];
-                    BaseType::Modify(Box::new(BaseType::from_str(inner)))
-                } else if s.starts_with("name<") && s.ends_with('>') {
-                    let inner = &s[5..s.len() - 1];
-                    BaseType::Name(Box::new(BaseType::from_str(inner)))
-                } else if s.starts_with("copy<") && s.ends_with('>') {
-                    let inner = &s[5..s.len() - 1];
-                    BaseType::Copy(Box::new(BaseType::from_str(inner)))
+                    BaseType::RawPointer(Box::new(BaseType::from_str(inner)))
+                } else if s.starts_with("address<") && s.ends_with('>') {
+                    let inner = &s[8..s.len() - 1];
+                    BaseType::Address(Box::new(BaseType::from_str(inner)))
                 } else if s.ends_with('*') {
-                    BaseType::Pointer(Box::new(BaseType::from_str(&s[..s.len() - 1])))
+                    BaseType::RawPointer(Box::new(BaseType::from_str(&s[..s.len() - 1])))
+                } else if s.ends_with('&') {
+                    BaseType::Address(Box::new(BaseType::from_str(&s[..s.len() - 1])))
                 } else if s.ends_with("[]") {
                     BaseType::Array {
                         base_type: Box::new(BaseType::from_str(&s[..s.len() - 2])),
@@ -414,11 +439,18 @@ impl BaseType {
                         .split(',')
                         .map(|p| BaseType::from_str(p.trim()))
                         .collect();
-                    BaseType::Blueprint {
-                        name: base.to_string(),
-                        fields: Box::new(std::collections::HashMap::new()),
-                        methods: Box::new(std::collections::HashMap::new()),
-                        generics: gen_parts,
+                    if base == "array" && gen_parts.len() == 1 {
+                        BaseType::Array {
+                            base_type: Box::new(gen_parts.into_iter().next().unwrap()),
+                            size: Box::new(None),
+                        }
+                    } else {
+                        BaseType::Blueprint {
+                            name: base.to_string(),
+                            fields: Box::new(std::collections::HashMap::new()),
+                            methods: Box::new(std::collections::HashMap::new()),
+                            generics: gen_parts,
+                        }
                     }
                 } else if !s.is_empty()
                     && s.chars()
@@ -450,10 +482,6 @@ impl BaseType {
                     BaseType::GenericParam(name.clone())
                 }
             }
-            BaseType::Name(inner) => BaseType::Name(Box::new(inner.substitute_generics(map))),
-            BaseType::Modify(inner) => BaseType::Modify(Box::new(inner.substitute_generics(map))),
-            BaseType::Copy(inner) => BaseType::Copy(Box::new(inner.substitute_generics(map))),
-            BaseType::Pointer(inner) => BaseType::Pointer(Box::new(inner.substitute_generics(map))),
             BaseType::Type(inner) => BaseType::Type(Box::new(inner.substitute_generics(map))),
             BaseType::Array { base_type, size } => BaseType::Array {
                 base_type: Box::new(base_type.substitute_generics(map)),
@@ -584,11 +612,7 @@ impl BaseType {
         let mut res = Vec::new();
         match self {
             BaseType::GenericParam(name) => res.push(name.clone()),
-            BaseType::Name(inner)
-            | BaseType::Modify(inner)
-            | BaseType::Copy(inner)
-            | BaseType::Pointer(inner)
-            | BaseType::Type(inner) => res.extend(inner.extract_generic_params()),
+            BaseType::Type(inner) => res.extend(inner.extract_generic_params()),
             BaseType::Array { base_type, .. } => res.extend(base_type.extract_generic_params()),
             BaseType::Generic(vec) => {
                 for t in vec {
@@ -621,12 +645,6 @@ impl BaseType {
                     ..
                 },
             ) => {
-                pat_inner.infer_generics(act_inner, bindings);
-            }
-            (BaseType::Pointer(pat_inner), BaseType::Pointer(act_inner))
-            | (BaseType::Name(pat_inner), BaseType::Name(act_inner))
-            | (BaseType::Modify(pat_inner), BaseType::Modify(act_inner))
-            | (BaseType::Copy(pat_inner), BaseType::Copy(act_inner)) => {
                 pat_inner.infer_generics(act_inner, bindings);
             }
             _ => {}
@@ -672,6 +690,7 @@ pub struct TypeMetadata {
     pub constructor: Option<Vec<ConstructorType>>,
     pub methods: HashMap<String, FnType>, // {"set_next": Node.set_next -> void}
     pub handles: Vec<HandleMethods>,
+    pub handle_signatures: HashMap<String, FnType>,
     pub vars: HashMap<String, VarMetadata>,
     pub variants: Option<Vec<EnumVariant>>,
 }
@@ -709,6 +728,7 @@ pub enum Flag {
     Compilable,
     Printable,
     Throwable,
+    Shareable,
 
     // Scope capabilities
     HasReturn,
@@ -739,6 +759,7 @@ impl Flag {
             "compilable" | "is_compilable" => Flag::Compilable,
             "printable" | "is_printable" => Flag::Printable,
             "throwable" | "is_throwable" => Flag::Throwable,
+            "shareable" | "is_shareable" => Flag::Shareable,
             "has_return" => Flag::HasReturn,
             "has_yield" => Flag::HasYield,
             "has_break" => Flag::HasBreak,
@@ -764,6 +785,7 @@ impl Flag {
             Flag::Compilable => "compilable".to_string(),
             Flag::Printable => "printable".to_string(),
             Flag::Throwable => "throwable".to_string(),
+            Flag::Shareable => "shareable".to_string(),
             Flag::HasReturn => "has_return".to_string(),
             Flag::HasYield => "has_yield".to_string(),
             Flag::HasBreak => "has_break".to_string(),
@@ -841,14 +863,22 @@ pub enum HandleMethods {
 
     Increment,
     Decrement,
+
+    Deref, // *
     PreIncrement,
     PreDecrement,
 
-    Add, // add
-    Sub, // sub
-    Mul, // mul
-    Div, // div
-    Mod, // mod
+    Add, // add +
+    Sub, // sub -
+    Mul, // mul *
+    Div, // div /
+    Mod, // mod %
+
+    AddReassign, // +=
+    SubReassign, // -=
+    MulReassign, // *=
+    DivReassign, // /=
+    ModReassign, // %=
 
     Not,    // !
     Negate, //-
@@ -859,6 +889,7 @@ pub enum HandleMethods {
     Arrow,
     ArrowAssign,
     FatArrow,
+    EqualAssign,
     Equal,
 
     PartialEqual,     // ==
@@ -868,8 +899,13 @@ pub enum HandleMethods {
     GreaterThanEqual, // >=
     LessThanEqual,    // <=
 
-    Iterator, // iter() or iterator()
+    Iter,     // iter()
     Next,     // next()
+    IterDone, // is_done_iter()
+
+    PropertyAccess,  // .
+    NamespaceAccess, // ::
+    HandleAccess,    // -.
 
     Copy, // copy()
     Cast, // cast() or $cast
@@ -883,6 +919,7 @@ pub enum HandleMethods {
     Throw,    // handle throw() -> Error (throwable capability)
     //Exit,
     Drop,
+    Share,
     IsDone,
     Default,
     NotFound,
@@ -891,6 +928,9 @@ impl HandleMethods {
     pub fn from_str(s: &str) -> Self {
         match s {
             "index_access" => HandleMethods::IndexAccess,
+            "property_access" => HandleMethods::PropertyAccess,
+            "namespace_access" => HandleMethods::NamespaceAccess,
+            "handle_access" | "dash_dot" => HandleMethods::HandleAccess,
             "display" => HandleMethods::Display,
             "add" => HandleMethods::Add,
             "increment" => HandleMethods::Increment,
@@ -901,11 +941,17 @@ impl HandleMethods {
             "mul" => HandleMethods::Mul,
             "div" => HandleMethods::Div,
             "mod" => HandleMethods::Mod,
+            "add_reassign" => HandleMethods::AddReassign,
+            "sub_reassign" => HandleMethods::SubReassign,
+            "mul_reassign" => HandleMethods::MulReassign,
+            "div_reassign" => HandleMethods::DivReassign,
+            "mod_reassign" => HandleMethods::ModReassign,
             "not" => HandleMethods::Not,
             "negate" => HandleMethods::Negate,
             "arrow" => HandleMethods::Arrow,
             "arrow_assign" => HandleMethods::ArrowAssign,
             "fat_arrow" => HandleMethods::FatArrow,
+            "equal_assign" => HandleMethods::EqualAssign,
             "equal" => HandleMethods::Equal,
             "partial_equal" => HandleMethods::PartialEqual,
             "not_equal" => HandleMethods::NotEqual,
@@ -915,48 +961,62 @@ impl HandleMethods {
             "less_than_equal" => HandleMethods::LessThanEqual,
             "and" => HandleMethods::And,
             "or" => HandleMethods::Or,
-            "iterator" | "iter" => HandleMethods::Iterator,
+            "iter" => HandleMethods::Iter,
             "next" => HandleMethods::Next,
+            "is_done_iter" => HandleMethods::IterDone,
             "copy" | "$copy" => HandleMethods::Copy,
-            "cast" | "$cast" => HandleMethods::Cast,
-            "call" | "$call" => HandleMethods::Call,
+            "cast" => HandleMethods::Cast,
+            "call" => HandleMethods::Call,
             "leave" | "$leave" => HandleMethods::Leave,
             "yield" | "$yield" => HandleMethods::Yield,
-            "error" | "$error" => HandleMethods::Error,
+            "error" => HandleMethods::Error,
             "throw" | "$throw" => HandleMethods::Throw,
             "break" | "$break" => HandleMethods::Break,
             "continue" | "$continue" => HandleMethods::Continue,
             "return" | "$return" => HandleMethods::Return,
-            "drop" | "$drop" => HandleMethods::Drop,
-            "is_done" | "$is_done" => HandleMethods::IsDone,
+            "drop" => HandleMethods::Drop,
+            "share" | "$share" => HandleMethods::Share,
+            "deref" => HandleMethods::Deref,
+            "is_done" => HandleMethods::IsDone,
             // "exit" => HandleMethods::Exit,
-            "default" | "$default" => HandleMethods::Default,
+            "default" => HandleMethods::Default,
             _ => HandleMethods::NotFound,
         }
     }
     pub fn as_str(&self) -> &str {
         match self {
             HandleMethods::IndexAccess => "index_access",
+            HandleMethods::PropertyAccess => "property_access",
+            HandleMethods::NamespaceAccess => "namespace_access",
+            HandleMethods::HandleAccess => "handle_access",
             HandleMethods::Display => "display",
-            HandleMethods::Iterator => "iter",
+            HandleMethods::Iter => "iter",
             HandleMethods::Next => "next",
+            HandleMethods::IterDone => "is_done_iter",
             HandleMethods::Copy => "copy",
             HandleMethods::Cast => "cast",
-            HandleMethods::Add => "add",
+
             HandleMethods::Increment => "increment",
             HandleMethods::Decrement => "decrement",
             HandleMethods::PreIncrement => "pre_increment",
             HandleMethods::PreDecrement => "pre_decrement",
 
+            HandleMethods::Add => "add",
             HandleMethods::Sub => "sub",
             HandleMethods::Mul => "mul",
             HandleMethods::Div => "div",
             HandleMethods::Mod => "mod",
+            HandleMethods::AddReassign => "add_reassign",
+            HandleMethods::SubReassign => "sub_reassign",
+            HandleMethods::MulReassign => "mul_reassign",
+            HandleMethods::DivReassign => "div_reassign",
+            HandleMethods::ModReassign => "mod_reassign",
             HandleMethods::Not => "not",
             HandleMethods::Negate => "negate",
             HandleMethods::Arrow => "arrow",
             HandleMethods::ArrowAssign => "arrow_assign",
             HandleMethods::FatArrow => "fat_arrow",
+            HandleMethods::EqualAssign => "equal_assign",
             HandleMethods::Equal => "equal",
             HandleMethods::PartialEqual => "partial_equal",
             HandleMethods::NotEqual => "not_equal",
@@ -967,6 +1027,8 @@ impl HandleMethods {
             HandleMethods::And => "and",
             HandleMethods::Or => "or",
             HandleMethods::Drop => "drop",
+            HandleMethods::Share => "share",
+            HandleMethods::Deref => "deref",
             HandleMethods::IsDone => "is_done",
             //HandleMethods::Exit => "exit",
             HandleMethods::Break => "break",
@@ -990,6 +1052,7 @@ pub enum Expr {
     LiteralString(String),
     LiteralBool(bool),
     LiteralChar(char),
+    LiteralUChar(u32),
     LiteralVoid,
     LiteralUndefined,
     ArrayLiteral(Vec<Expr>),
@@ -1045,6 +1108,12 @@ pub enum Expr {
         property: String,
     },
 
+    HandleCall {
+        object: Box<Expr>,
+        handle_name: String,
+        args: Vec<Expr>,
+    },
+
     NamespaceAccess {
         namespace: String,
         property: Box<Expr>,
@@ -1078,6 +1147,7 @@ impl Expr {
             Expr::LiteralFloat(f) => f.to_string(),
             Expr::LiteralString(s) => format!("\"{}\"", s),
             Expr::LiteralChar(c) => format!("'{}'", c),
+            Expr::LiteralUChar(c) => format!("U'\\U{:08X}'", c),
             Expr::LiteralBool(val) => {
                 if *val {
                     "true".to_string()
@@ -1135,6 +1205,19 @@ impl Expr {
             Expr::PropertyAccess { object, property } => {
                 format!("{}.{}", object.as_str(), property.as_str())
             }
+            Expr::HandleCall {
+                object,
+                handle_name,
+                args,
+            } => format!(
+                "{}-.{}({})",
+                object.as_str(),
+                handle_name,
+                args.iter()
+                    .map(|a| a.as_str())
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            ),
             Expr::NamespaceAccess {
                 namespace,
                 property,
@@ -1161,8 +1244,12 @@ pub fn type_from_expr(expr: &Expr) -> BaseType {
         Expr::LiteralUInt(_) => BaseType::UInt(Size::S32),
         Expr::LiteralFloat(_) => BaseType::Float(Size::S64),
         Expr::LiteralBool(_) => BaseType::Bool,
-        Expr::LiteralString(_) => BaseType::Str,
+        Expr::LiteralString(s) => BaseType::Array {
+            base_type: Box::new(BaseType::Char),
+            size: Box::new(Some(Expr::LiteralInt(s.len() as i128))),
+        },
         Expr::LiteralChar(_) => BaseType::Char,
+        Expr::LiteralUChar(_) => BaseType::UChar,
         Expr::New { type_node, .. } => type_node.clone(),
         Expr::ArrayAllocate { type_node, .. } => BaseType::Array {
             base_type: Box::new(type_node.clone()),
@@ -1258,6 +1345,7 @@ pub enum Decl {
         name: String,
         generics: Vec<BaseType>,
         definition: BlueprintDef,
+        share_directive: Option<BlueprintShareDirective>,
     },
     ImplDecl {
         target: String,
@@ -1490,6 +1578,12 @@ pub struct EnumVariant {
     pub name: String,
     pub payload: EnumVariantPayload,
     pub data_type: Option<BaseType>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlueprintShareDirective {
+    pub target_field: String,
+    pub condition: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

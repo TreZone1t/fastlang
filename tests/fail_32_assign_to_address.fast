@@ -1,0 +1,7 @@
+// Test (Expected Failure): Attempting to assign to a read-only address reference (address<T> / T&)
+fn main() -> int32 {
+    int32 x = 10;
+    int32& a = &x;
+    a = 20;
+    return 0;
+}

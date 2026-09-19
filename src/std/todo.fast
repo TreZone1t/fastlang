@@ -380,7 +380,7 @@ impl array<T> {
     fn foreach() -> T[]{}; // to use it : char[] cat = "cat".foreach(|c| c.toUpperCase()); // see line 383 to 386
     handle {
       fn iterator() -> void {}
-      fn next() -> Option<copy<T>> {}
+      fn next() -> Option<T> {}
       fn display() -> char[] {}
     }
 }
@@ -779,11 +779,6 @@ fn serialize_item<T>(T item) -> void {
     }
 }
 
-// biultin copy method
-method deepCopy<T>(val) -> modify<T> {
-    copy<T> temp = val;
-    return temp;
-}
 // to use it
 blueprint Node<T> {
  T x;
@@ -966,6 +961,7 @@ match (x) {
     1 | 2 | 3 => {
         println("x is 1, 2, or 3");
     }
+    // we decide we will not use or and || in match
     4 or 5 || 6 => {
         println("x is 4, 5, or 6");
     }
@@ -973,3 +969,486 @@ match (x) {
         println("x is something else");
     }
 }
+
+// weakness and  bugs to fix
+modify<int> s = new int(10)
+if(typeof(s) == modify<int>){  // error: Syntax Error: Unexpected token 'Less' 
+/*
+  it seems that the compiler think that s is a modify<int> a name of a var 
+  i mean in the expr parser don't work will with types and generics
+  so i think we need to add that
+*/
+    print("yes");
+}
+
+// the compile time block don't work as planned
+
+// we need to remove all of the hard coding for the fastlang_slice and fastlang_str 
+// add replace that with a blueprints in std.fast
+// the same for name<T> and modify<T> and copy<T>
+// we will also remove all of them from the tokenize 
+// also we will change the names for them
+// first name : name is move like a immutable ref so it will be ref
+// and for modify : it will be mutRef
+// and for copy : it will stay as copy
+// for the slice there no thing will be with the name only array we have
+// also we will change the way we translate blueprints to cpp
+// update we will stay with standard POD
+// also we need to make sure the micro drop injected in the scope will be deleted well
+
+
+// that is the def of the ref and mutRef
+// ref 
+/*
+  ptr : *T
+  inner : type
+  expect : array<type>
+*/
+// that is the fields of the ref 
+// ptr : *T is the ptr to the data
+// inner_type : type is the type of the data to carry
+// expect_types : array<type> is the types of expected the data to carry
+// as you know you can define a ref like this
+ ref<int32,char> ref_in;
+ int32 val = 10;
+ ref_in =  val;
+ println(ref_in.inner); // EXPECT: int32
+ println(ref_in.expect); // EXPECT: [ int32, char ]
+ char ch = 'a';
+ ref_in = ch; // error : ref_in (type ref<int32,char>) only can be assigned to a ref<int32> or a ref<char> 
+ // that mean that the ref_in can only be assigned to a single type from the expect_types
+// and after that it will only carry that type
+
+// mutRef
+/*
+  ptr : *T
+  owners : int32 
+  inner : type
+  expect : array<type>
+  share{ owners }if(this.ptr == other.ptr);
+*/
+// to delete a mutRef inner val you need to call the drop handle and to be the last owner
+// so we need to create a way to make a easy RC method (share) also i thick we can add more
+// who to define it in the lang
+blueprint mutRef<...T> = {
+  T* ptr = undefined;
+  type inner = T;
+  type expect[] = [...T];
+  share{
+    int32 owners = 0;
+  }if(this.ptr == other.ptr);
+}
+// also we will add handle called share it will the a mut ref for the fields in the share block
+impl mutRef<...T> {
+    handle {
+        // we may add a handle for equal_assign
+        fn arrow_assign(other: ref) -> {
+            @compile {
+                 if(!this.expect.contains(other.inner)){
+                    throw new Error("can not assign a different type of ref");
+                 }
+            }(this, other);
+            this.ptr = other.ptr;
+        }
+        fn arrow_assign(other: mutRef<...T>) -> {
+            @compile {
+                 if(!this.expect.contains(other.inner)){
+                    throw new Error("can not assign a different type of ref");
+                 }
+            }(this, other);
+            this.ptr = other.ptr;
+        }
+        fn share() -> void {
+            share.owners += 1;
+        }
+        fn PartialEqual(mutRef<...T> other) -> bool {
+            return this.ptr == other.ptr;
+        }
+        fn drop() -> void {
+            this.owners -= 1;
+            if (this.owners == 0) {
+                del this.ptr;
+            }
+        }
+    }
+}
+//  how we will use it
+ref<int32> x -> new int(10);  
+mutRef<int32> y -> new int(10);
+mutRef z -> x;
+// how we will define copy i don't know yet
+
+// how we will make the share 
+blueprint shared ->{
+    int count = 0;
+}
+impl shared{
+    fn share(con : bool) -> {
+    }
+}
+blueprint i_share_with_you ->{
+    int arr[] = [];
+    share shared if (arr.len == shared.count);
+}
+// the new way now
+blueprint shared ->{
+    T ptr = undefined;
+    int owners = 0;
+}
+impl shared{
+    fn share(other : mutRef) -> {
+        if (this.ptr == other.ptr) {
+            this.owners += 1;
+        }
+    }
+    fn share(other : pointer) -> {
+        if (this.ptr == other.ptr) {
+            this.owners += 1;
+        }
+    }
+}
+blueprint mutRef<...T> ->{
+    T* ptr = undefined;
+    type inner = T;
+    type expect[] = [...T];
+    share shared;
+}
+blueprint pointer<T> ->{
+    T* ptr = undefined;
+    share shared;
+}
+// better way to translate for in
+//for mutRef<T, micro::stop<(),>>
+list<int> li -> [10,20,30] // add a default for T so i we can do that list li; 
+for ele in li {
+    print(ele);
+}
+
+li.iter();
+while(true) {
+    ele := li.next(); // mutRef
+    if(ele.inner == micro::stop<(),>) {
+        ele();
+    }
+    if (ele.inner == Option && ele.is_None()){
+        break;
+    }
+    print(ele);
+}
+
+// we need a legal way to access handles
+// so we will add a new operator for that -. 
+li-.iter();
+while(true) {
+    ele := li-.next(); // mutRef
+    if(ele.inner == micro::stop<(),>) {
+        ele();
+    }
+    if (ele.inner == Option && ele.is_None()){
+        break;
+    }
+    print(ele);
+}
+
+
+
+// the property_access handle 
+blueprint i_pass_to_inner<T> -> {
+    raw_ptr<T> ptr = undefined;
+}
+impl i_pass_to_inner<T> -> {
+    handle -> {
+        fn arrow_assign(other: raw_ptr<T>) -> {
+            this.ptr = other;
+        }
+        fn copy() -> T {
+            return *this.ptr;
+        }
+        fn call<...U>(...args: U) -> unknown {
+            return (*this.ptr)(...args);
+        }
+        fn property_access(prop_type: type) -> unknown {
+            return @compile::property_access( this.ptr , prop_type);
+        }
+        fn deref() -> T {
+            return *this.ptr;
+        }
+    }
+}
+// to use it
+i_pass_to_inner<int32> i  -> new int(10);
+i.as_str(); // "10"  // the type of as_str will be function::as_str<unknown>
+i-.property_access(fn::as_str<()-> str>); // "10"
+(*i).as_str(); // "10"
+(i-.deref()).as_str(); // "10"
+i_pass_to_inner<lambda<(int32) -> int32>> i2 -> |x: int32| x + 10;
+i2-.call(10); // 20
+i2(10); // 20
+(*i2)(10); // 20
+(i2-.deref())(10); // 20
+
+// =========================================================================
+// Specification & Standard Conventions: as_str vs display
+// =========================================================================
+// 1. as_str() Handle:
+//    - Purpose: Programmatic string serialization and lossless conversion.
+//    - Usage: Used for data interchange, serialization, code generation,
+//      and machine-readable representations (e.g. JSON, exact numeric strings).
+//    - Priority: Called when .as_str() is requested or for programmatic
+//      string coercion.
+//
+// 2. display() Handle:
+//    - Purpose: Human-facing formatted presentation and pretty printing.
+//    - Usage: Used by print, println, logger output, debugging inspectors,
+//      and user-facing UIs. Can include visual wrappers, brackets, colors, etc.
+//    - Default Fallback: If a type defines display(), print prioritizes it.
+//      If display() is not defined, it falls back to as_str().
+// =========================================================================
+
+//  compile blocks 
+// 1
+fn i_have_many_branches_depend_on_runtime<T>(n : T) -> void {
+    if(typeof(n).is_pointer()){
+        println("Pointer");
+    }else if(typeof(n).is_array()){
+        println("Array");
+    }else if(typeof(n).is_primitive()){
+        println("Primitive");
+    }else if(typeof(n).is_constant()){
+        println("Constant");
+    }else {
+        println("Unknown");
+    }
+}
+// what it will look like after running the interpreter
+fn i_have_many_branches_depend_on_runtime_br1<T>(n : T) -> void {
+    println("Pointer");
+}
+fn i_have_many_branches_depend_on_runtime_br2<T>(n : T) -> void {
+    println("Array");
+}
+fn i_have_many_branches_depend_on_runtime_br3<T>(n : T) -> void {
+    println("Primitive");
+}
+fn i_have_many_branches_depend_on_runtime_br4<T>(n : T) -> void {
+    println("Constant");
+}
+fn i_have_many_branches_depend_on_runtime_br5<T>(n : T) -> void {
+    println("Unknown");
+}
+// if i call the fn it will check and run the original and see what is the needed branch
+i_have_many_branches_depend_on_runtime(10);
+// it is branch 3
+i_have_many_branches_depend_on_runtime_br3(10);
+// anther example
+fn i_print_if_has_as_str<T>(val: T) -> void {
+    if (typeof(val).has_as_str()) {
+        println(val.as_str());
+    }else{
+        println("not printable");
+    }
+}
+fn i_print_if_has_as_str_br1<T>(val: T) -> void {
+    println(val.as_str());
+}
+fn i_print_if_has_as_str_br2<T>(val: T) -> void {
+    println("not printable");
+}
+i_print_if_has_as_str(10);
+// will be
+i_print_if_has_as_str_br1(10);
+// [DONE v0.1.5] also we can have a mixed branch "runtime" and "compile time"
+fn i_print_if_has_as_str_only<T>(val: T) -> void {
+    if (typeof(val).has_method("as_str")) {
+        println(val.as_str());
+    }else{
+        @compile::throw new Error("not printable :"+ typeof(val).as_str());
+    }
+}
+// in this case we will generate normally the all branches even if we have a compile time branch
+// and if we call the fn that will be checked at compile time if we counter the compile time branch we will call the compile time branch for it
+// and if we counter the runtime branch we will run it at runtime
+// but we will still have the same order of the branches
+fn i_print_if_has_as_str_only_br1<T>(val: T) -> void {
+    println(val.as_str());
+}
+fn i_print_if_has_as_str_only_br2<T>(val: T) -> void {
+    @compile::throw new Error("not printable :"+ typeof(val).as_str());
+}
+blueprint non_printable =  {
+    void x = ();
+}
+i_print_if_has_as_str_only(non_printable);
+// in this case it will change the code to
+i_print_if_has_as_str_only_br2(non_printable);
+// and this a call for compile time fn so it will run it in compile time but will not generated in runtime
+
+// [DONE v0.1.5] 2 
+// compile validation
+fn i_print_if_has_as_str_and_have_one_branch<T>(val: T) -> void {
+    @compile {
+        if (!typeof(val).has_as_str()) {
+            @compile::throw new Error("not printable :"+ typeof(val).as_str());
+        }   
+    }(val);
+    println(val.as_str());
+}
+// that will generate a only one branch to be exact it will delete the @compile validation block
+fn i_print_if_has_as_str_and_have_one_branch<T>(val: T) -> void {
+    println(val.as_str());
+}
+//and very time we call the fn we will run the compile time validation block
+i_print_if_has_as_str_and_have_one_branch(non_printable);
+// when we check it we will run the compile time validation block so we will throw an error and stop the compilation
+// [DONE v0.1.5] 3
+// compile member 
+@compile {
+    fn i_print_on_compile_time_only<T>(val: T) -> void {
+        if (!typeof(val).has_as_str()) {
+            throw new Error("not printable :"+ typeof(val).as_str());
+        }else{
+            @compile::print(val.as_str());
+        }
+    }
+}
+@compile::i_print_on_compile_time_only(10); // that will run in compile time and will not generate in runtime
+
+
+
+
+
+// todo : we will defer the blocks from the namespaces
+// so for the blocks we will return it as a separate type and make the namespace aka module type for namespaces\
+// i think it's better to make blocks a sub type of methods (we will)
+// so methods don't have access to the parent scope (class, struct, blueprint , namespace , enum , etc)
+// so if you have a method in a class it will not access the class through the this keyword
+// block it will access only what you gave it we have only the compile validation block as example
+
+// so the syntax will be like this
+x :: {
+    int x = 10;
+    fn i_print() -> void {
+        println(x);
+    }
+} // that a namespace
+x::i_print(); // that will print 10
+// compile  block will be
+@compile :: {
+    int x = 10;
+    fn i_print() -> void {
+        @compile::print(x);
+    }
+}
+@compile::i_print(); // that will print 10 in compile time
+// for blocks we will have a new syntax
+int x = 10;
+{
+    print(x);
+}(x); //  that a ghost block and we will only have ghost blocks and for named blocks you can use methods instead
+// ex :
+int x = 10;
+method m_x = (x: int) -> void {
+    print(x);
+}; // that will do the same thing
+m_x(x); // that will print 10
+// also you can have in place blocks so you can do this name a block and call it in the same scope
+// but as you can see there will be a problem with passed variables so we use () to call it in place 
+// and pass the variables in the () but that is not convenient if i only want to call it later
+// and not in the first time it been created    
+fn i_use_blocks() -> void {
+int x = 10;
+ghost {
+    print(x);
+}(x); // that will print 10
+ghost(); // that will print 10 again
+}
+// to fix that we will have a new syntax for blocks
+fn i_use_blocks() -> void {
+int x = 10;
+ghost [x]{
+    print(x);
+}; // that will not call it for call it add () after }
+ghost(); // that will print 10 again
+}
+// for @compile validation block
+fn i_use_validation_blocks() -> void {
+    int x = 10;
+    @compile [x]{
+        @compile::print(x);
+    }();
+}
+
+
+// ==============================================================================
+// Access Handles Architecture (property_access, namespace_access, handle_access, arrow ->, fat_arrow =>)
+// ==============================================================================
+// For a handle to be recognized as an access handle, it must:
+// 1. Take a single argument of type `MemberType`.
+// 2. Return a `raw_ptr<unknown>`.
+//
+// Types & Semantics:
+// - `MemberType`: Contains the member name as `char[]` and expected type as `type`.
+// - `unknown`: A compile-time placeholder type that the compiler MUST deduce and narrow.
+//   It is replaced at compile time with the concrete type of the accessed field.
+// - Read vs Write: Returning `raw_ptr<unknown>` handles both read and write seamlessly:
+//   * Read (`val = obj.field`): Implicit dereference of the returned pointer.
+//   * Write (`obj.field = val`): Implicit write to the memory address of the returned pointer.
+//
+// Resolution Priorities:
+// 1. Direct Parent Elements: Blueprint fields and methods have top priority (direct offset, zero overhead).
+// 2. Overload Fallbacks: If an element is not directly present on the parent, the compiler checks:
+//    `property_access`, `namespace_access`, `handle_access`.
+// 3. Arrow Operators (`->`, `=>`): Any handle taking `MemberType` and returning `raw_ptr<unknown>`
+//    is registered as an explicit access handle.
+//
+// Compiler Intrinsic (@compile::access):
+// - In `std.fast` compile declaration block:
+//   `set access<T>(T, MemberType) -> raw_ptr<unknown>;`
+// - Evaluated strictly at compile time.
+// - Throws a compile-time error immediately if the member does not exist on the target object.
+
+blueprint MemberType = {
+    char name[];
+    type ty;
+}
+
+blueprint x = {
+    int32 y;
+}
+
+impl x {
+    handle -> {
+        fn property_access(prop: MemberType) -> raw_ptr<unknown> {
+            return @compile::access(this.y, prop);
+        }
+    }
+}
+
+// ------------------------------------------------------------------------------
+// CANCELLED / DROPPED CONCEPT: Member Access on Collections via Identifiers
+// ------------------------------------------------------------------------------
+// Idea previously explored:
+//   hashmap map = new hashmap([hashmap_member{ key = "x"; value = 10; }]);
+//   map[x]; // Attempting to use member identifier 'x' without string quotes
+//
+// Verdict: CANCELLED / REJECTED.
+// Reason: The indexing handle `[]` is already fully generic and accepts any key type or expression.
+// Treating bare identifiers as keys inside `[]` without quotes introduces syntactic ambiguity
+// and blurs the boundary between static schema members and dynamic collection keys.
+
+// ------------------------------------------------------------------------------
+// Comptime Functions in Runtime Contexts: The Inlining & Injection Dilemma
+// ------------------------------------------------------------------------------
+// Problem / Limitation:
+// If a runtime function contains a local variable initialized via a compile-time function
+// (e.g., `int r = @compile rand();`), executing this once during compilation freezes `r`
+// as a single constant across all runtime invocations of that function.
+//
+// Future Architectural Approaches to Explore:
+// 1. Full Scope Inlining:
+//    Copying the entire function scope and inlining it at each call site.
+//    Drawback: Large functions will cause severe code bloat.
+// 2. Call-Site Parameter Injection:
+//    Identify variables evaluated at compile time, extract them into synthetic parameters,
+//    and inject their newly-evaluated compile-time values at each specific call site.
+//    This keeps the runtime function body unified while re-evaluating compile-time values per call.

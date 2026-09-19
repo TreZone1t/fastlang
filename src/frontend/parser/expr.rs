@@ -21,10 +21,16 @@ impl Parser {
     pub(crate) fn parse_type(&mut self) -> Result<BaseType, String> {
         let mut base_type = self.parse_base_type()?;
 
-        while self.peek().kind == TokenKind::Multiply || self.peek().kind == TokenKind::LBracket {
+        while self.peek().kind == TokenKind::Multiply
+            || self.peek().kind == TokenKind::Ampersand
+            || self.peek().kind == TokenKind::LBracket
+        {
             if self.peek().kind == TokenKind::Multiply {
                 self.advance();
-                base_type = BaseType::Pointer(Box::new(base_type));
+                base_type = BaseType::RawPointer(Box::new(base_type));
+            } else if self.peek().kind == TokenKind::Ampersand {
+                self.advance();
+                base_type = BaseType::Address(Box::new(base_type));
             } else if self.peek().kind == TokenKind::LBracket {
                 if let Some(after_tok) = self.token_after_bracket() {
                     if matches!(after_tok.kind, TokenKind::Identifier(_)) {
@@ -245,6 +251,16 @@ impl Parser {
                     }
                 }
             }
+            TokenKind::Ampersand => {
+                self.advance();
+                let inner = self.parse_type()?;
+                Ok(BaseType::Address(Box::new(inner)))
+            }
+            TokenKind::Multiply => {
+                self.advance();
+                let inner = self.parse_type()?;
+                Ok(BaseType::RawPointer(Box::new(inner)))
+            }
             TokenKind::TypeBool => {
                 self.advance();
                 Ok(BaseType::Bool)
@@ -253,71 +269,25 @@ impl Parser {
                 self.advance();
                 Ok(BaseType::Char)
             }
-            TokenKind::TypeStr => {
+            TokenKind::TypeUChar => {
                 self.advance();
-                Ok(BaseType::Str)
+                Ok(BaseType::UChar)
             }
             TokenKind::TypeVoid => {
                 self.advance();
                 Ok(BaseType::Void)
             }
-            TokenKind::TypeName => {
-                self.advance();
-                let mut name_type = BaseType::Unknown;
-                if self.peek().kind == TokenKind::Less {
-                    self.advance();
-                    let mut generics = Vec::new();
-                    self.parse_generic_list(&mut generics)?;
-                    self.consume(TokenKind::Greater, "Expected '>' after name type parameter")?;
-                    name_type = if generics.len() == 1 {
-                        generics.into_iter().next().unwrap()
-                    } else {
-                        BaseType::Generic(generics)
-                    };
-                }
-                Ok(BaseType::Name(Box::new(name_type)))
-            }
-            TokenKind::TypeModify => {
-                self.advance(); // modify
-                let modify_inner = if self.peek().kind == TokenKind::Less {
-                    self.advance(); // '<'
-                    let mut generics = Vec::new();
-                    self.parse_generic_list(&mut generics)?;
-                    self.consume(TokenKind::Greater, "Expected '>' after modify types")?;
-                    if generics.len() == 1 {
-                        generics.into_iter().next().unwrap()
-                    } else if generics.is_empty() {
-                        BaseType::Unknown
-                    } else {
-                        BaseType::Generic(generics)
-                    }
-                } else {
-                    BaseType::Unknown
-                };
-                Ok(BaseType::Modify(Box::new(modify_inner)))
-            }
-            TokenKind::TypeCopy => {
-                self.advance(); // copy
-                let copy_inner = if self.peek().kind == TokenKind::Less {
-                    self.advance(); // '<'
-                    let mut generics = Vec::new();
-                    self.parse_generic_list(&mut generics)?;
-                    self.consume(TokenKind::Greater, "Expected '>' after copy types")?;
-                    if generics.len() == 1 {
-                        generics.into_iter().next().unwrap()
-                    } else if generics.is_empty() {
-                        BaseType::Unknown
-                    } else {
-                        BaseType::Generic(generics)
-                    }
-                } else {
-                    BaseType::Unknown
-                };
-                Ok(BaseType::Copy(Box::new(copy_inner)))
-            }
             TokenKind::TypeType => {
                 self.advance();
                 Ok(BaseType::Type(Box::new(BaseType::Unknown)))
+            }
+            TokenKind::TypeUnknown => {
+                self.advance();
+                Ok(BaseType::Unknown)
+            }
+            TokenKind::TypeObject => {
+                self.advance();
+                Ok(BaseType::Object)
             }
             TokenKind::Flag => {
                 self.advance();
@@ -327,11 +297,13 @@ impl Parser {
             | TokenKind::TypeFn
             | TokenKind::Fn
             | TokenKind::TypeMicro
-            | TokenKind::TypeLambda => {
+            | TokenKind::TypeLambda
+            | TokenKind::TypeFunction => {
                 let kind_str = match &self.peek().kind {
                     TokenKind::TypeMethod => "method",
                     TokenKind::TypeMicro => "micro",
                     TokenKind::TypeLambda => "lambda",
+                    TokenKind::TypeFunction => "function",
                     _ => "fn",
                 };
                 self.advance();
@@ -402,6 +374,11 @@ impl Parser {
                         mode: ExecutionMode::Runtime,
                     }),
                     "lambda" => Ok(BaseType::Lambda {
+                        name,
+                        params,
+                        return_type,
+                    }),
+                    "function" => Ok(BaseType::Function {
                         name,
                         params,
                         return_type,
@@ -501,6 +478,39 @@ impl Parser {
                     )?;
                 }
 
+                if let Some(aliased) = self.type_aliases.get(&n).cloned() {
+                    return Ok(aliased);
+                }
+
+                if n == "array" {
+                    let elem = if generics.is_empty() {
+                        BaseType::Unknown
+                    } else {
+                        generics.into_iter().next().unwrap()
+                    };
+                    return Ok(BaseType::Array {
+                        base_type: Box::new(elem),
+                        size: Box::new(None),
+                    });
+                }
+
+                if n == "raw_ptr" {
+                    let elem = if generics.is_empty() {
+                        BaseType::Unknown
+                    } else {
+                        generics.into_iter().next().unwrap()
+                    };
+                    return Ok(BaseType::RawPointer(Box::new(elem)));
+                }
+
+                if n == "address" {
+                    let elem = if generics.is_empty() {
+                        BaseType::Unknown
+                    } else {
+                        generics.into_iter().next().unwrap()
+                    };
+                    return Ok(BaseType::Address(Box::new(elem)));
+                }
                 if let Some(meta) = self.metadata.get(&n).cloned() {
                     let fields = Box::new(meta.fields.clone());
                     let methods = Box::new(meta.methods.clone());
@@ -674,6 +684,12 @@ impl Parser {
 
                 Ok(Expr::LiteralChar(val))
             }
+            TokenKind::UChar(c) => {
+                let val = *c;
+                self.advance();
+
+                Ok(Expr::LiteralUChar(val))
+            }
             TokenKind::Bool(b) => {
                 let val = *b;
                 self.advance();
@@ -694,6 +710,7 @@ impl Parser {
             | TokenKind::TypeISize
             | TokenKind::TypeFloat(_)
             | TokenKind::TypeChar
+            | TokenKind::TypeUChar
             | TokenKind::TypeBool
             | TokenKind::TypeType => {
                 let t = self.parse_type()?;
@@ -758,9 +775,17 @@ impl Parser {
 
             // --- Identifier ---
             TokenKind::Identifier(name) => {
-                let val: String = name.clone();
-                self.advance();
-                Ok(Expr::Identifier(val.to_string()))
+                if self.peek_ahead(1).map(|t| &t.kind) == Some(&TokenKind::Less)
+                    && !self.is_generic_call_ahead()
+                    && self.is_generic_type_ahead()
+                {
+                    let t = self.parse_type()?;
+                    Ok(Expr::Identifier(t.as_str()))
+                } else {
+                    let val: String = name.clone();
+                    self.advance();
+                    Ok(Expr::Identifier(val.to_string()))
+                }
             }
             TokenKind::LabelName(name) => {
                 let val: String = name.clone();
@@ -824,22 +849,6 @@ impl Parser {
                 let operand = self.parse_expr(7)?;
                 Ok(Expr::UnaryOp {
                     operator: "*".to_string(),
-                    operand: Box::new(operand),
-                })
-            }
-            TokenKind::TypeModify => {
-                self.advance();
-                let operand = self.parse_expr(7)?;
-                Ok(Expr::UnaryOp {
-                    operator: "modify".to_string(),
-                    operand: Box::new(operand),
-                })
-            }
-            TokenKind::TypeCopy => {
-                self.advance();
-                let operand = self.parse_expr(7)?;
-                Ok(Expr::UnaryOp {
-                    operator: "copy".to_string(),
                     operand: Box::new(operand),
                 })
             }
@@ -1117,10 +1126,63 @@ impl Parser {
         false
     }
 
+    pub(crate) fn is_generic_type_ahead(&self) -> bool {
+        if self.peek_ahead(1).map(|t| &t.kind) != Some(&TokenKind::Less) {
+            return false;
+        }
+        let mut offset = 2;
+        let mut depth = 1;
+        while let Some(tok) = self.tokens.get(self.current + offset) {
+            match &tok.kind {
+                TokenKind::Less => depth += 1,
+                TokenKind::Greater => {
+                    depth -= 1;
+                    if depth == 0 {
+                        if let Some(next_tok) = self.tokens.get(self.current + offset + 1) {
+                            return matches!(
+                                next_tok.kind,
+                                TokenKind::RParen
+                                    | TokenKind::RBracket
+                                    | TokenKind::RBrace
+                                    | TokenKind::SemiColon
+                                    | TokenKind::Comma
+                                    | TokenKind::Eq
+                                    | TokenKind::NotEq
+                                    | TokenKind::And
+                                    | TokenKind::Or
+                                    | TokenKind::Colon
+                            );
+                        }
+                        return false;
+                    }
+                }
+                TokenKind::TypeInt(_)
+                | TokenKind::TypeUInt(_)
+                | TokenKind::TypeFloat(_)
+                | TokenKind::TypeChar
+                | TokenKind::TypeUChar
+                | TokenKind::TypeBool
+                | TokenKind::TypeVoid
+                | TokenKind::TypeUSize
+                | TokenKind::TypeISize
+                | TokenKind::TypeType
+                | TokenKind::Identifier(_)
+                | TokenKind::Comma
+                | TokenKind::Multiply
+                | TokenKind::LBracket
+                | TokenKind::RBracket => {}
+                _ => return false,
+            }
+            offset += 1;
+        }
+        false
+    }
+
     pub(crate) fn postfix_binding_power(&self) -> Option<u8> {
         match &self.peek().kind {
             TokenKind::Dot => Some(20),         // property access: obj.field
             TokenKind::DoubleColon => Some(20), // static access: Class::field
+            TokenKind::DashDot => Some(20),     // handle access: obj-.handle(...)
             TokenKind::LParen => Some(20),      // function call:   foo(...)
             TokenKind::Less => {
                 if self.is_generic_call_ahead() {
@@ -1129,7 +1191,7 @@ impl Parser {
                     None
                 }
             }
-            TokenKind::LBracket => Some(20),    // array indexing: arr[0]
+            TokenKind::LBracket => Some(20), // array indexing: arr[0]
             TokenKind::LBrace => {
                 if self.is_struct_instantiation_ahead() {
                     Some(20) // object instantiation: TypeName { ... }
@@ -1150,7 +1212,10 @@ impl Parser {
                 self.advance(); // consume '<'
                 let mut generics = Vec::new();
                 self.parse_generic_list(&mut generics)?;
-                self.consume(TokenKind::Greater, "Expected '>' after generic type arguments")?;
+                self.consume(
+                    TokenKind::Greater,
+                    "Expected '>' after generic type arguments",
+                )?;
                 if self.peek().kind == TokenKind::LParen {
                     self.advance(); // consume '('
                     let mut args = Vec::new();
@@ -1236,6 +1301,32 @@ impl Parser {
                 Ok(Expr::NamespaceAccess {
                     namespace,
                     property: Box::new(Expr::Identifier(prop)),
+                })
+            }
+
+            // --- Handle Access / Call: lhs-.handle_name(...) ---
+            TokenKind::DashDot => {
+                self.advance();
+                let handle_name = self.get_handle_identifier("Expected handle name after '-.'")?;
+                let mut args = Vec::new();
+                if self.peek().kind == TokenKind::LParen {
+                    self.advance();
+                    if self.peek().kind != TokenKind::RParen {
+                        args.push(self.parse_expr(0)?);
+                        while self.peek().kind == TokenKind::Comma {
+                            self.advance();
+                            args.push(self.parse_expr(0)?);
+                        }
+                    }
+                    self.consume(
+                        TokenKind::RParen,
+                        "Expected ')' after handle call argument list",
+                    )?;
+                }
+                Ok(Expr::HandleCall {
+                    object: Box::new(lhs),
+                    handle_name,
+                    args,
                 })
             }
 
@@ -1332,6 +1423,20 @@ impl Parser {
             TokenKind::Multiply => Some((11, 12)),
             TokenKind::Divide => Some((11, 12)),
             TokenKind::Mod => Some((11, 12)),
+            TokenKind::Arrow => {
+                if self.peek_ahead(1).map(|t| &t.kind) == Some(&TokenKind::LBrace) {
+                    None
+                } else {
+                    Some((11, 12))
+                }
+            }
+            TokenKind::FatArrow => {
+                if self.in_match_pattern {
+                    None
+                } else {
+                    Some((11, 12))
+                }
+            }
             _ => None,
         }
     }
@@ -1342,6 +1447,8 @@ impl Parser {
             TokenKind::Multiply => "*".to_string(),
             TokenKind::Divide => "/".to_string(),
             TokenKind::Mod => "%".to_string(),
+            TokenKind::Arrow => "->".to_string(),
+            TokenKind::FatArrow => "=>".to_string(),
             TokenKind::Eq => "==".to_string(),
             TokenKind::NotEq => "!=".to_string(),
             TokenKind::Less => "<".to_string(),

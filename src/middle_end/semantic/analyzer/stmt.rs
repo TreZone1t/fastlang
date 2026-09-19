@@ -105,7 +105,11 @@ impl SemanticAnalyzer {
                 else_block,
             } => {
                 let cond_type = self.visit_expression(condition)?;
-                if cond_type != "bool" && cond_type != "unknown" {
+                let is_bool_like = cond_type == "bool"
+                    || cond_type == "unknown"
+                    || cond_type.starts_with("raw_ptr<")
+                    || cond_type.ends_with('*');
+                if !is_bool_like {
                     return Err("Semantic Error: if condition must be a boolean".to_string());
                 }
 
@@ -170,59 +174,358 @@ impl SemanticAnalyzer {
                         .trim_end_matches('>')
                         .trim_end_matches("[]")
                         .to_string()
-                } else if iterable_type == "str" {
-                    "char".to_string()
                 } else if let Some(bp) = bp_opt {
-                    self.record_dependency(base_name.clone());
-                    self.record_dependency(format!("{}::next", base_name));
-                    self.record_dependency(format!("{}::has_next", base_name));
                     let specialized_bp = bp.specialize(&type_args);
-                    if let Some(sig) = specialized_bp.methods.get("next") {
-                        extract_iter_payload_type(&sig.return_type)
-                    } else if specialized_bp.handles.contains(&HandleMethods::Next) {
-                        if !type_args.is_empty() {
+                    let has_iter = specialized_bp.handle_signatures.contains_key("iter")
+                        || specialized_bp.handles.contains(&HandleMethods::Iter)
+                        || specialized_bp.methods.contains_key("iter");
+                    let has_is_done = specialized_bp
+                        .handle_signatures
+                        .contains_key("is_done_iter")
+                        || specialized_bp.handles.contains(&HandleMethods::IterDone)
+                        || specialized_bp.methods.contains_key("is_done_iter");
+                    let has_next = specialized_bp.handle_signatures.contains_key("next")
+                        || specialized_bp.handles.contains(&HandleMethods::Next)
+                        || specialized_bp.methods.contains_key("next");
+
+                    if has_iter && (has_is_done || has_next) {
+                        return Err(format!(
+                            "Semantic Error: Type '{}' cannot implement both 'iter' and cursor handles ('is_done_iter'/'next'). An Iterable must return a separate Iterator cursor.",
+                            iterable_type
+                        ));
+                    }
+
+                    if has_iter {
+                        self.record_dependency(base_name.clone());
+                        self.record_dependency(format!("{}::iter", base_name));
+
+                        let iter_sig = specialized_bp
+                            .handle_signatures
+                            .get("iter")
+                            .or_else(|| specialized_bp.methods.get("iter"))
+                            .unwrap();
+                        let ret_str = iter_sig.return_type.as_str();
+                        let (ret_base, ret_generics) = extract_type_args_from_str(&ret_str);
+
+                        if ret_base == "void" {
+                            return Err(format!(
+                                "Semantic Error: 'iter' handle of type '{}' cannot return 'void'. It must return an Iterator cursor.",
+                                iterable_type
+                            ));
+                        }
+                        if ret_base == base_name {
+                            return Err(format!(
+                                "Semantic Error: 'iter' handle of type '{}' cannot return itself. An Iterable must return a separate Iterator cursor.",
+                                iterable_type
+                            ));
+                        }
+
+                        let target_bp_opt = self.current_env.borrow().lookup_blueprint(&ret_base);
+                        if let Some(target_bp) = target_bp_opt {
+                            let target_spec = target_bp.specialize(&ret_generics);
+                            let t_has_iter = target_spec.handle_signatures.contains_key("iter")
+                                || target_spec.handles.contains(&HandleMethods::Iter)
+                                || target_spec.methods.contains_key("iter");
+                            if t_has_iter {
+                                return Err(format!(
+                                    "Semantic Error: Iterator cursor '{}' returned by '{}::iter()' cannot implement 'iter'. It must only implement 'is_done_iter' and 'next'.",
+                                    ret_base, iterable_type
+                                ));
+                            }
+                            let t_has_done =
+                                target_spec.handle_signatures.contains_key("is_done_iter")
+                                    || target_spec.handles.contains(&HandleMethods::IterDone)
+                                    || target_spec.methods.contains_key("is_done_iter");
+                            let t_has_next = target_spec.handle_signatures.contains_key("next")
+                                || target_spec.handles.contains(&HandleMethods::Next)
+                                || target_spec.methods.contains_key("next");
+                            if !t_has_done || !t_has_next {
+                                return Err(format!(
+                                    "Semantic Error: Iterator cursor '{}' returned by '{}::iter()' must implement 'is_done_iter' and 'next' handles.",
+                                    ret_base, iterable_type
+                                ));
+                            }
+                            self.record_dependency(ret_base.clone());
+                            self.record_dependency(format!("{}::is_done_iter", ret_base));
+                            self.record_dependency(format!("{}::next", ret_base));
+
+                            if let Some(sig) = target_spec
+                                .handle_signatures
+                                .get("next")
+                                .or_else(|| target_spec.methods.get("next"))
+                            {
+                                sig.return_type.as_str()
+                            } else if !ret_generics.is_empty() {
+                                ret_generics[0].as_str()
+                            } else {
+                                "int32".to_string()
+                            }
+                        } else if let Some(target_meta) =
+                            self.global_metadata.get(&ret_base).cloned()
+                        {
+                            let t_has_iter = target_meta.handle_signatures.contains_key("iter")
+                                || target_meta.handles.contains(&HandleMethods::Iter)
+                                || target_meta.methods.contains_key("iter");
+                            if t_has_iter {
+                                return Err(format!(
+                                    "Semantic Error: Iterator cursor '{}' returned by '{}::iter()' cannot implement 'iter'. It must only implement 'is_done_iter' and 'next'.",
+                                    ret_base, iterable_type
+                                ));
+                            }
+                            let t_has_done =
+                                target_meta.handle_signatures.contains_key("is_done_iter")
+                                    || target_meta.handles.contains(&HandleMethods::IterDone)
+                                    || target_meta.methods.contains_key("is_done_iter");
+                            let t_has_next = target_meta.handle_signatures.contains_key("next")
+                                || target_meta.handles.contains(&HandleMethods::Next)
+                                || target_meta.methods.contains_key("next");
+                            if !t_has_done || !t_has_next {
+                                return Err(format!(
+                                    "Semantic Error: Iterator cursor '{}' returned by '{}::iter()' must implement 'is_done_iter' and 'next' handles.",
+                                    ret_base, iterable_type
+                                ));
+                            }
+                            self.record_dependency(ret_base.clone());
+                            self.record_dependency(format!("{}::is_done_iter", ret_base));
+                            self.record_dependency(format!("{}::next", ret_base));
+
+                            if let Some(next_fn) = target_meta
+                                .handle_signatures
+                                .get("next")
+                                .or_else(|| target_meta.methods.get("next"))
+                            {
+                                let mut map = HashMap::new();
+                                let generics = match &target_meta.ty {
+                                    BaseType::Struct { generics, .. }
+                                    | BaseType::Class { generics, .. }
+                                    | BaseType::Enum { generics, .. }
+                                    | BaseType::Blueprint { generics, .. } => generics.clone(),
+                                    _ => vec![],
+                                };
+                                for (g_param, g_arg) in generics
+                                    .iter()
+                                    .zip(ret_generics.iter().chain(type_args.iter()))
+                                {
+                                    map.insert(g_param.as_str(), g_arg.clone());
+                                }
+                                let specialized_ret = next_fn.return_type.substitute_generics(&map);
+                                specialized_ret.as_str()
+                            } else if !ret_generics.is_empty() {
+                                ret_generics[0].as_str()
+                            } else {
+                                "int32".to_string()
+                            }
+                        } else {
+                            return Err(format!(
+                                "Semantic Error: Iterator cursor '{}' returned by '{}::iter()' is undefined.",
+                                ret_base, iterable_type
+                            ));
+                        }
+                    } else if has_is_done && has_next {
+                        self.record_dependency(base_name.clone());
+                        self.record_dependency(format!("{}::is_done_iter", base_name));
+                        self.record_dependency(format!("{}::next", base_name));
+
+                        if let Some(sig) = specialized_bp
+                            .handle_signatures
+                            .get("next")
+                            .or_else(|| specialized_bp.methods.get("next"))
+                        {
+                            sig.return_type.as_str()
+                        } else if !type_args.is_empty() {
                             type_args[0].as_str()
                         } else {
                             "int32".to_string()
                         }
                     } else {
-                        return Err(
-                            format!("Semantic Error: Type '{}' does not implement 'next' handle for for-in iteration", iterable_type)
-                        );
+                        return Err(format!(
+                            "Semantic Error: Type '{}' cannot be iterated with 'for-in'. It must implement either 'iter' (returning an Iterator) or cursor handles ('is_done_iter' and 'next').",
+                            iterable_type
+                        ));
                     }
                 } else if let Some(meta) = meta_opt {
-                    self.record_dependency(base_name.clone());
-                    self.record_dependency(format!("{}::next", base_name));
-                    self.record_dependency(format!("{}::has_next", base_name));
-                    if let Some(next_fn) = meta.methods.get("next") {
-                        let mut map = HashMap::new();
-                        let generics = match &meta.ty {
-                            BaseType::Struct { generics, .. }
-                            | BaseType::Class { generics, .. }
-                            | BaseType::Enum { generics, .. }
-                            | BaseType::Blueprint { generics, .. } => generics.clone(),
-                            _ => vec![],
-                        };
-                        for (g_param, g_arg) in generics.iter().zip(type_args.iter()) {
-                            map.insert(g_param.as_str(), g_arg.clone());
+                    let has_iter = meta.handle_signatures.contains_key("iter")
+                        || meta.handles.contains(&HandleMethods::Iter)
+                        || meta.methods.contains_key("iter");
+                    let has_is_done = meta.handle_signatures.contains_key("is_done_iter")
+                        || meta.handles.contains(&HandleMethods::IterDone)
+                        || meta.methods.contains_key("is_done_iter");
+                    let has_next = meta.handle_signatures.contains_key("next")
+                        || meta.handles.contains(&HandleMethods::Next)
+                        || meta.methods.contains_key("next");
+
+                    if has_iter && (has_is_done || has_next) {
+                        return Err(format!(
+                            "Semantic Error: Type '{}' cannot implement both 'iter' and cursor handles ('is_done_iter'/'next'). An Iterable must return a separate Iterator cursor.",
+                            iterable_type
+                        ));
+                    }
+
+                    if has_iter {
+                        self.record_dependency(base_name.clone());
+                        self.record_dependency(format!("{}::iter", base_name));
+
+                        let iter_sig = meta
+                            .handle_signatures
+                            .get("iter")
+                            .or_else(|| meta.methods.get("iter"))
+                            .unwrap();
+                        let ret_str = iter_sig.return_type.as_str();
+                        let (ret_base, ret_generics) = extract_type_args_from_str(ret_str.as_str());
+
+                        if ret_base == "void" {
+                            return Err(format!(
+                                "Semantic Error: 'iter' handle of type '{}' cannot return 'void'. It must return an Iterator cursor.",
+                                iterable_type
+                            ));
                         }
-                        let specialized_ret = next_fn.return_type.substitute_generics(&map);
-                        extract_iter_payload_type(&specialized_ret)
-                    } else if meta.handles.contains(&HandleMethods::Next) {
-                        if !type_args.is_empty() {
+                        if ret_base == base_name {
+                            return Err(format!(
+                                "Semantic Error: 'iter' handle of type '{}' cannot return itself. An Iterable must return a separate Iterator cursor.",
+                                iterable_type
+                            ));
+                        }
+
+                        let target_bp_opt = self.current_env.borrow().lookup_blueprint(&ret_base);
+                        if let Some(target_bp) = target_bp_opt {
+                            let target_spec = target_bp.specialize(&ret_generics);
+                            let t_has_iter = target_spec.handle_signatures.contains_key("iter")
+                                || target_spec.handles.contains(&HandleMethods::Iter)
+                                || target_spec.methods.contains_key("iter");
+                            if t_has_iter {
+                                return Err(format!(
+                                    "Semantic Error: Iterator cursor '{}' returned by '{}::iter()' cannot implement 'iter'. It must only implement 'is_done_iter' and 'next'.",
+                                    ret_base, iterable_type
+                                ));
+                            }
+                            let t_has_done =
+                                target_spec.handle_signatures.contains_key("is_done_iter")
+                                    || target_spec.handles.contains(&HandleMethods::IterDone)
+                                    || target_spec.methods.contains_key("is_done_iter");
+                            let t_has_next = target_spec.handle_signatures.contains_key("next")
+                                || target_spec.handles.contains(&HandleMethods::Next)
+                                || target_spec.methods.contains_key("next");
+                            if !t_has_done || !t_has_next {
+                                return Err(format!(
+                                    "Semantic Error: Iterator cursor '{}' returned by '{}::iter()' must implement 'is_done_iter' and 'next' handles.",
+                                    ret_base, iterable_type
+                                ));
+                            }
+                            self.record_dependency(ret_base.clone());
+                            self.record_dependency(format!("{}::is_done_iter", ret_base));
+                            self.record_dependency(format!("{}::next", ret_base));
+
+                            if let Some(sig) = target_spec
+                                .handle_signatures
+                                .get("next")
+                                .or_else(|| target_spec.methods.get("next"))
+                            {
+                                sig.return_type.as_str()
+                            } else if !ret_generics.is_empty() {
+                                ret_generics[0].as_str()
+                            } else {
+                                "int32".to_string()
+                            }
+                        } else if let Some(target_meta) =
+                            self.global_metadata.get(&ret_base).cloned()
+                        {
+                            let t_has_iter = target_meta.handle_signatures.contains_key("iter")
+                                || target_meta.handles.contains(&HandleMethods::Iter)
+                                || target_meta.methods.contains_key("iter");
+                            if t_has_iter {
+                                return Err(format!(
+                                    "Semantic Error: Iterator cursor '{}' returned by '{}::iter()' cannot implement 'iter'. It must only implement 'is_done_iter' and 'next'.",
+                                    ret_base, iterable_type
+                                ));
+                            }
+                            let t_has_done =
+                                target_meta.handle_signatures.contains_key("is_done_iter")
+                                    || target_meta.handles.contains(&HandleMethods::IterDone)
+                                    || target_meta.methods.contains_key("is_done_iter");
+                            let t_has_next = target_meta.handle_signatures.contains_key("next")
+                                || target_meta.handles.contains(&HandleMethods::Next)
+                                || target_meta.methods.contains_key("next");
+                            if !t_has_done || !t_has_next {
+                                return Err(format!(
+                                    "Semantic Error: Iterator cursor '{}' returned by '{}::iter()' must implement 'is_done_iter' and 'next' handles.",
+                                    ret_base, iterable_type
+                                ));
+                            }
+                            self.record_dependency(ret_base.clone());
+                            self.record_dependency(format!("{}::is_done_iter", ret_base));
+                            self.record_dependency(format!("{}::next", ret_base));
+
+                            if let Some(next_fn) = target_meta
+                                .handle_signatures
+                                .get("next")
+                                .or_else(|| target_meta.methods.get("next"))
+                            {
+                                let mut map = HashMap::new();
+                                let generics = match &target_meta.ty {
+                                    BaseType::Struct { generics, .. }
+                                    | BaseType::Class { generics, .. }
+                                    | BaseType::Enum { generics, .. }
+                                    | BaseType::Blueprint { generics, .. } => generics.clone(),
+                                    _ => vec![],
+                                };
+                                for (g_param, g_arg) in generics
+                                    .iter()
+                                    .zip(ret_generics.iter().chain(type_args.iter()))
+                                {
+                                    map.insert(g_param.as_str(), g_arg.clone());
+                                }
+                                let specialized_ret = next_fn.return_type.substitute_generics(&map);
+                                specialized_ret.as_str()
+                            } else if !ret_generics.is_empty() {
+                                ret_generics[0].as_str()
+                            } else {
+                                "int32".to_string()
+                            }
+                        } else {
+                            return Err(format!(
+                                "Semantic Error: Iterator cursor '{}' returned by '{}::iter()' is undefined.",
+                                ret_base, iterable_type
+                            ));
+                        }
+                    } else if has_is_done && has_next {
+                        self.record_dependency(base_name.clone());
+                        self.record_dependency(format!("{}::is_done_iter", base_name));
+                        self.record_dependency(format!("{}::next", base_name));
+
+                        if let Some(next_fn) = meta
+                            .handle_signatures
+                            .get("next")
+                            .or_else(|| meta.methods.get("next"))
+                        {
+                            let mut map = HashMap::new();
+                            let generics = match &meta.ty {
+                                BaseType::Struct { generics, .. }
+                                | BaseType::Class { generics, .. }
+                                | BaseType::Enum { generics, .. }
+                                | BaseType::Blueprint { generics, .. } => generics.clone(),
+                                _ => vec![],
+                            };
+                            for (g_param, g_arg) in generics.iter().zip(type_args.iter()) {
+                                map.insert(g_param.as_str(), g_arg.clone());
+                            }
+                            let specialized_ret = next_fn.return_type.substitute_generics(&map);
+                            specialized_ret.as_str()
+                        } else if !type_args.is_empty() {
                             type_args[0].as_str()
                         } else {
                             "int32".to_string()
                         }
                     } else {
-                        return Err(
-                            format!("Semantic Error: Type '{}' does not implement 'next' handle for for-in iteration", iterable_type)
-                        );
+                        return Err(format!(
+                            "Semantic Error: Type '{}' cannot be iterated with 'for-in'. It must implement either 'iter' (returning an Iterator) or cursor handles ('is_done_iter' and 'next').",
+                            iterable_type
+                        ));
                     }
                 } else {
-                    return Err(
-                        format!("Semantic Error: Expected iterable, array, or string in for-in loop, got '{}'", iterable_type)
-                    );
+                    return Err(format!(
+                        "Semantic Error: Type '{}' cannot be iterated with 'for-in'. It must implement either 'iter' (returning an Iterator) or cursor handles ('is_done_iter' and 'next').",
+                        iterable_type
+                    ));
                 };
 
                 self.enter_scope();
@@ -378,14 +681,6 @@ impl SemanticAnalyzer {
                     };
                     self.current_env.borrow_mut().mark_used(name);
 
-                    if let Some(type_node) = var_info.type_node() {
-                        if matches!(type_node, BaseType::Name(_)) {
-                            return Err(
-                                format!("Semantic Error: Cannot delete name '{}'\n (name is a read-only ref delete it through a modify instead)", name)
-                            );
-                        }
-                    }
-
                     // Stage 1: Double-Delete Check
                     if self.deleted_vars.contains(name) {
                         return Err(format!(
@@ -396,10 +691,7 @@ impl SemanticAnalyzer {
 
                     let type_str = var_info.type_str();
                     let is_pointer_or_ref = type_str.ends_with('*')
-                        || type_str.starts_with("pointer<")
-                        || type_str.starts_with("modify<")
-                        || type_str.starts_with("name<")
-                        || type_str == "name"
+                        || type_str.starts_with("raw_ptr<")
                         || type_str.starts_with("array<")
                         || type_str.ends_with("[]")
                         || *is_array;
@@ -524,10 +816,12 @@ impl SemanticAnalyzer {
                         true
                     } else if let Some(bp) = self.current_env.borrow().lookup_blueprint(&bp_name) {
                         bp.handles.contains(&HandleMethods::Throw)
+                            || bp.handle_signatures.contains_key("throw")
                             || bp.methods.contains_key("throw")
                             || bp.name == "Error"
                     } else if let Some(meta) = self.global_metadata.get(&bp_name) {
                         meta.handles.contains(&HandleMethods::Throw)
+                            || meta.handle_signatures.contains_key("throw")
                             || meta.methods.contains_key("throw")
                             || meta.name == "Error"
                     } else {
@@ -659,7 +953,12 @@ impl SemanticAnalyzer {
     // ----------------------------------------------------------
     // analyze_reassign - ReassignStmt with full operator awareness
     // ----------------------------------------------------------
-    pub(crate) fn analyze_reassign(&mut self, target: &Expr, value: &Expr, op: &str) -> Result<(), String> {
+    pub(crate) fn analyze_reassign(
+        &mut self,
+        target: &Expr,
+        value: &Expr,
+        op: &str,
+    ) -> Result<(), String> {
         // Scope flags are strictly read-only
         if let Expr::Identifier(name) = target {
             if matches!(
@@ -682,6 +981,8 @@ impl SemanticAnalyzer {
                     | "is_printable"
                     | "throwable"
                     | "is_throwable"
+                    | "shareable"
+                    | "is_shareable"
             ) {
                 return Err(format!(
                     "Semantic Error: Scope flag '{}' is read-only and cannot be manually modified",
@@ -690,7 +991,6 @@ impl SemanticAnalyzer {
             }
         }
         // Check mutability and pointer lifecycle
-        let mut is_modify_target = false;
         if let Expr::Identifier(name) = target {
             if let Some(info) = self.current_env.borrow().lookup(name) {
                 if !info.is_editable() {
@@ -698,11 +998,6 @@ impl SemanticAnalyzer {
                         "Semantic Error: Cannot reassign constant '{}'",
                         name
                     ));
-                }
-                if let SymbolKind::Variable { type_node, .. } = &info.kind {
-                    if matches!(type_node, BaseType::Modify(_)) {
-                        is_modify_target = true;
-                    }
                 }
             }
         }
@@ -725,19 +1020,11 @@ impl SemanticAnalyzer {
         }
         let target_type = self.visit_expression(target)?;
 
-        if op == "=" && is_modify_target {
-            let is_addr = matches!(value, Expr::UnaryOp { operator, .. } if operator == "&");
-            if expr_type.starts_with("modify<")
-                || expr_type.starts_with("name<")
-                || expr_type.starts_with("pointer")
-                || is_addr
-            {
-                if let Expr::Identifier(name) = target {
-                    return Err(
-                        format!("Semantic Error: Cannot reassign a modify pointer '{}' directly. 'modify' manages owned memory; use 'name' for rebindable weak references.", name)
-                    );
-                }
-            }
+        if target_type.starts_with("address<") || target_type.ends_with('&') {
+            return Err(format!(
+                "Semantic Error: Cannot assign to read-only address reference '{}'",
+                target_type
+            ));
         }
 
         if op != "=" {
@@ -757,12 +1044,12 @@ impl SemanticAnalyzer {
         op: &str,
         _target: &Expr,
     ) -> Result<(), String> {
-        // Compound operators on primitive numerics are always allowed
-        // e.g. counter += 1; x -= 2;
-        let is_compound = matches!(op, "+=" | "-=" | "*=" | "/=" | "%=");
-        if is_compound && Self::is_primitive_numeric(target_type) {
-            return Ok(());
+        let mut expr_type = expr_type;
+        if expr_type == "int" {
+            expr_type = "int32";
         }
+        // Compound operators on primitive numerics are always allowed
+        // e.g. counter += 1; x -= 2; x *= 2;
 
         // Complex types: look up handle
         if is_complex_type(target_type) {
@@ -786,7 +1073,10 @@ impl SemanticAnalyzer {
                     }
                 }
                 HandleLookupResult::BlueprintNotFound => Ok(()),
-                HandleLookupResult::HandleMissing { handle } =>
+                HandleLookupResult::HandleMissing { handle } => {
+                    if let Some(forwarded_target) = self.resolve_property_access_target_type(target_type) {
+                        return self.verify_operator_overload(&forwarded_target, expr_type, op, _target);
+                    }
                     Err(
                         format!(
                             "Semantic Error: Type '{}' does not support the '{}' operator (missing handle '{}').",
@@ -794,7 +1084,8 @@ impl SemanticAnalyzer {
                             op,
                             handle.as_str()
                         )
-                    ),
+                    )
+                }
                 HandleLookupResult::UnknownOp => Ok(()),
             };
         }
@@ -814,115 +1105,14 @@ impl SemanticAnalyzer {
         &mut self,
         target_type: &str,
         expr_type: &str,
-        target: &Expr,
+        _target: &Expr,
     ) -> Result<(), String> {
         if expr_type == "default" || expr_type == "unknown" {
             return Ok(());
         }
 
         // ----------------------------------------------------------
-        // Smart Pointers: name, modify, copy
-        // ----------------------------------------------------------
-        if target_type.starts_with("name<")
-            || target_type.starts_with("modify<name<")
-            || target_type.starts_with("copy<name<")
-        {
-            let is_modify = target_type.starts_with("modify");
-            let is_copy = target_type.starts_with("copy");
-
-            let inner = if is_modify {
-                strip_wrapper(strip_wrapper(target_type, "modify<"), "name<")
-            } else if is_copy {
-                strip_wrapper(strip_wrapper(target_type, "copy<"), "name<")
-            } else {
-                strip_wrapper(target_type, "name<")
-            };
-
-            let expr_inner = if expr_type.starts_with("array<") {
-                strip_wrapper(expr_type, "array<")
-            } else if expr_type.starts_with("modify<name<") {
-                strip_wrapper(strip_wrapper(expr_type, "modify<"), "name<")
-            } else if expr_type.starts_with("copy<name<") {
-                strip_wrapper(strip_wrapper(expr_type, "copy<"), "name<")
-            } else if expr_type.starts_with("name<") {
-                strip_wrapper(expr_type, "name<")
-            } else {
-                expr_type
-            };
-            if inner == "unknown" && expr_inner != "unknown" {
-                if let Expr::Identifier(name) = target {
-                    let maybe_info = self.current_env.borrow().lookup(name);
-                    if let Some(mut info) = maybe_info {
-                        let is_arr = expr_type.starts_with("array<");
-
-                        let base_inner = BaseType::Name(Box::new(BaseType::from_str(expr_inner)));
-                        let final_type_node = if is_modify {
-                            BaseType::Modify(Box::new(base_inner))
-                        } else if is_copy {
-                            BaseType::Copy(Box::new(base_inner))
-                        } else {
-                            base_inner
-                        };
-
-                        info.kind = SymbolKind::Variable {
-                            type_node: final_type_node,
-                            editability: Editability::Editable,
-                            is_array: is_arr,
-                        };
-                        self.current_env.borrow_mut().update(name, info);
-                    }
-                }
-            } else if !self.types_are_compatible(inner, expr_inner)
-                && inner != "unknown"
-                && expr_type != "unknown"
-                && expr_type != "object"
-            {
-                let prefix = if is_modify {
-                    "modify"
-                } else if is_copy {
-                    "copy"
-                } else {
-                    "name"
-                };
-                return Err(format!(
-                    "Semantic Error: Cannot reassign smart pointer '{}<{}>' to type '{}'",
-                    prefix, inner, expr_type
-                ));
-            }
-            return Ok(());
-        }
-
-        if target_type.starts_with("pointer<") {
-            let inner = strip_wrapper(target_type, "pointer<");
-
-            let expr_inner = if expr_type.starts_with("array<") {
-                strip_wrapper(expr_type, "array<")
-            } else if expr_type.starts_with("pointer<") {
-                strip_wrapper(expr_type, "pointer<")
-            } else if expr_type.starts_with("name<") {
-                strip_wrapper(expr_type, "name<")
-            } else {
-                expr_type
-            };
-
-            if !self.types_are_compatible(inner, expr_inner)
-                && inner != "unknown"
-                && expr_type != "unknown"
-                && expr_type != "object"
-            {
-                return Err(format!(
-                    "Semantic Error: Cannot reassign pointer 'pointer<{}>' to type '{}'",
-                    inner, expr_type
-                ));
-            }
-            return Ok(());
-        }
-
         if target_type == expr_type || target_type == "unknown" || expr_type == "unknown" {
-            return Ok(());
-        }
-
-        if target_type == "name" && expr_type == "object" {
             return Ok(());
         }
         if target_type == "type" || target_type.starts_with("type<") {
@@ -984,7 +1174,11 @@ impl SemanticAnalyzer {
 
     pub(crate) fn validate_match_pattern(expr: &Expr) -> Result<(), String> {
         match expr {
-            Expr::BinaryOp { left, operator, right } => {
+            Expr::BinaryOp {
+                left,
+                operator,
+                right,
+            } => {
                 if operator == "||" || operator == "or" {
                     return Err(
                         "Semantic Error: Use single pipe '|' for pattern alternation in match, '||' and 'or' are not allowed in match patterns.".to_string()
@@ -997,5 +1191,4 @@ impl SemanticAnalyzer {
         }
         Ok(())
     }
-
 }

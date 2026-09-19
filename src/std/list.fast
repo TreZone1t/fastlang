@@ -4,8 +4,7 @@
 public class node<T> -> {
     private -> {
         T value;
-        Option<modify<node<T>>> next = None;
-        int i = 0;
+        Option<mutRef<node<T>>> next = None;
     }
     public -> {
         fn get_value() -> T {
@@ -14,10 +13,10 @@ public class node<T> -> {
         fn set_value(v: T) -> void {
             this.value = v;
         }
-        fn get_next() -> Option<modify<node<T>>> {
+        fn get_next() -> Option<mutRef<node<T>>> {
             return this.next;
         }
-        fn set_next(n: Option<name<node<T>>>) -> void {
+        fn set_next(n: Option<mutRef<node<T>>>) -> void {
             this.next = n;
         }
         fn as_str() -> str {
@@ -42,21 +41,39 @@ public class node<T> -> {
     }
 }
 
+public blueprint list_iter<T> -> {
+    Option<mutRef<node<T>>> current = None;
+}
+
+public impl list_iter<T> -> {
+    handle -> {
+        fn is_done_iter() -> bool {
+            return this.current.is_None();
+        }
+        fn next() -> T {
+            mutRef<node<T>> c = this.current.get();
+            T val = c.get_value();
+            this.current = c.get_next();
+            return val;
+        }
+    }
+}
+
 public class list<T> -> {
     private -> {
-        Option<modify<node<T>>> head = None;
-        Option<modify<node<T>>> current = None;
-        int32 length = 0;
+        Option<mutRef<node<T>>> head = None;
+        Option<mutRef<node<T>>> current = None;
+        usize length = 0;
     }
     public -> {
-      fn set_head(node_ptr: Option<name<node<T>>>) -> void {
+      fn set_head(node_ptr: Option<mutRef<node<T>>>) -> void {
         if (this.head.is_Some()) {
             del this.head;
         }
         this.head = node_ptr;
         this.length = this.length + 1;
       }
-      fn get_head() -> Option<modify<node<T>>> {
+      fn get_head() -> Option<mutRef<node<T>>> {
         return this.head;
       }
       fn push(item: T) -> void {
@@ -66,19 +83,19 @@ public class list<T> -> {
             this.length = this.length + 1;
           }
           Some(h) => {
-            modify<node<T>> new_node = new node<T>(item);
+            mutRef<node<T>> new_node = new node<T>(item);
             new_node.set_next(Some(h));
             this.head = Some(new_node);
             this.length = this.length + 1;
           }
         }
       }
-      fn pop() -> Option<copy<T>> {
+      fn pop() -> Option<T> {
         match (this.head) -> {
           Some(h) => {
-            modify<node<T>> temp = h;
+            mutRef<node<T>> temp = h;
             this.head = temp.get_next();
-            copy<T> val = temp.get_value();
+            T val = temp.get_value();
             del temp;
             this.length = this.length - 1;
             return Some(val);
@@ -88,36 +105,125 @@ public class list<T> -> {
           }
         }
       }
+
       fn extend_from_array(arr: T[]) -> void {
-        for (int32 i = 0; i < arr.length; i = i + 1) -> {
+        for (usize i = 0; i < arr.len; i = i + 1) -> {
           this.push(arr[i]);
         }
       }
-      fn size() -> int32 {
+      fn sort(compare: lambda<(T, T) -> int32>) -> void {
+        match (this.head) -> {
+          Some(h) => {
+            mutRef<node<T>> temp = h;
+            while (temp.get_next().is_Some()) -> {
+              mutRef<node<T>> next = temp.get_next().get();
+              int32 cmp = compare(temp.get_value(), next.get_value());
+              if (cmp > 0) {
+                temp.set_next(Some(next));
+                next.set_next(Some(temp));
+                temp = next;
+              }
+              else {
+                temp = temp.get_next().get();
+              }
+            }
+          },
+          None => {}
+        }
+      }
+      fn contains(item: T) -> bool {
+        match (this.head) -> {
+          Some(h) => {
+            mutRef<node<T>> temp = h;
+            while (temp.get_next().is_Some()) -> {
+              temp = temp.get_next().get();
+              if (temp.get_value() == item) {
+                return true;
+              }
+            }
+            return false;
+          }
+          None => {
+            return false;
+          }
+        }
+      }
+      fn remove_first(item: T) -> bool {
+        bool found = false;
+        match (this.head) -> {
+          Some(h) => {
+            if (h.get_value() == item) {
+              this.pop();
+              return true;
+            }
+            mutRef<node<T>> prev = h;
+            while (prev.get_next().is_Some()) -> {
+              mutRef<node<T>> curr = prev.get_next().get();
+              if (curr.get_value() == item) {
+                found = true;
+                prev.set_next(curr.get_next());
+                break;
+              }
+              prev = curr;
+            }
+          },
+          None => {}
+        }
+        if (found) {
+          this.length = this.length - 1;
+        }
+        return found;
+      }
+      fn size() -> usize {
         return this.length;
+      }
+      fn as_array() -> T[] {
+        T arr[] = new T[this.length];
+        for (usize i = 0; i < this.length; i++) -> {
+          arr[i] = this.pop();
+        }
+        return arr;
+      }
+      fn as_str() -> str {
+        str result = "[";
+        match (this.head) -> {
+          Some(h) => {
+            mutRef<node<T>> temp = h;
+            result = result + temp.get_value().as_str();
+            this.current = temp.get_next();
+            while (this.current.is_Some()) -> {
+              temp = this.current.get();
+              result = result + ", " + temp.get_value().as_str();
+              this.current = temp.get_next();
+            }
+          }
+          None => {}
+        }
+        result = result + "]";
+        return result;
       }
     }
     handle -> {
+      fn index_access(index: usize) -> Option<mutRef<T>> {
+           this.current = this.head;
+          for (usize i = 0; i < index; i = i + 1) -> {
+           this.current = this.current.get_next();
+          }
+          if (this.current.is_None()) {
+            return None;
+          }
+          return this.current;
+      }
       fn arrow(arr: T[]) -> void {
         this.extend_from_array(arr);
       }
       fn arrow_assign(arr: T[]) -> void {
         this.extend_from_array(arr);
       }
-      fn iterator() -> void {
-        this.current = this.head;
-      }
-      fn next() -> Option<copy<T>> {
-        match (this.current) -> {
-          None => {
-            return None;
-          }
-          Some(c) => {
-            copy<T> val = c.get_value();
-            this.current = c.get_next();
-            return Some(val);
-          }
-        }
+      fn iter() -> list_iter<T> {
+        list_iter<T> it;
+        it.current = this.head;
+        return it;
       }
       fn drop() -> void {
           del this.head;
@@ -126,7 +232,7 @@ public class list<T> -> {
           }
       }
       fn display() -> char[] {
-          return "{ head: " + this.head.as_str() + ", length: " + this.length + " }";
+          return this.as_str();
       }
     }
     constructor -> {

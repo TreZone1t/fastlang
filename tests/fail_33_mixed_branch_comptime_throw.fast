@@ -1,0 +1,19 @@
+// Test 93: Mixed branch calling compile-time throw branch
+
+blueprint NonPrintable = {
+    int32 x;
+}
+
+fn i_print_if_has_as_str_only<T>(val: T) -> void {
+    if (typeof(val).has_method("as_str")) {
+        println(val.as_str());
+    } else {
+        @compile::throw new Error("not printable :" + typeof(val).as_str());
+    }
+}
+
+fn main() -> int32 {
+    NonPrintable np = NonPrintable { x: 1 };
+    i_print_if_has_as_str_only(np);
+    return 0;
+}

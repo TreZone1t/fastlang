@@ -1,0 +1,58 @@
+// Test 18: Meta-types (function & object) and unknown return type inference
+import std;
+
+class User -> {
+    public -> {
+        str name = "Hakim";
+    }
+}
+
+struct Point -> {
+    public -> {
+        int32 x = 10;
+        int32 y = 20;
+    }
+}
+
+fn add_nums(a: int32, b: int32) -> int32 {
+    return a + b;
+}
+
+// 1. Explicit unknown return type
+fn compute_val(x: int32) -> unknown {
+    return x * 10;
+}
+
+// 2. Omitted return type (inferred as unknown -> deduced at compile time)
+fn greet(name: str) -> {
+    return "Hello " + name;
+}
+
+// 3. Meta-type function test
+fn execute_func(f: function, a: int32, b: int32) -> unknown {
+    return f(a, b);
+}
+
+// 4. Meta-type object test
+fn inspect_object(obj: object) -> void {
+    println("Object inspected successfully!");
+}
+
+fn main() -> int32 {
+    int32 val = compute_val(5);
+    println("compute_val: ", val); // EXPECT: compute_val: 50
+
+    str msg = greet("FastLang");
+    println("greet: ", msg); // EXPECT: greet: Hello FastLang
+
+    int32 res = execute_func(add_nums, 30, 40);
+    println("execute_func: ", res); // EXPECT: execute_func: 70
+
+    User u = new User();
+    inspect_object(u); // EXPECT: Object inspected successfully!
+
+    Point pt;
+    inspect_object(pt); // EXPECT: Object inspected successfully!
+
+    return 0;
+}

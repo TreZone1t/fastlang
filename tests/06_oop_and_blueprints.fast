@@ -49,7 +49,7 @@ class ComplexNumber -> {
             return this.i;
         }
 
-        fn equal(other: ComplexNumber) -> bool {
+        fn partial_equal(other: ComplexNumber) -> bool {
             return (this.r == other.r) && (this.i == other.i);
         }
 

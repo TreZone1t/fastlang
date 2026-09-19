@@ -10,21 +10,58 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 pub fn is_literal(expr: &Expr) -> bool {
-    matches!(
-        expr,
+    match expr {
         Expr::LiteralInt(_)
-            | Expr::LiteralUInt(_)
-            | Expr::LiteralFloat(_)
-            | Expr::LiteralBool(_)
-            | Expr::LiteralChar(_)
-            | Expr::LiteralString(_)
-            | Expr::LiteralVoid
-    )
+        | Expr::LiteralUInt(_)
+        | Expr::LiteralFloat(_)
+        | Expr::LiteralBool(_)
+        | Expr::LiteralChar(_)
+        | Expr::LiteralUChar(_)
+        | Expr::LiteralString(_)
+        | Expr::LiteralVoid => true,
+        Expr::ArrayLiteral(elems) => elems.iter().all(is_literal),
+        _ => false,
+    }
+}
+
+pub fn apply_reassign_op(cur: &Expr, op: &str, rhs: &Expr) -> Option<Expr> {
+    match (cur, op, rhs) {
+        (Expr::LiteralInt(a), "+=", Expr::LiteralInt(b)) => Some(Expr::LiteralInt(a + b)),
+        (Expr::LiteralInt(a), "-=", Expr::LiteralInt(b)) => Some(Expr::LiteralInt(a - b)),
+        (Expr::LiteralInt(a), "*=", Expr::LiteralInt(b)) => Some(Expr::LiteralInt(a * b)),
+        (Expr::LiteralInt(a), "/=", Expr::LiteralInt(b)) if *b != 0 => {
+            Some(Expr::LiteralInt(a / b))
+        }
+        (Expr::LiteralFloat(a), "+=", Expr::LiteralFloat(b)) => Some(Expr::LiteralFloat(a + b)),
+        (Expr::LiteralFloat(a), "-=", Expr::LiteralFloat(b)) => Some(Expr::LiteralFloat(a - b)),
+        (Expr::LiteralFloat(a), "*=", Expr::LiteralFloat(b)) => Some(Expr::LiteralFloat(a * b)),
+        (Expr::LiteralFloat(a), "/=", Expr::LiteralFloat(b)) if *b != 0.0 => {
+            Some(Expr::LiteralFloat(a / b))
+        }
+        (Expr::LiteralInt(a), "+=", Expr::LiteralFloat(b)) => {
+            Some(Expr::LiteralFloat(*a as f64 + b))
+        }
+        (Expr::LiteralFloat(a), "+=", Expr::LiteralInt(b)) => {
+            Some(Expr::LiteralFloat(a + *b as f64))
+        }
+        (Expr::LiteralString(a), "+=", Expr::LiteralString(b)) => {
+            Some(Expr::LiteralString(format!("{}{}", a, b)))
+        }
+        (Expr::LiteralString(a), "+=", Expr::LiteralChar(b)) => {
+            Some(Expr::LiteralString(format!("{}{}", a, b)))
+        }
+        (Expr::LiteralString(a), "+=", Expr::LiteralUChar(b)) => {
+            let ch = std::char::from_u32(*b).unwrap_or('\0');
+            Some(Expr::LiteralString(format!("{}{}", a, ch)))
+        }
+        _ => None,
+    }
 }
 
 pub fn is_known_type_name(s: &str) -> bool {
+    let base = s.split('<').next().unwrap_or(s);
     matches!(
-        s,
+        base,
         "int8"
             | "int16"
             | "int32"
@@ -44,10 +81,12 @@ pub fn is_known_type_name(s: &str) -> bool {
             | "float64"
             | "float128"
             | "char"
-            | "str"
+            | "uchar"
             | "bool"
             | "void"
             | "type"
+            | "raw_ptr"
+            | "array"
     )
 }
 
@@ -63,7 +102,14 @@ pub fn strip_generic_wrapper<'a>(s: &'a str, prefix: &str) -> &'a str {
 
 #[inline]
 pub fn strip_type_wrapper(s: &str) -> &str {
-    strip_generic_wrapper(s, "type<")
+    let mut res = strip_generic_wrapper(s, "type<");
+    for prefix in &["blueprint::", "struct::", "class::", "enum::"] {
+        if let Some(rest) = res.strip_prefix(prefix) {
+            res = rest;
+            break;
+        }
+    }
+    res
 }
 
 pub fn is_typeof_callee(callee: &Expr) -> bool {
@@ -151,6 +197,8 @@ pub struct Interpreter {
     pub var_types: HashMap<String, String>,
     pub current_env: Option<Rc<RefCell<Environment>>>,
     pub fn_overloads: HashMap<String, Vec<FnSignature>>,
+    pub split_functions: HashMap<String, (Vec<Param>, Vec<(Option<Expr>, String)>)>,
+    pub in_function_body: bool,
 }
 
 impl Interpreter {
@@ -161,6 +209,8 @@ impl Interpreter {
             var_types: HashMap::new(),
             current_env: None,
             fn_overloads: HashMap::new(),
+            split_functions: HashMap::new(),
+            in_function_body: false,
         }
     }
 
@@ -174,21 +224,76 @@ impl Interpreter {
         if let Some(ref env_rc) = self.current_env {
             if let Some(bp) = env_rc.borrow().lookup_blueprint(base_name) {
                 let has_display = bp.handles.iter().any(|h| h.as_str() == "display");
-                let has_copy = bp.handles.iter().any(|h| h.as_str() == "copy" || matches!(h, HandleMethods::Copy));
-                let has_cast = bp.handles.iter().any(|h| h.as_str() == "cast" || matches!(h, HandleMethods::Cast));
-                let has_throw = bp.handles.iter().any(|h| h.as_str() == "throw" || h.as_str() == "$throw" || matches!(h, HandleMethods::Throw));
-                let has_default = bp.handles.iter().any(|h| h.as_str() == "default" || matches!(h, HandleMethods::Default));
-                return FastType::with_all_handles(
+                let has_copy = bp
+                    .handles
+                    .iter()
+                    .any(|h| h.as_str() == "copy" || matches!(h, HandleMethods::Copy));
+                let has_cast = bp
+                    .handles
+                    .iter()
+                    .any(|h| h.as_str() == "cast" || matches!(h, HandleMethods::Cast));
+                let has_throw = bp.handles.iter().any(|h| {
+                    h.as_str() == "throw"
+                        || h.as_str() == "$throw"
+                        || matches!(h, HandleMethods::Throw)
+                });
+                let has_default = bp
+                    .handles
+                    .iter()
+                    .any(|h| h.as_str() == "default" || matches!(h, HandleMethods::Default));
+                let has_share = bp
+                    .handles
+                    .iter()
+                    .any(|h| h.as_str() == "share" || matches!(h, HandleMethods::Share));
+                let handles: Vec<String> =
+                    bp.handles.iter().map(|h| h.as_str().to_string()).collect();
+                let methods: Vec<String> = bp.methods.keys().cloned().collect();
+                let fields: Vec<String> = bp.fields.keys().cloned().collect();
+                let mut field_types = HashMap::new();
+                for (fname, fty) in &bp.fields {
+                    field_types.insert(fname.clone(), fty.as_str().to_string());
+                }
+                let mut method_types = HashMap::new();
+                for (mname, msig) in &bp.methods {
+                    method_types.insert(mname.clone(), msig.return_type.as_str().to_string());
+                }
+                let mut handle_types = HashMap::new();
+                for (hname, hsig) in &bp.handle_signatures {
+                    handle_types.insert(hname.clone(), hsig.return_type.as_str().to_string());
+                }
+                return FastType::with_full_metadata(
                     BaseType::from_str(clean),
                     has_display,
                     has_copy,
                     has_cast,
                     has_throw,
                     has_default,
+                    has_share,
+                    handles,
+                    methods,
+                    fields,
+                    field_types,
+                    method_types,
+                    handle_types,
                 );
             }
         }
         FastType::from_name(clean)
+    }
+
+    pub fn extract_type_or_name(&self, expr: &Expr) -> String {
+        match expr {
+            Expr::LiteralString(s) => strip_type_wrapper(s).to_string(),
+            Expr::Identifier(id) => {
+                if let Ok(Expr::LiteralString(s)) = self.env.get(id) {
+                    strip_type_wrapper(&s).to_string()
+                } else {
+                    strip_type_wrapper(id).to_string()
+                }
+            }
+            Expr::PropertyAccess { property, .. } => property.clone(),
+            _ => self.format_expr_for_print(expr),
+        }
     }
 
     pub fn default_for_type(&self, name: &str) -> Option<Expr> {
@@ -199,7 +304,7 @@ impl Interpreter {
             "float32" | "float64" | "float" => Some(Expr::LiteralFloat(0.0)),
             "bool" => Some(Expr::LiteralBool(false)),
             "char" => Some(Expr::LiteralChar('\0')),
-            "str" => Some(Expr::LiteralString("".to_string())),
+            "uchar" => Some(Expr::LiteralUChar(0)),
             _ => {
                 let base_name = if clean.contains('<') {
                     clean.split('<').next().unwrap_or(clean)
@@ -208,7 +313,9 @@ impl Interpreter {
                 };
                 if let Some(ref env_rc) = self.current_env {
                     if let Some(bp) = env_rc.borrow().lookup_blueprint(base_name) {
-                        let has_default = bp.handles.iter().any(|h| h.as_str() == "default" || matches!(h, HandleMethods::Default));
+                        let has_default = bp.handles.iter().any(|h| {
+                            h.as_str() == "default" || matches!(h, HandleMethods::Default)
+                        });
                         if has_default || bp.is_class {
                             return Some(Expr::Default(Some(BaseType::from_str(clean))));
                         }
@@ -292,7 +399,18 @@ impl Interpreter {
                         break;
                     }
                 }
+                let mut writebacks = Vec::new();
+                for arg in args {
+                    if let Expr::Identifier(id) = arg {
+                        if let Ok(new_val) = self.env.get(id) {
+                            writebacks.push((id.clone(), new_val));
+                        }
+                    }
+                }
                 self.env.pop_scope();
+                for (id, val) in writebacks {
+                    let _ = self.env.assign(&id, val);
+                }
                 res
             }
             Stmt::ForInStmt {
@@ -357,10 +475,16 @@ impl Interpreter {
                 self.env.define(name.clone(), val);
                 Ok(None)
             }
-            Stmt::ReassignStmt { target, value, .. } => {
+            Stmt::ReassignStmt { target, value, op } => {
                 let val = self.eval_expr(value)?;
                 if let Expr::Identifier(name) = target {
-                    self.env.assign(&name, val)?;
+                    if op == "=" {
+                        self.env.assign(name, val)?;
+                    } else if let Ok(cur) = self.env.get(name) {
+                        if let Some(res) = apply_reassign_op(&cur, op, &val) {
+                            self.env.assign(name, res)?;
+                        }
+                    }
                 }
                 Ok(None)
             }
@@ -414,11 +538,11 @@ impl Interpreter {
                 let target_name = match target_type {
                     BaseType::GenericParam(g_name) => g_name.clone(),
                     BaseType::Blueprint { name, .. } => name.clone(),
-                    BaseType::Name(n) => n.as_str(),
                     BaseType::New(n) => n.clone(),
                     _ => target_type.as_str(),
                 };
-                let resolved_target = if let Ok(Expr::LiteralString(s)) = self.env.get(&target_name) {
+                let resolved_target = if let Ok(Expr::LiteralString(s)) = self.env.get(&target_name)
+                {
                     let clean = if s.starts_with("type<") && s.ends_with('>') {
                         &s[5..s.len() - 1]
                     } else {
@@ -441,13 +565,13 @@ impl Interpreter {
             }
             Expr::PropertyAccess { object, property } => {
                 let obj_val = self.eval_expr(object).unwrap_or_else(|_| *object.clone());
-                let type_name = match obj_val {
-                    Expr::LiteralString(s) => strip_type_wrapper(&s).to_string(),
+                let type_name = match &obj_val {
+                    Expr::LiteralString(s) => strip_type_wrapper(s).to_string(),
                     Expr::Identifier(id) => {
-                        if let Ok(Expr::LiteralString(s)) = self.env.get(&id) {
+                        if let Ok(Expr::LiteralString(s)) = self.env.get(id) {
                             strip_type_wrapper(&s).to_string()
                         } else {
-                            id
+                            id.clone()
                         }
                     }
                     _ => "".to_string(),
@@ -459,9 +583,20 @@ impl Interpreter {
                     "is_array" => Ok(Expr::LiteralBool(ft.is_array())),
                     "printable" | "is_printable" => Ok(Expr::LiteralBool(ft.printable())),
                     "throwable" | "is_throwable" => Ok(Expr::LiteralBool(ft.throwable())),
+                    "shareable" | "is_shareable" => Ok(Expr::LiteralBool(ft.shareable())),
                     "copyable" | "is_copyable" => Ok(Expr::LiteralBool(ft.copyable())),
                     "castable" | "is_castable" => Ok(Expr::LiteralBool(ft.castable())),
-                    "as_str" => Ok(Expr::LiteralString(ft.as_str())),
+                    "is_constant" | "is_const" => Ok(Expr::LiteralBool(ft.is_constant())),
+                    "is_runtime" => Ok(Expr::LiteralBool(ft.is_runtime())),
+                    "is_comptime" => Ok(Expr::LiteralBool(ft.is_comptime())),
+                    "is_undefined" => Ok(Expr::LiteralBool(ft.is_undefined())),
+                    "as_str" => {
+                        if matches!(obj_val, Expr::LiteralString(ref s) if s.starts_with("type<")) {
+                            Ok(Expr::LiteralString(ft.as_str()))
+                        } else {
+                            Ok(Expr::LiteralString(self.format_expr_for_print(&obj_val)))
+                        }
+                    }
                     "size" => Ok(Expr::LiteralInt(ft.size() as i128)),
                     "default" => {
                         if let Some(def) = self.default_for_type(&type_name) {
@@ -470,7 +605,20 @@ impl Interpreter {
                             Ok(Expr::Default(Some(BaseType::from_str(&type_name))))
                         }
                     }
-                    _ => Ok(Expr::LiteralUndefined),
+                    _ => {
+                        if let Some(method_name) = property.strip_prefix("has_") {
+                            Ok(Expr::LiteralBool(
+                                ft.has_method(method_name)
+                                    || ft.has_handle(method_name)
+                                    || (method_name == "as_str"
+                                        && (ft.printable()
+                                            || ft.has_method("as_str")
+                                            || ft.has_handle("display"))),
+                            ))
+                        } else {
+                            Ok(Expr::LiteralUndefined)
+                        }
+                    }
                 }
             }
             Expr::BinaryOp {
@@ -525,8 +673,22 @@ impl Interpreter {
                         a.push(c);
                         Ok(Expr::LiteralString(a))
                     }
+                    (Expr::LiteralString(mut a), "+", Expr::LiteralUChar(c)) => {
+                        if let Some(ch) = std::char::from_u32(c) {
+                            a.push(ch);
+                        }
+                        Ok(Expr::LiteralString(a))
+                    }
                     (Expr::LiteralChar(c), "+", Expr::LiteralString(b)) => {
                         let mut s = c.to_string();
+                        s.push_str(&b);
+                        Ok(Expr::LiteralString(s))
+                    }
+                    (Expr::LiteralUChar(c), "+", Expr::LiteralString(b)) => {
+                        let mut s = String::new();
+                        if let Some(ch) = std::char::from_u32(c) {
+                            s.push(ch);
+                        }
                         s.push_str(&b);
                         Ok(Expr::LiteralString(s))
                     }
@@ -541,6 +703,92 @@ impl Interpreter {
                     }
                     (Expr::LiteralInt(a), "!=", Expr::LiteralInt(b)) => {
                         Ok(Expr::LiteralBool(a != b))
+                    }
+                    (Expr::LiteralInt(a), "<", Expr::LiteralInt(b)) => Ok(Expr::LiteralBool(a < b)),
+                    (Expr::LiteralInt(a), "<=", Expr::LiteralInt(b)) => {
+                        Ok(Expr::LiteralBool(a <= b))
+                    }
+                    (Expr::LiteralInt(a), ">", Expr::LiteralInt(b)) => Ok(Expr::LiteralBool(a > b)),
+                    (Expr::LiteralInt(a), ">=", Expr::LiteralInt(b)) => {
+                        Ok(Expr::LiteralBool(a >= b))
+                    }
+                    (Expr::LiteralFloat(a), "==", Expr::LiteralFloat(b)) => {
+                        Ok(Expr::LiteralBool(a == b))
+                    }
+                    (Expr::LiteralFloat(a), "!=", Expr::LiteralFloat(b)) => {
+                        Ok(Expr::LiteralBool(a != b))
+                    }
+                    (Expr::LiteralFloat(a), "<", Expr::LiteralFloat(b)) => {
+                        Ok(Expr::LiteralBool(a < b))
+                    }
+                    (Expr::LiteralFloat(a), "<=", Expr::LiteralFloat(b)) => {
+                        Ok(Expr::LiteralBool(a <= b))
+                    }
+                    (Expr::LiteralFloat(a), ">", Expr::LiteralFloat(b)) => {
+                        Ok(Expr::LiteralBool(a > b))
+                    }
+                    (Expr::LiteralFloat(a), ">=", Expr::LiteralFloat(b)) => {
+                        Ok(Expr::LiteralBool(a >= b))
+                    }
+                    (Expr::LiteralInt(a), "<", Expr::LiteralFloat(b)) => {
+                        Ok(Expr::LiteralBool((a as f64) < b))
+                    }
+                    (Expr::LiteralInt(a), "<=", Expr::LiteralFloat(b)) => {
+                        Ok(Expr::LiteralBool((a as f64) <= b))
+                    }
+                    (Expr::LiteralInt(a), ">", Expr::LiteralFloat(b)) => {
+                        Ok(Expr::LiteralBool((a as f64) > b))
+                    }
+                    (Expr::LiteralInt(a), ">=", Expr::LiteralFloat(b)) => {
+                        Ok(Expr::LiteralBool((a as f64) >= b))
+                    }
+                    (Expr::LiteralFloat(a), "<", Expr::LiteralInt(b)) => {
+                        Ok(Expr::LiteralBool(a < (b as f64)))
+                    }
+                    (Expr::LiteralFloat(a), "<=", Expr::LiteralInt(b)) => {
+                        Ok(Expr::LiteralBool(a <= (b as f64)))
+                    }
+                    (Expr::LiteralFloat(a), ">", Expr::LiteralInt(b)) => {
+                        Ok(Expr::LiteralBool(a > (b as f64)))
+                    }
+                    (Expr::LiteralFloat(a), ">=", Expr::LiteralInt(b)) => {
+                        Ok(Expr::LiteralBool(a >= (b as f64)))
+                    }
+                    (Expr::LiteralChar(a), "==", Expr::LiteralChar(b)) => {
+                        Ok(Expr::LiteralBool(a == b))
+                    }
+                    (Expr::LiteralChar(a), "!=", Expr::LiteralChar(b)) => {
+                        Ok(Expr::LiteralBool(a != b))
+                    }
+                    (Expr::LiteralChar(a), "<", Expr::LiteralChar(b)) => {
+                        Ok(Expr::LiteralBool(a < b))
+                    }
+                    (Expr::LiteralChar(a), "<=", Expr::LiteralChar(b)) => {
+                        Ok(Expr::LiteralBool(a <= b))
+                    }
+                    (Expr::LiteralChar(a), ">", Expr::LiteralChar(b)) => {
+                        Ok(Expr::LiteralBool(a > b))
+                    }
+                    (Expr::LiteralChar(a), ">=", Expr::LiteralChar(b)) => {
+                        Ok(Expr::LiteralBool(a >= b))
+                    }
+                    (Expr::LiteralUChar(a), "==", Expr::LiteralUChar(b)) => {
+                        Ok(Expr::LiteralBool(a == b))
+                    }
+                    (Expr::LiteralUChar(a), "!=", Expr::LiteralUChar(b)) => {
+                        Ok(Expr::LiteralBool(a != b))
+                    }
+                    (Expr::LiteralUChar(a), "<", Expr::LiteralUChar(b)) => {
+                        Ok(Expr::LiteralBool(a < b))
+                    }
+                    (Expr::LiteralUChar(a), "<=", Expr::LiteralUChar(b)) => {
+                        Ok(Expr::LiteralBool(a <= b))
+                    }
+                    (Expr::LiteralUChar(a), ">", Expr::LiteralUChar(b)) => {
+                        Ok(Expr::LiteralBool(a > b))
+                    }
+                    (Expr::LiteralUChar(a), ">=", Expr::LiteralUChar(b)) => {
+                        Ok(Expr::LiteralBool(a >= b))
                     }
                     (l_val, op, r_val) => Ok(Expr::BinaryOp {
                         left: Box::new(l_val),
@@ -567,7 +815,9 @@ impl Interpreter {
                 args,
             } => {
                 if let Expr::PropertyAccess { object, property } = &**callee {
-                    let type_name = match &**object {
+                    let obj_val = self.eval_expr(object).unwrap_or_else(|_| *object.clone());
+                    let type_name = match &obj_val {
+                        Expr::LiteralString(s) => strip_type_wrapper(s).to_string(),
                         Expr::Identifier(id) => {
                             if let Ok(Expr::LiteralString(s)) = self.env.get(id) {
                                 strip_type_wrapper(&s).to_string()
@@ -575,7 +825,6 @@ impl Interpreter {
                                 id.clone()
                             }
                         }
-                        Expr::LiteralString(s) => strip_type_wrapper(s).to_string(),
                         _ => "".to_string(),
                     };
                     let ft = self.get_fast_type(&type_name);
@@ -589,9 +838,60 @@ impl Interpreter {
                         "throwable" | "is_throwable" => {
                             return Ok(Expr::LiteralBool(ft.throwable()))
                         }
+                        "shareable" | "is_shareable" => {
+                            return Ok(Expr::LiteralBool(ft.shareable()))
+                        }
                         "copyable" | "is_copyable" => return Ok(Expr::LiteralBool(ft.copyable())),
                         "castable" | "is_castable" => return Ok(Expr::LiteralBool(ft.castable())),
-                        "as_str" => return Ok(Expr::LiteralString(ft.as_str())),
+                        "is_constant" | "is_const" => {
+                            return Ok(Expr::LiteralBool(ft.is_constant()))
+                        }
+                        "is_runtime" => return Ok(Expr::LiteralBool(ft.is_runtime())),
+                        "is_comptime" => return Ok(Expr::LiteralBool(ft.is_comptime())),
+                        "is_undefined" => return Ok(Expr::LiteralBool(ft.is_undefined())),
+                        "has_handle" => {
+                            if let Some(arg) = args.first() {
+                                let evaled = self.eval_expr(arg).unwrap_or_else(|_| arg.clone());
+                                let s1 = self.extract_type_or_name(&evaled);
+                                let s2 = args.get(1).map(|a| {
+                                    let v = self.eval_expr(a).unwrap_or_else(|_| a.clone());
+                                    self.extract_type_or_name(&v)
+                                });
+                                return Ok(Expr::LiteralBool(ft.has_handle_query(&s1, s2.as_deref())));
+                            }
+                            return Ok(Expr::LiteralBool(false));
+                        }
+                        "has_method" => {
+                            if let Some(arg) = args.first() {
+                                let evaled = self.eval_expr(arg).unwrap_or_else(|_| arg.clone());
+                                let s1 = self.extract_type_or_name(&evaled);
+                                let s2 = args.get(1).map(|a| {
+                                    let v = self.eval_expr(a).unwrap_or_else(|_| a.clone());
+                                    self.extract_type_or_name(&v)
+                                });
+                                return Ok(Expr::LiteralBool(ft.has_method_query(&s1, s2.as_deref())));
+                            }
+                            return Ok(Expr::LiteralBool(false));
+                        }
+                        "has_field" => {
+                            if let Some(arg) = args.first() {
+                                let evaled = self.eval_expr(arg).unwrap_or_else(|_| arg.clone());
+                                let s1 = self.extract_type_or_name(&evaled);
+                                let s2 = args.get(1).map(|a| {
+                                    let v = self.eval_expr(a).unwrap_or_else(|_| a.clone());
+                                    self.extract_type_or_name(&v)
+                                });
+                                return Ok(Expr::LiteralBool(ft.has_field_query(&s1, s2.as_deref())));
+                            }
+                            return Ok(Expr::LiteralBool(false));
+                        }
+                        "as_str" => {
+                            if matches!(obj_val, Expr::LiteralString(ref s) if s.starts_with("type<")) {
+                                return Ok(Expr::LiteralString(ft.as_str()));
+                            } else {
+                                return Ok(Expr::LiteralString(self.format_expr_for_print(&obj_val)));
+                            }
+                        }
                         "size" => return Ok(Expr::LiteralInt(ft.size() as i128)),
                         "default" => {
                             if let Some(def) = self.default_for_type(&type_name) {
@@ -602,7 +902,9 @@ impl Interpreter {
                         }
                         "castable_to" => {
                             if let Some(target_expr) = args.first() {
-                                let evaled = self.eval_expr(target_expr).unwrap_or_else(|_| target_expr.clone());
+                                let evaled = self
+                                    .eval_expr(target_expr)
+                                    .unwrap_or_else(|_| target_expr.clone());
                                 let target_name = match evaled {
                                     Expr::LiteralString(s) => strip_type_wrapper(&s).to_string(),
                                     Expr::Identifier(id) => {
@@ -618,7 +920,18 @@ impl Interpreter {
                                 return Ok(Expr::LiteralBool(ft.castable_to(&target_ft)));
                             }
                         }
-                        _ => {}
+                        _ => {
+                            if let Some(method_name) = property.strip_prefix("has_") {
+                                return Ok(Expr::LiteralBool(
+                                    ft.has_method(method_name)
+                                        || ft.has_handle(method_name)
+                                        || (method_name == "as_str"
+                                            && (ft.printable()
+                                                || ft.has_method("as_str")
+                                                || ft.has_handle("display"))),
+                                ));
+                            }
+                        }
                     }
                 }
 
@@ -695,7 +1008,10 @@ impl Interpreter {
                 {
                     let clean = target_fn_name.trim_start_matches("@compile::");
                     if !CompilerIntrinsics::is_compile_member(clean) {
-                        eprintln!("STACKTRACE:\n{:?}", std::backtrace::Backtrace::force_capture());
+                        eprintln!(
+                            "STACKTRACE:\n{:?}",
+                            std::backtrace::Backtrace::force_capture()
+                        );
                         return self.fastlang_throw(&format!(
                             "Unknown compile intrinsic '{}'",
                             target_fn_name
@@ -703,15 +1019,14 @@ impl Interpreter {
                     }
                 }
 
-                let is_compilable = target_fn_name.starts_with("@compile::")
-                    || {
-                        if let Some((_, _, body)) = self.functions.get(&target_fn_name) {
-                            crate::middle_end::semantic::analyzer::detect_execution_mode(body)
-                                == ExecutionMode::FullyCompilable
-                        } else {
-                            false
-                        }
-                    };
+                let is_compilable = target_fn_name.starts_with("@compile::") || {
+                    if let Some((_, _, body)) = self.functions.get(&target_fn_name) {
+                        crate::middle_end::semantic::analyzer::detect_execution_mode(body)
+                            == ExecutionMode::FullyCompilable
+                    } else {
+                        false
+                    }
+                };
 
                 if is_compilable {
                     if let Some((fn_generics, params, body)) =
@@ -737,6 +1052,8 @@ impl Interpreter {
                             var_types: self.var_types.clone(),
                             current_env: self.current_env.clone(),
                             fn_overloads: self.fn_overloads.clone(),
+                            split_functions: self.split_functions.clone(),
+                            in_function_body: true,
                         };
                         for (g_name, g_type) in &generic_map {
                             func_interp.env.define(
@@ -754,6 +1071,8 @@ impl Interpreter {
                             }
                             if let Some(arg_val) = eval_args.get(i) {
                                 func_interp.env.define(param.name.clone(), arg_val.clone());
+                                let arg_t = self.get_expr_type(arg_val);
+                                func_interp.var_types.insert(param.name.clone(), arg_t);
                             }
                         }
 
@@ -959,7 +1278,8 @@ impl Interpreter {
     }
 
     pub fn extract_string_from_expr(&mut self, expr: &Expr) -> String {
-        match expr {
+        let evaled = self.eval_expr(expr).unwrap_or_else(|_| expr.clone());
+        match &evaled {
             Expr::LiteralString(s) => s.clone(),
             Expr::Identifier(id) => {
                 if let Ok(val) = self.env.get(id) {
@@ -976,7 +1296,15 @@ impl Interpreter {
                     "Unknown Error".to_string()
                 }
             }
-            _ => "Compile-time Error".to_string(),
+            Expr::BinaryOp { .. } => {
+                if let Ok(res) = self.eval_expr(&evaled) {
+                    if let Expr::LiteralString(s) = res {
+                        return s;
+                    }
+                }
+                "Compile-time Error".to_string()
+            }
+            _ => self.format_expr_for_print(&evaled),
         }
     }
 
@@ -1004,6 +1332,7 @@ impl Interpreter {
                 Expr::LiteralFloat(f) => Ok(Expr::LiteralInt(f as i128)),
                 Expr::LiteralBool(b) => Ok(Expr::LiteralInt(if b { 1 } else { 0 })),
                 Expr::LiteralChar(c) => Ok(Expr::LiteralInt(c as u32 as i128)),
+                Expr::LiteralUChar(c) => Ok(Expr::LiteralInt(c as i128)),
                 Expr::LiteralString(ref s) => s
                     .trim()
                     .parse::<i128>()
@@ -1017,6 +1346,7 @@ impl Interpreter {
                 Expr::LiteralFloat(f) => Ok(Expr::LiteralUInt(f as u128)),
                 Expr::LiteralBool(b) => Ok(Expr::LiteralUInt(if b { 1 } else { 0 })),
                 Expr::LiteralChar(c) => Ok(Expr::LiteralUInt(c as u32 as u128)),
+                Expr::LiteralUChar(c) => Ok(Expr::LiteralUInt(c as u128)),
                 _ => Err(format!("Compile Error: Cannot cast {:?} to uint", resolved)),
             },
             BaseType::Float(_) => match resolved {
@@ -1024,6 +1354,8 @@ impl Interpreter {
                 Expr::LiteralInt(i) => Ok(Expr::LiteralFloat(i as f64)),
                 Expr::LiteralUInt(u) => Ok(Expr::LiteralFloat(u as f64)),
                 Expr::LiteralBool(b) => Ok(Expr::LiteralFloat(if b { 1.0 } else { 0.0 })),
+                Expr::LiteralChar(c) => Ok(Expr::LiteralFloat(c as u32 as f64)),
+                Expr::LiteralUChar(c) => Ok(Expr::LiteralFloat(c as f64)),
                 _ => Err(format!(
                     "Compile Error: Cannot cast {:?} to float",
                     resolved
@@ -1035,10 +1367,15 @@ impl Interpreter {
                 Expr::LiteralUInt(u) => Ok(Expr::LiteralBool(u != 0)),
                 Expr::LiteralFloat(f) => Ok(Expr::LiteralBool(f != 0.0)),
                 Expr::LiteralChar(c) => Ok(Expr::LiteralBool(c != '\0')),
+                Expr::LiteralUChar(c) => Ok(Expr::LiteralBool(c != 0)),
                 _ => Err(format!("Compile Error: Cannot cast {:?} to bool", resolved)),
             },
             BaseType::Char => match resolved {
                 Expr::LiteralChar(c) => Ok(Expr::LiteralChar(c)),
+                Expr::LiteralUChar(c) => {
+                    let ch = char::from_u32(c).unwrap_or('\0');
+                    Ok(Expr::LiteralChar(ch))
+                }
                 Expr::LiteralInt(i) => {
                     let ch = char::from_u32(i as u32).unwrap_or('\0');
                     Ok(Expr::LiteralChar(ch))
@@ -1049,14 +1386,15 @@ impl Interpreter {
                 }
                 _ => Err(format!("Compile Error: Cannot cast {:?} to char", resolved)),
             },
-            BaseType::Str => match resolved {
-                Expr::LiteralString(s) => Ok(Expr::LiteralString(s)),
-                Expr::LiteralInt(i) => Ok(Expr::LiteralString(i.to_string())),
-                Expr::LiteralUInt(u) => Ok(Expr::LiteralString(u.to_string())),
-                Expr::LiteralFloat(f) => Ok(Expr::LiteralString(f.to_string())),
-                Expr::LiteralBool(b) => Ok(Expr::LiteralString(b.to_string())),
-                Expr::LiteralChar(c) => Ok(Expr::LiteralString(c.to_string())),
-                _ => Err(format!("Compile Error: Cannot cast {:?} to str", resolved)),
+            BaseType::UChar => match resolved {
+                Expr::LiteralUChar(c) => Ok(Expr::LiteralUChar(c)),
+                Expr::LiteralChar(c) => Ok(Expr::LiteralUChar(c as u32)),
+                Expr::LiteralInt(i) => Ok(Expr::LiteralUChar(i as u32)),
+                Expr::LiteralUInt(u) => Ok(Expr::LiteralUChar(u as u32)),
+                _ => Err(format!(
+                    "Compile Error: Cannot cast {:?} to uchar",
+                    resolved
+                )),
             },
             _ => Err(format!(
                 "Compile Error: Compile-time cast to '{}' is not supported",
@@ -1166,18 +1504,14 @@ impl Interpreter {
                                 } => {
                                     let gen_types: Vec<BaseType> = generics
                                         .as_ref()
-                                        .map(|v| {
-                                            v.iter().map(|s| BaseType::from_str(s)).collect()
-                                        })
+                                        .map(|v| v.iter().map(|s| BaseType::from_str(s)).collect())
                                         .unwrap_or_default();
                                     self.functions.insert(
                                         format!("{}::{}", name, m_name),
                                         (gen_types.clone(), params.clone(), body.clone()),
                                     );
-                                    self.functions.insert(
-                                        m_name.clone(),
-                                        (gen_types, params, body),
-                                    );
+                                    self.functions
+                                        .insert(m_name.clone(), (gen_types, params, body));
                                 }
                                 _ => {}
                             }
@@ -1198,18 +1532,13 @@ impl Interpreter {
                 ..
             } = &info.kind
             {
-                self.functions.entry(name.clone()).or_insert_with(|| {
-                    (generics.clone(), params.clone(), body.clone())
-                });
-            } else if let SymbolKind::Macro {
-                params,
-                body,
-                ..
-            } = &info.kind
-            {
-                self.functions.entry(name.clone()).or_insert_with(|| {
-                    (vec![], params.clone(), body.clone())
-                });
+                self.functions
+                    .entry(name.clone())
+                    .or_insert_with(|| (generics.clone(), params.clone(), body.clone()));
+            } else if let SymbolKind::Macro { params, body, .. } = &info.kind {
+                self.functions
+                    .entry(name.clone())
+                    .or_insert_with(|| (vec![], params.clone(), body.clone()));
             }
         }
         if let Some(ref parent) = env.parent {
@@ -1257,16 +1586,15 @@ impl Interpreter {
                     None
                 } else if is_known_type_name(id)
                     || (id.contains('<') && id.ends_with('>'))
-                    || (self.current_env.is_some()
-                        && {
-                            let base = id.split('<').next().unwrap_or(id);
-                            self.current_env
-                                .as_ref()
-                                .unwrap()
-                                .borrow()
-                                .lookup_blueprint(base)
-                                .is_some()
-                        })
+                    || (self.current_env.is_some() && {
+                        let base = id.split('<').next().unwrap_or(id);
+                        self.current_env
+                            .as_ref()
+                            .unwrap()
+                            .borrow()
+                            .lookup_blueprint(base)
+                            .is_some()
+                    })
                 {
                     Some(self.resolve_type_str(id))
                 } else {
@@ -1290,15 +1618,41 @@ impl Interpreter {
             Expr::LiteralString(s) if s.starts_with("type<") && s.ends_with('>') => {
                 strip_type_wrapper(s).to_string()
             }
-            Expr::LiteralString(_) => "str".to_string(),
+            Expr::LiteralString(_) => "array<char>".to_string(),
             Expr::LiteralBool(_) => "bool".to_string(),
             Expr::LiteralChar(_) => "char".to_string(),
+            Expr::LiteralUChar(_) => "uchar".to_string(),
             Expr::LiteralVoid => "void".to_string(),
             Expr::Identifier(id) => {
                 let ty = if is_known_type_name(id) {
                     id.clone()
                 } else if let Some(t) = self.var_types.get(id) {
                     t.clone()
+                } else if let Ok(val) = self.env.get(id) {
+                    let val_ty = match &val {
+                        Expr::LiteralString(s) if s.starts_with("type<") && s.ends_with('>') => {
+                            strip_type_wrapper(s).to_string()
+                        }
+                        Expr::Identifier(other_id) if other_id == id => "unknown".to_string(),
+                        _ => self.get_expr_type(&val),
+                    };
+                    if val_ty != "unknown" {
+                        val_ty
+                    } else if let Some(ref env_rc) = self.current_env {
+                        if env_rc.borrow().lookup_blueprint(id).is_some() {
+                            id.clone()
+                        } else if let Some(info) = env_rc.borrow().lookup(id) {
+                            if let SymbolKind::Variable { type_node, .. } = &info.kind {
+                                type_node.as_str()
+                            } else {
+                                "unknown".to_string()
+                            }
+                        } else {
+                            "unknown".to_string()
+                        }
+                    } else {
+                        "unknown".to_string()
+                    }
                 } else if let Some(ref env_rc) = self.current_env {
                     if env_rc.borrow().lookup_blueprint(id).is_some() {
                         id.clone()
@@ -1349,6 +1703,162 @@ impl Interpreter {
         }
         None
     }
+}
+
+pub fn is_compile_condition(expr: &Expr) -> bool {
+    match expr {
+        Expr::Call { callee, args, .. } => {
+            if let Expr::PropertyAccess { object, property } = &**callee {
+                if property.starts_with("has_")
+                    || property.starts_with("is_")
+                    || property == "printable"
+                    || property == "throwable"
+                    || property == "shareable"
+                    || property == "copyable"
+                    || property == "castable"
+                    || property == "castable_to"
+                {
+                    return true;
+                }
+                if is_compile_condition(object) {
+                    return true;
+                }
+            }
+            if let Expr::Identifier(id) = &**callee {
+                if id == "typeof" || id == "sizeof" || id.starts_with("@compile::") {
+                    return true;
+                }
+            }
+            if let Expr::NamespaceAccess { namespace, .. } = &**callee {
+                if namespace == "@compile" {
+                    return true;
+                }
+            }
+            args.iter().any(is_compile_condition)
+        }
+        Expr::PropertyAccess { object, property } => {
+            if property.starts_with("has_")
+                || property.starts_with("is_")
+                || property == "printable"
+                || property == "throwable"
+                || property == "shareable"
+                || property == "copyable"
+                || property == "castable"
+            {
+                return true;
+            }
+            is_compile_condition(object)
+        }
+        Expr::UnaryOp { operand, .. } => is_compile_condition(operand),
+        Expr::BinaryOp { left, right, .. } => {
+            is_compile_condition(left) || is_compile_condition(right)
+        }
+        _ => false,
+    }
+}
+
+impl Interpreter {
+    pub fn try_split_mixed_branches(
+        &mut self,
+        decl: &Decl,
+    ) -> Option<(String, Vec<Param>, Vec<(Option<Expr>, Decl, String)>)> {
+        if let Decl::FnDecl {
+            name,
+            generics,
+            params,
+            return_type,
+            body,
+            visibility,
+            is_virtual,
+            is_abstract,
+        } = decl
+        {
+            if name == "main" || generics.is_empty() || name.contains("_br") {
+                return None;
+            }
+            for (idx, s) in body.iter().enumerate() {
+                let mut raw_branches: Vec<(Option<Expr>, Vec<Stmt>)> = Vec::new();
+
+                if let Stmt::IfStmt { condition, .. } = s {
+                    if is_compile_condition(condition) {
+                        let mut curr = s;
+                        loop {
+                            if let Stmt::IfStmt {
+                                condition: c,
+                                then_block: tb,
+                                else_block: eb,
+                            } = curr
+                            {
+                                raw_branches.push((Some(c.clone()), tb.clone()));
+                                if let Some(else_stmts) = eb {
+                                    if else_stmts.len() == 1
+                                        && matches!(&else_stmts[0], Stmt::IfStmt { .. })
+                                    {
+                                        curr = &else_stmts[0];
+                                        continue;
+                                    } else {
+                                        raw_branches.push((None, else_stmts.clone()));
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                } else if let Stmt::SwitchStmt { condition, cases, .. } = s {
+                    if is_compile_condition(condition) || cases.iter().any(|c| match c {
+                        Stmt::CaseStmt { option, .. } => is_compile_condition(option),
+                        _ => false,
+                    }) {
+                        for c in cases {
+                            if let Stmt::CaseStmt { option, body, .. } = c {
+                                if matches!(option, Expr::Identifier(ref id) if id == "void") {
+                                    raw_branches.push((None, body.clone()));
+                                } else {
+                                    let cond = Expr::BinaryOp {
+                                        left: Box::new(condition.clone()),
+                                        operator: "==".to_string(),
+                                        right: Box::new(option.clone()),
+                                    };
+                                    raw_branches.push((Some(cond), body.clone()));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !raw_branches.is_empty() {
+                    let pre = body[..idx].to_vec();
+                    let post = body[idx + 1..].to_vec();
+                    let mut branches = Vec::new();
+
+                    for (k, (cond_opt, branch_stmts)) in raw_branches.into_iter().enumerate() {
+                        let br_n = format!("{}_br{}", name, k + 1);
+                        let mut br_body = pre.clone();
+                        br_body.extend(branch_stmts);
+                        br_body.extend(post.clone());
+
+                        let br_decl = Decl::FnDecl {
+                            name: br_n.clone(),
+                            generics: generics.clone(),
+                            params: params.clone(),
+                            return_type: return_type.clone(),
+                            body: br_body,
+                            visibility: visibility.clone(),
+                            is_virtual: *is_virtual,
+                            is_abstract: *is_abstract,
+                        };
+                        branches.push((cond_opt, br_decl, br_n));
+                    }
+                    return Some((name.clone(), params.clone(), branches));
+                }
+            }
+        }
+        None
+    }
 
     pub fn evaluate_ast(&mut self, stmts: &mut Vec<Stmt>) -> Result<(), String> {
         let mut new_stmts = Vec::with_capacity(stmts.len());
@@ -1358,19 +1868,70 @@ impl Interpreter {
                     for a in args.iter_mut() {
                         self.fold_expr(a)?;
                     }
-                    self.eval_stmt(&stmt)?;
-                    // Compile-time validation block succeeded! Strip from AST so C++ codegen never sees it.
+                    let mut all_literals = true;
+                    for a in args.iter() {
+                        let resolved = if let Expr::Identifier(id) = a {
+                            self.env.get(id).unwrap_or_else(|_| a.clone())
+                        } else {
+                            a.clone()
+                        };
+                        if !is_literal(&resolved) {
+                            all_literals = false;
+                            if !self.in_function_body {
+                                return Err(format!(
+                                    "Compile Error: Argument '{}' in @compile validation cannot be evaluated at compile time. Dynamic runtime values are rejected.",
+                                    self.format_expr_for_print(a)
+                                ));
+                            }
+                            break;
+                        }
+                    }
+                    if all_literals {
+                        self.eval_stmt(&stmt)?;
+                    }
+                    // Compile-time validation block succeeded or deferred! Strip from AST so C++ codegen never sees it.
                     continue;
                 }
                 Stmt::Declaration(decl) => {
-                    self.evaluate_decl(decl)?;
-                    new_stmts.push(stmt);
+                    if let Some((orig_name, fn_params, branches)) =
+                        self.try_split_mixed_branches(decl)
+                    {
+                        let branch_pairs: Vec<(Option<Expr>, String)> = branches
+                            .iter()
+                            .map(|(c, _, n)| (c.clone(), n.clone()))
+                            .collect();
+                        self.split_functions
+                            .insert(orig_name, (fn_params, branch_pairs));
+                        for (_, mut br_decl, _) in branches {
+                            self.evaluate_decl(&mut br_decl)?;
+                            new_stmts.push(Stmt::Declaration(br_decl));
+                        }
+                    } else {
+                        self.evaluate_decl(decl)?;
+                        new_stmts.push(stmt);
+                    }
                 }
-                Stmt::ReassignStmt { target, value, .. } => {
+                Stmt::ReassignStmt { target, value, op } => {
                     self.fold_expr(value)?;
                     if let Expr::Identifier(id) = target {
-                        if is_literal(value) {
-                            self.env.define(id.clone(), value.clone());
+                        let new_val = if op == "=" {
+                            if is_literal(value) {
+                                Some(value.clone())
+                            } else {
+                                None
+                            }
+                        } else if let Ok(cur) = self.env.get(id) {
+                            if is_literal(value) && is_literal(&cur) {
+                                apply_reassign_op(&cur, op, value)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
+                        if let Some(nv) = new_val {
+                            self.env.define(id.clone(), nv);
                         } else {
                             self.env.remove(id);
                         }
@@ -1459,7 +2020,7 @@ impl Interpreter {
                 ..
             } => {
                 self.fold_expr(value)?;
-                let ty_name = self.resolve_type_str(&type_node.get_name());
+                let ty_name = self.resolve_type_str(&type_node.as_str());
                 self.var_types.insert(name.clone(), ty_name.clone());
                 if is_literal(value) {
                     self.env.define(name.clone(), value.clone());
@@ -1475,10 +2036,17 @@ impl Interpreter {
                 }
             }
             Decl::ArrayDecl {
-                name, type_node, ..
+                name,
+                type_node,
+                value,
+                ..
             } => {
+                self.fold_expr(value)?;
                 self.var_types
-                    .insert(name.clone(), format!("{}[]", type_node.get_name()));
+                    .insert(name.clone(), format!("array<{}>", type_node.as_str()));
+                if is_literal(value) {
+                    self.env.define(name.clone(), value.clone());
+                }
             }
             Decl::FnDecl {
                 name,
@@ -1487,10 +2055,16 @@ impl Interpreter {
                 body,
                 ..
             } => {
-                self.functions.insert(name.clone(), (generics.clone(), params.clone(), body.clone()));
+                self.functions.insert(
+                    name.clone(),
+                    (generics.clone(), params.clone(), body.clone()),
+                );
+                let prev_in_func = self.in_function_body;
+                self.in_function_body = true;
                 if generics.is_empty() {
                     self.evaluate_ast(body)?;
                 }
+                self.in_function_body = prev_in_func;
             }
             Decl::ImplDecl {
                 methods,
@@ -1498,13 +2072,33 @@ impl Interpreter {
                 ..
             } => {
                 for m in methods {
-                    if let Decl::FnDecl { name, generics, params, body, .. } = m {
-                        self.functions.insert(name.clone(), (generics.clone(), params.clone(), body.clone()));
+                    if let Decl::FnDecl {
+                        name,
+                        generics,
+                        params,
+                        body,
+                        ..
+                    } = m
+                    {
+                        self.functions.insert(
+                            name.clone(),
+                            (generics.clone(), params.clone(), body.clone()),
+                        );
                     }
                 }
                 for h in handle_block {
-                    if let Decl::FnDecl { name, generics, params, body, .. } = h {
-                        self.functions.insert(name.clone(), (generics.clone(), params.clone(), body.clone()));
+                    if let Decl::FnDecl {
+                        name,
+                        generics,
+                        params,
+                        body,
+                        ..
+                    } = h
+                    {
+                        self.functions.insert(
+                            name.clone(),
+                            (generics.clone(), params.clone(), body.clone()),
+                        );
                     }
                 }
             }
@@ -1512,21 +2106,61 @@ impl Interpreter {
                 for d in decls {
                     self.evaluate_decl(d)?;
                     match d {
-                        Decl::FnDecl { name: fn_name, generics, params, body, .. } => {
-                            self.functions.insert(format!("{}::{}", name, fn_name), (generics.clone(), params.clone(), body.clone()));
-                            self.functions.insert(fn_name.clone(), (generics.clone(), params.clone(), body.clone()));
+                        Decl::FnDecl {
+                            name: fn_name,
+                            generics,
+                            params,
+                            body,
+                            ..
+                        } => {
+                            self.functions.insert(
+                                format!("{}::{}", name, fn_name),
+                                (generics.clone(), params.clone(), body.clone()),
+                            );
+                            self.functions.insert(
+                                fn_name.clone(),
+                                (generics.clone(), params.clone(), body.clone()),
+                            );
                         }
-                        Decl::MacroDecl { name: m_name, params, body, .. } => {
+                        Decl::MacroDecl {
+                            name: m_name,
+                            params,
+                            body,
+                            ..
+                        } => {
                             let clean_m = m_name.trim_start_matches('$');
-                            self.functions.insert(format!("{}::{}", name, m_name), (vec![], params.clone(), body.clone()));
-                            self.functions.insert(format!("{}::{}", name, clean_m), (vec![], params.clone(), body.clone()));
-                            self.functions.insert(m_name.clone(), (vec![], params.clone(), body.clone()));
-                            self.functions.insert(clean_m.to_string(), (vec![], params.clone(), body.clone()));
+                            self.functions.insert(
+                                format!("{}::{}", name, m_name),
+                                (vec![], params.clone(), body.clone()),
+                            );
+                            self.functions.insert(
+                                format!("{}::{}", name, clean_m),
+                                (vec![], params.clone(), body.clone()),
+                            );
+                            self.functions
+                                .insert(m_name.clone(), (vec![], params.clone(), body.clone()));
+                            self.functions.insert(
+                                clean_m.to_string(),
+                                (vec![], params.clone(), body.clone()),
+                            );
                         }
-                        Decl::MicroDecl { name: m_name, params, body, generics, .. } => {
-                            let gen_types: Vec<BaseType> = generics.as_ref().map(|v| v.iter().map(|s| BaseType::from_str(s)).collect()).unwrap_or_default();
-                            self.functions.insert(format!("{}::{}", name, m_name), (gen_types.clone(), params.clone(), body.clone()));
-                            self.functions.insert(m_name.clone(), (gen_types, params.clone(), body.clone()));
+                        Decl::MicroDecl {
+                            name: m_name,
+                            params,
+                            body,
+                            generics,
+                            ..
+                        } => {
+                            let gen_types: Vec<BaseType> = generics
+                                .as_ref()
+                                .map(|v| v.iter().map(|s| BaseType::from_str(s)).collect())
+                                .unwrap_or_default();
+                            self.functions.insert(
+                                format!("{}::{}", name, m_name),
+                                (gen_types.clone(), params.clone(), body.clone()),
+                            );
+                            self.functions
+                                .insert(m_name.clone(), (gen_types, params.clone(), body.clone()));
                         }
                         _ => {}
                     }
@@ -1624,8 +2258,13 @@ impl Interpreter {
                         "is_array" => *expr = Expr::LiteralBool(ft.is_array()),
                         "printable" | "is_printable" => *expr = Expr::LiteralBool(ft.printable()),
                         "throwable" | "is_throwable" => *expr = Expr::LiteralBool(ft.throwable()),
+                        "shareable" | "is_shareable" => *expr = Expr::LiteralBool(ft.shareable()),
                         "copyable" | "is_copyable" => *expr = Expr::LiteralBool(ft.copyable()),
                         "castable" | "is_castable" => *expr = Expr::LiteralBool(ft.castable()),
+                        "is_constant" | "is_const" => *expr = Expr::LiteralBool(ft.is_constant()),
+                        "is_runtime" => *expr = Expr::LiteralBool(ft.is_runtime()),
+                        "is_comptime" => *expr = Expr::LiteralBool(ft.is_comptime()),
+                        "is_undefined" => *expr = Expr::LiteralBool(ft.is_undefined()),
                         "size" => *expr = Expr::LiteralInt(ft.size() as i128),
                         "as_str" => *expr = Expr::LiteralString(ft.as_str()),
                         "default" => {
@@ -1635,7 +2274,18 @@ impl Interpreter {
                                 *expr = Expr::Default(Some(BaseType::from_str(&t_name)));
                             }
                         }
-                        _ => {}
+                        _ => {
+                            if let Some(method_name) = property.strip_prefix("has_") {
+                                *expr = Expr::LiteralBool(
+                                    ft.has_method(method_name)
+                                        || ft.has_handle(method_name)
+                                        || (method_name == "as_str"
+                                            && (ft.printable()
+                                                || ft.has_method("as_str")
+                                                || ft.has_handle("display"))),
+                                );
+                            }
+                        }
                     }
                 } else if let Ok(res) = self.eval_expr(expr) {
                     if is_literal(&res) {
@@ -1665,6 +2315,10 @@ impl Interpreter {
                             }
                             "throwable" | "is_throwable" => {
                                 *expr = Expr::LiteralBool(ft.throwable());
+                                return Ok(());
+                            }
+                            "shareable" | "is_shareable" => {
+                                *expr = Expr::LiteralBool(ft.shareable());
                                 return Ok(());
                             }
                             "copyable" | "is_copyable" => {
@@ -1697,6 +2351,70 @@ impl Interpreter {
                                 *expr = Expr::LiteralBool(ft.is_array());
                                 return Ok(());
                             }
+                            "is_constant" | "is_const" => {
+                                *expr = Expr::LiteralBool(ft.is_constant());
+                                return Ok(());
+                            }
+                            "is_runtime" => {
+                                *expr = Expr::LiteralBool(ft.is_runtime());
+                                return Ok(());
+                            }
+                            "is_comptime" => {
+                                *expr = Expr::LiteralBool(ft.is_comptime());
+                                return Ok(());
+                            }
+                            "is_undefined" => {
+                                *expr = Expr::LiteralBool(ft.is_undefined());
+                                return Ok(());
+                            }
+                            "has_handle" => {
+                                if let Some(target_arg) = args.first() {
+                                    let val = self
+                                        .eval_expr(target_arg)
+                                        .unwrap_or_else(|_| target_arg.clone());
+                                    let s1 = self.extract_type_or_name(&val);
+                                    let s2 = args.get(1).map(|a| {
+                                        let v = self.eval_expr(a).unwrap_or_else(|_| a.clone());
+                                        self.extract_type_or_name(&v)
+                                    });
+                                    *expr = Expr::LiteralBool(ft.has_handle_query(&s1, s2.as_deref()));
+                                    return Ok(());
+                                }
+                                *expr = Expr::LiteralBool(false);
+                                return Ok(());
+                            }
+                            "has_method" => {
+                                if let Some(target_arg) = args.first() {
+                                    let val = self
+                                        .eval_expr(target_arg)
+                                        .unwrap_or_else(|_| target_arg.clone());
+                                    let s1 = self.extract_type_or_name(&val);
+                                    let s2 = args.get(1).map(|a| {
+                                        let v = self.eval_expr(a).unwrap_or_else(|_| a.clone());
+                                        self.extract_type_or_name(&v)
+                                    });
+                                    *expr = Expr::LiteralBool(ft.has_method_query(&s1, s2.as_deref()));
+                                    return Ok(());
+                                }
+                                *expr = Expr::LiteralBool(false);
+                                return Ok(());
+                            }
+                            "has_field" => {
+                                if let Some(target_arg) = args.first() {
+                                    let val = self
+                                        .eval_expr(target_arg)
+                                        .unwrap_or_else(|_| target_arg.clone());
+                                    let s1 = self.extract_type_or_name(&val);
+                                    let s2 = args.get(1).map(|a| {
+                                        let v = self.eval_expr(a).unwrap_or_else(|_| a.clone());
+                                        self.extract_type_or_name(&v)
+                                    });
+                                    *expr = Expr::LiteralBool(ft.has_field_query(&s1, s2.as_deref()));
+                                    return Ok(());
+                                }
+                                *expr = Expr::LiteralBool(false);
+                                return Ok(());
+                            }
                             "size" => {
                                 *expr = Expr::LiteralInt(ft.size() as i128);
                                 return Ok(());
@@ -1709,7 +2427,19 @@ impl Interpreter {
                                 }
                                 return Ok(());
                             }
-                            _ => {}
+                            _ => {
+                                if let Some(method_name) = property.strip_prefix("has_") {
+                                    *expr = Expr::LiteralBool(
+                                        ft.has_method(method_name)
+                                            || ft.has_handle(method_name)
+                                            || (method_name == "as_str"
+                                                && (ft.printable()
+                                                    || ft.has_method("as_str")
+                                                    || ft.has_handle("display"))),
+                                    );
+                                    return Ok(());
+                                }
+                            }
                         }
                     }
                 }
@@ -1769,6 +2499,18 @@ impl Interpreter {
                     return Ok(());
                 }
 
+                if (fn_name == "throw"
+                    && matches!(&**callee, Expr::NamespaceAccess { namespace, .. } if namespace == "@compile"))
+                    || fn_name == "@compile::throw"
+                {
+                    let msg = if let Some(arg) = args.first() {
+                        self.extract_string_from_expr(arg)
+                    } else {
+                        "compile-time throw".to_string()
+                    };
+                    return self.fastlang_throw(&msg).map(|_| ());
+                }
+
                 if fn_name == "rand" {
                     let target_type = generics
                         .first()
@@ -1794,11 +2536,10 @@ impl Interpreter {
                             arg.clone()
                         };
                         let target_str = target_type.as_str();
-                        let is_generic = matches!(
-                            target_type,
-                            BaseType::GenericParam(_) | BaseType::Unknown
-                        ) || (!FastType::from_name(&target_str).is_primitive()
-                            && self.env.get(&target_str).is_err());
+                        let is_generic =
+                            matches!(target_type, BaseType::GenericParam(_) | BaseType::Unknown)
+                                || (!FastType::from_name(&target_str).is_primitive()
+                                    && self.env.get(&target_str).is_err());
                         if !is_generic && is_literal(&resolved) {
                             if let Ok(res) = self.fastlang_cast(&resolved, target_type) {
                                 *expr = res;
@@ -1838,10 +2579,125 @@ impl Interpreter {
                                 let all_concrete = full_generics.iter().all(|g| {
                                     !matches!(g, BaseType::GenericParam(_) | BaseType::Unknown)
                                         && !g.as_str().starts_with("...")
-                                    });
+                                });
                                 if all_concrete {
                                     *generics = full_generics;
                                 }
+                            }
+                        }
+                    }
+                }
+
+                // Check if this is a split function with compile-time branches
+                let split_call_info = if let Expr::Identifier(id) = &**callee {
+                    self.split_functions.get(id).cloned()
+                } else {
+                    None
+                };
+
+                if let Some((params, branches)) = split_call_info {
+                    let mut eval_args = Vec::new();
+                    for a in args.iter() {
+                        eval_args.push(self.eval_expr(a).unwrap_or_else(|_| a.clone()));
+                    }
+                    let mut cond_interp = Interpreter {
+                        env: InterpreterEnv::with_parent(self.env.clone()),
+                        functions: self.functions.clone(),
+                        var_types: self.var_types.clone(),
+                        current_env: self.current_env.clone(),
+                        fn_overloads: self.fn_overloads.clone(),
+                        split_functions: self.split_functions.clone(),
+                        in_function_body: true,
+                    };
+                    for (i, p) in params.iter().enumerate() {
+                        if let Some(arg_val) = eval_args.get(i) {
+                            cond_interp.env.define(p.name.clone(), arg_val.clone());
+                            let arg_t = self.get_expr_type(arg_val);
+                            cond_interp.var_types.insert(p.name.clone(), arg_t);
+                        }
+                    }
+                    let mut selected_fn: Option<String> = None;
+                    for (cond_opt, br_fn) in branches {
+                        if let Some(cond) = cond_opt {
+                            if let Ok(Expr::LiteralBool(true)) = cond_interp.eval_expr(&cond) {
+                                selected_fn = Some(br_fn);
+                                break;
+                            }
+                        } else {
+                            selected_fn = Some(br_fn);
+                            break;
+                        }
+                    }
+                    if let Some(chosen_fn) = selected_fn {
+                        *callee = Box::new(Expr::Identifier(chosen_fn.clone()));
+                        let is_chosen_compilable = chosen_fn.starts_with("@compile::") || {
+                            if let Some((_, _, body)) = self.functions.get(&chosen_fn) {
+                                crate::middle_end::semantic::analyzer::detect_execution_mode(body)
+                                    == ExecutionMode::FullyCompilable
+                            } else {
+                                false
+                            }
+                        };
+                        if is_chosen_compilable {
+                            let _ = self.eval_expr(expr)?;
+                        }
+                        return Ok(());
+                    }
+                }
+
+                // Check if called function has a compile-time validation block (@compile { ... }(args))
+                let fn_lookup_name = match &**callee {
+                    Expr::Identifier(id) => id.clone(),
+                    Expr::NamespaceAccess { namespace, property } => {
+                        if let Expr::Identifier(p) = &**property {
+                            format!("{}::{}", namespace, p)
+                        } else {
+                            "".to_string()
+                        }
+                    }
+                    Expr::PropertyAccess { property, .. } => property.clone(),
+                    _ => "".to_string(),
+                };
+                if let Some((fn_generics, params, body)) = self.functions.get(&fn_lookup_name).cloned() {
+                    for stmt in &body {
+                        if let Stmt::CompileValidation { body: val_body, args: _ } = stmt {
+                            let mut eval_args = Vec::new();
+                            for a in args.iter() {
+                                eval_args.push(self.eval_expr(a).unwrap_or_else(|_| a.clone()));
+                            }
+                            let arg_types: Vec<String> =
+                                eval_args.iter().map(|a| self.fastlang_typeof(a)).collect();
+                            let generic_map =
+                                crate::middle_end::semantic::analyzer::resolve_call_generics(
+                                    &fn_generics,
+                                    &params,
+                                    generics,
+                                    &arg_types,
+                                );
+                            let mut val_interp = Interpreter {
+                                env: InterpreterEnv::with_parent(self.env.clone()),
+                                functions: self.functions.clone(),
+                                var_types: self.var_types.clone(),
+                                current_env: self.current_env.clone(),
+                                fn_overloads: self.fn_overloads.clone(),
+                                split_functions: self.split_functions.clone(),
+                                in_function_body: true,
+                            };
+                            for (g_name, g_type) in &generic_map {
+                                val_interp.env.define(
+                                    g_name.clone(),
+                                    Expr::LiteralString(format!("type<{}>", g_type.as_str())),
+                                );
+                            }
+                            for (i, p) in params.iter().enumerate() {
+                                if let Some(arg_val) = eval_args.get(i) {
+                                    val_interp.env.define(p.name.clone(), arg_val.clone());
+                                    let arg_t = self.get_expr_type(arg_val);
+                                    val_interp.var_types.insert(p.name.clone(), arg_t);
+                                }
+                            }
+                            for s in val_body {
+                                val_interp.eval_stmt(s)?;
                             }
                         }
                     }
@@ -1851,16 +2707,14 @@ impl Interpreter {
                 let is_compilable = match &**callee {
                     Expr::NamespaceAccess { namespace, .. } if namespace == "@compile" => true,
                     Expr::Identifier(id) => {
-                        id.starts_with("@compile::")
-                            || {
-                                if let Some((_, _, body)) = self.functions.get(id) {
-                                    crate::middle_end::semantic::analyzer::detect_execution_mode(
-                                        body,
-                                    ) == ExecutionMode::FullyCompilable
-                                } else {
-                                    false
-                                }
+                        id.starts_with("@compile::") || {
+                            if let Some((_, _, body)) = self.functions.get(id) {
+                                crate::middle_end::semantic::analyzer::detect_execution_mode(body)
+                                    == ExecutionMode::FullyCompilable
+                            } else {
+                                false
                             }
+                        }
                     }
                     _ => false,
                 };

@@ -1,8 +1,9 @@
-// FastLang Standard Library: string
+// FastLang Standard Library: string (Dynamic Heap String)
 public class string -> {
     private -> {
-        char buffer[] = []; //we will use list in future not array.
+        char buffer[] = [];
         int32 length = 0;
+        int32 capacity = 8;
     }
 
     public -> {
@@ -12,19 +13,52 @@ public class string -> {
         fn size() -> int32 {
             return this.length;
         }
+        fn len() -> int32 {
+            return this.length;
+        }
+        fn cap() -> int32 {
+            return this.capacity;
+        }
+        fn as_str() -> str {
+            return this.buffer;
+        }
+        fn is_empty() -> bool {
+            return this.length == 0;
+        }
+        fn push(c: char) -> void {
+            if (this.length + 1 >= this.capacity) {
+                int32 new_cap = this.capacity * 2;
+                if (new_cap < 8) {
+                    new_cap = 8;
+                }
+                char new_buf[] = new char[](new_cap);
+                for (int32 i = 0; i < this.length; i = i + 1) {
+                    new_buf[i] = this.buffer[i];
+                }
+                this.buffer = new_buf;
+                this.capacity = new_cap;
+            }
+            this.buffer[this.length] = c;
+            this.length = this.length + 1;
+        }
     }
 
     handle -> {
-        fn display() -> {
-            return this.buffer;
+        fn display() -> str {
+            return this.as_str();
+        }
+        fn drop() -> void {
+            del this.buffer;
         }
         fn arrow(arr: char[]) -> void {
             this.buffer = arr;
-            this.length = arr.length;
+            this.length = arr.len;
+            this.capacity = arr.len;
         }
         fn arrow_assign(arr: char[]) -> void {
             this.buffer = arr;
-            this.length = arr.length;
+            this.length = arr.len;
+            this.capacity = arr.len;
         }
         fn index_access(index: int32) -> char {
             return this.buffer[index];
@@ -33,11 +67,18 @@ public class string -> {
 
     constructor -> {
         init() -> {
+            this.capacity = 8;
             this.length = 0;
+            this.buffer = new char[](8);
         }
-        init(arr: char[]) -> {
-            this.buffer = arr;
-            this.length = arr.length;
+        init(s: str) -> {
+            int32 s_len = s.len;
+            this.capacity = s_len;
+            this.length = s_len;
+            this.buffer = new char[](s_len);
+            for (int32 i = 0; i < s_len; i = i + 1) {
+                this.buffer[i] = s[i];
+            }
         }
     }
 }

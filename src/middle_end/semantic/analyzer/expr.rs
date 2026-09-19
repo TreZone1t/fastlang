@@ -7,8 +7,9 @@ impl SemanticAnalyzer {
             Expr::LiteralInt(_) => Ok("int".to_string()),
             Expr::LiteralUInt(_) => Ok("uint".to_string()),
             Expr::LiteralFloat(_) => Ok("float".to_string()),
-            Expr::LiteralString(_) => Ok("str".to_string()),
+            Expr::LiteralString(_) => Ok("array<char>".to_string()),
             Expr::LiteralChar(_) => Ok("char".to_string()),
+            Expr::LiteralUChar(_) => Ok("uchar".to_string()),
             Expr::LiteralBool(_) => Ok("bool".to_string()),
             Expr::LiteralVoid => Ok("void".to_string()),
             Expr::LiteralUndefined => Ok("undefined".to_string()),
@@ -26,8 +27,6 @@ impl SemanticAnalyzer {
                                 .trim_start_matches("array<")
                                 .trim_end_matches('>')
                                 .to_string()
-                        } else if inner_t == "str" {
-                            "char".to_string()
                         } else {
                             inner_t
                         }
@@ -58,8 +57,6 @@ impl SemanticAnalyzer {
                         .trim_start_matches("array<")
                         .trim_end_matches('>')
                         .to_string())
-                } else if inner_t == "str" {
-                    Ok("char".to_string())
                 } else {
                     Ok(inner_t)
                 }
@@ -116,6 +113,8 @@ impl SemanticAnalyzer {
                         | "is_printable"
                         | "throwable"
                         | "is_throwable"
+                        | "shareable"
+                        | "is_shareable"
                 ) {
                     return Ok("bool".to_string());
                 }
@@ -136,7 +135,6 @@ impl SemanticAnalyzer {
                         | "float64"
                         | "float"
                         | "char"
-                        | "str"
                         | "byte"
                         | "usize"
                         | "isize"
@@ -163,8 +161,13 @@ impl SemanticAnalyzer {
                 }
                 if name.contains('<') && name.ends_with('>') {
                     let base_name = name.split('<').next().unwrap_or(name);
-                    if self.current_env.borrow().lookup_blueprint(base_name).is_some()
+                    if self
+                        .current_env
+                        .borrow()
+                        .lookup_blueprint(base_name)
+                        .is_some()
                         || self.global_metadata.contains_key(base_name)
+                        || matches!(base_name, "array")
                     {
                         return Ok(format!("type<{}>", name));
                     }
@@ -343,7 +346,9 @@ impl SemanticAnalyzer {
                 }
                 if let Expr::PropertyAccess { object, property } = &**callee {
                     let obj_type = self.visit_expression(object)?;
-                    if property == "default" && (obj_type.starts_with("type<") || obj_type == "type") {
+                    if property == "default"
+                        && (obj_type.starts_with("type<") || obj_type == "type")
+                    {
                         for arg in args {
                             self.visit_expression(arg)?;
                         }
@@ -354,23 +359,54 @@ impl SemanticAnalyzer {
                             return Ok("unknown".to_string());
                         }
                     }
-                    let type_name = if obj_type.starts_with("array<") {
-                        "array".to_string()
-                    } else if obj_type.starts_with("type<") || obj_type == "type" {
-                        "type".to_string()
+                    let unwrap_address = if obj_type.starts_with("address<") {
+                        strip_wrapper(&obj_type, "address<").to_string()
+                    } else if obj_type.ends_with('&') {
+                        obj_type[..obj_type.len() - 1].trim().to_string()
                     } else {
-                        extract_blueprint_name_from_type(&obj_type)
-                            .unwrap_or_else(|| obj_type.clone())
+                        obj_type.clone()
+                    };
+                    let normalized_type = if unwrap_address == "char[]" {
+                        "array<char>".to_string()
+                    } else if unwrap_address.ends_with("[]") {
+                        format!("array<{}>", &unwrap_address[..unwrap_address.len() - 2])
+                    } else {
+                        unwrap_address
                     };
 
-                    let has_handle =
-                        if let Some(bp) = self.current_env.borrow().lookup_blueprint(&type_name) {
+                    let (specialized_type_name, primary_type_name) =
+                        if let Some(bp) = extract_blueprint_name_from_type(&normalized_type) {
+                            (None, bp)
+                        } else if let Some(idx) = normalized_type.find('<') {
+                            let base = normalized_type[..idx].trim().to_string();
+                            (Some(normalized_type.clone()), base)
+                        } else {
+                            (None, normalized_type.clone())
+                        };
+
+                    let type_name = primary_type_name.clone();
+
+                    let has_handle = if let Some(spec_name) = &specialized_type_name {
+                        if let Some(bp) = self.current_env.borrow().lookup_blueprint(spec_name) {
                             bp.handles.iter().any(|h| h.as_str() == property)
-                        } else if let Some(meta) = self.global_metadata.get(&type_name) {
+                        } else if let Some(meta) = self.global_metadata.get(spec_name) {
                             meta.handles.iter().any(|h| h.as_str() == property)
                         } else {
                             false
-                        };
+                        }
+                    } else {
+                        false
+                    } || if let Some(bp) = self
+                        .current_env
+                        .borrow()
+                        .lookup_blueprint(&primary_type_name)
+                    {
+                        bp.handles.iter().any(|h| h.as_str() == property)
+                    } else if let Some(meta) = self.global_metadata.get(&primary_type_name) {
+                        meta.handles.iter().any(|h| h.as_str() == property)
+                    } else {
+                        false
+                    };
 
                     if has_handle || property == "display" {
                         return Err(
@@ -382,19 +418,44 @@ impl SemanticAnalyzer {
                         );
                     }
 
-                    let bp_method_info = {
+                    // Two-tier method lookup:
+                    // 1. Check specialized type (e.g. array<char>)
+                    // 2. Fall back to primary type (e.g. array)
+                    let (chosen_bp_name, bp_method_info) = {
                         let env = self.current_env.borrow();
-                        if let Some(bp) = env.lookup_blueprint(&type_name) {
-                            bp.methods.get(property).cloned()
-                        } else {
-                            None
+                        let mut res = None;
+                        let mut name = primary_type_name.clone();
+                        if let Some(spec_name) = &specialized_type_name {
+                            if let Some(bp) = env.lookup_blueprint(spec_name) {
+                                if let Some(sig) = bp
+                                    .methods
+                                    .get(property)
+                                    .or_else(|| bp.handle_signatures.get(property))
+                                {
+                                    res = Some(sig.clone());
+                                    name = spec_name.clone();
+                                }
+                            }
                         }
+                        if res.is_none() {
+                            if let Some(bp) = env.lookup_blueprint(&primary_type_name) {
+                                if let Some(sig) = bp
+                                    .methods
+                                    .get(property)
+                                    .or_else(|| bp.handle_signatures.get(property))
+                                {
+                                    res = Some(sig.clone());
+                                    name = primary_type_name.clone();
+                                }
+                            }
+                        }
+                        (name, res)
                     };
 
                     if let Some(method_sig) = bp_method_info {
-                        self.record_dependency(format!("{}::{}", type_name, property));
+                        self.record_dependency(format!("{}::{}", chosen_bp_name, property));
                         self.record_dependency(property.clone());
-                        self.record_dependency(type_name.clone());
+                        self.record_dependency(chosen_bp_name.clone());
                         for dep in extract_all_type_names(&method_sig.return_type.as_str()) {
                             self.record_dependency(dep);
                         }
@@ -406,48 +467,74 @@ impl SemanticAnalyzer {
                         for arg in args {
                             self.visit_expression(arg)?;
                         }
-                        let ret_type = if type_name == "array" && obj_type.starts_with("array<") {
-                            let elem_t =
-                                obj_type.trim_start_matches("array<").trim_end_matches('>');
-                            let elem_base = BaseType::from_str(elem_t);
-                            let mut gen_map = std::collections::HashMap::new();
-                            for g_param in method_sig.return_type.extract_generic_params() {
-                                gen_map.insert(g_param, elem_base.clone());
-                            }
-                            for p in &method_sig.params {
-                                for g_param in p.type_node.extract_generic_params() {
+                        let ret_type =
+                            if chosen_bp_name == "array" && obj_type.starts_with("array<") {
+                                let elem_t =
+                                    obj_type.trim_start_matches("array<").trim_end_matches('>');
+                                let elem_base = BaseType::from_str(elem_t);
+                                let mut gen_map = std::collections::HashMap::new();
+                                for g_param in method_sig.return_type.extract_generic_params() {
                                     gen_map.insert(g_param, elem_base.clone());
                                 }
-                            }
-                            method_sig.return_type.substitute_generics(&gen_map)
-                        } else {
-                            method_sig.return_type.clone()
-                        };
-                        return Ok(ret_type.as_str());
-                    }
-                    let method_deps_and_ret =
-                        if let Some(meta) = self.global_metadata.get(&type_name) {
-                            if let Some(fn_type) = meta.methods.get(property) {
-                                let mut deps = vec![
-                                    format!("{}::{}", type_name, property),
-                                    property.clone(),
-                                    type_name.clone(),
-                                ];
-                                for dep in extract_all_type_names(&fn_type.return_type.as_str()) {
-                                    deps.push(dep);
-                                }
-                                for p in &fn_type.params {
-                                    for dep in extract_all_type_names(&p.type_node.as_str()) {
-                                        deps.push(dep);
+                                for p in &method_sig.params {
+                                    for g_param in p.type_node.extract_generic_params() {
+                                        gen_map.insert(g_param, elem_base.clone());
                                     }
                                 }
-                                Some((deps, fn_type.return_type.clone()))
+                                method_sig.return_type.substitute_generics(&gen_map)
+                            } else {
+                                method_sig.return_type.clone()
+                            };
+                        return Ok(ret_type.as_str());
+                    }
+
+                    let (chosen_meta_name, method_deps_and_ret) = {
+                        let find_in_meta = |t_name: &str| {
+                            if let Some(meta) = self.global_metadata.get(t_name) {
+                                if let Some(fn_type) = meta
+                                    .methods
+                                    .get(property)
+                                    .or_else(|| meta.handle_signatures.get(property))
+                                {
+                                    let mut deps = vec![
+                                        format!("{}::{}", t_name, property),
+                                        property.clone(),
+                                        t_name.to_string(),
+                                    ];
+                                    for dep in extract_all_type_names(&fn_type.return_type.as_str())
+                                    {
+                                        deps.push(dep);
+                                    }
+                                    for p in &fn_type.params {
+                                        for dep in extract_all_type_names(&p.type_node.as_str()) {
+                                            deps.push(dep);
+                                        }
+                                    }
+                                    Some((deps, fn_type.return_type.clone()))
+                                } else {
+                                    None
+                                }
                             } else {
                                 None
                             }
-                        } else {
-                            None
                         };
+
+                        let mut res = None;
+                        let mut name = primary_type_name.clone();
+                        if let Some(spec_name) = &specialized_type_name {
+                            if let Some(found) = find_in_meta(spec_name) {
+                                res = Some(found);
+                                name = spec_name.clone();
+                            }
+                        }
+                        if res.is_none() {
+                            if let Some(found) = find_in_meta(&primary_type_name) {
+                                res = Some(found);
+                                name = primary_type_name.clone();
+                            }
+                        }
+                        (name, res)
+                    };
 
                     if let Some((deps, return_type)) = method_deps_and_ret {
                         for dep in deps {
@@ -456,22 +543,84 @@ impl SemanticAnalyzer {
                         for arg in args {
                             self.visit_expression(arg)?;
                         }
-                        let ret_type = if type_name == "array" && obj_type.starts_with("array<") {
-                            let elem_t =
-                                obj_type.trim_start_matches("array<").trim_end_matches('>');
-                            let elem_base = BaseType::from_str(elem_t);
-                            let mut gen_map = std::collections::HashMap::new();
-                            for g_param in return_type.extract_generic_params() {
-                                gen_map.insert(g_param, elem_base.clone());
-                            }
-                            return_type.substitute_generics(&gen_map)
-                        } else {
-                            return_type
-                        };
+                        let ret_type =
+                            if chosen_meta_name == "array" && obj_type.starts_with("array<") {
+                                let elem_t =
+                                    obj_type.trim_start_matches("array<").trim_end_matches('>');
+                                let elem_base = BaseType::from_str(elem_t);
+                                let mut gen_map = std::collections::HashMap::new();
+                                for g_param in return_type.extract_generic_params() {
+                                    gen_map.insert(g_param, elem_base.clone());
+                                }
+                                return_type.substitute_generics(&gen_map)
+                            } else {
+                                return_type
+                            };
                         return Ok(ret_type.as_str());
                     }
                     if property == "as_str" && args.is_empty() {
-                        return Ok("str".to_string());
+                        return Ok("array<char>".to_string());
+                    }
+
+                    // Forward method call via `property_access` handle if defined on wrapper
+                    if let Some(target_type) = self.resolve_property_access_target_type(&obj_type) {
+                        let target_bp_opt = extract_blueprint_name_from_type(&target_type)
+                            .or_else(|| Some(target_type.clone()));
+                        if let Some(t_bp_name) = target_bp_opt {
+                            let mut found_ret: Option<(String, Vec<String>)> = None;
+                            if let Some(t_bp) =
+                                self.current_env.borrow().lookup_blueprint(&t_bp_name)
+                            {
+                                if let Some(sig) = t_bp.methods.get(property) {
+                                    let mut deps = vec![
+                                        format!("{}::{}", t_bp_name, property),
+                                        property.clone(),
+                                        t_bp_name.clone(),
+                                    ];
+                                    for dep in extract_all_type_names(&sig.return_type.as_str()) {
+                                        deps.push(dep);
+                                    }
+                                    for p in &sig.params {
+                                        for dep in extract_all_type_names(&p.type_node.as_str()) {
+                                            deps.push(dep);
+                                        }
+                                    }
+                                    found_ret = Some((sig.return_type.as_str(), deps));
+                                }
+                            }
+                            if found_ret.is_none() {
+                                if let Some(t_meta) = self.global_metadata.get(&t_bp_name) {
+                                    if let Some(fn_type) = t_meta.methods.get(property) {
+                                        let mut deps = vec![
+                                            format!("{}::{}", t_bp_name, property),
+                                            property.clone(),
+                                            t_bp_name.clone(),
+                                        ];
+                                        for dep in
+                                            extract_all_type_names(&fn_type.return_type.as_str())
+                                        {
+                                            deps.push(dep);
+                                        }
+                                        for p in &fn_type.params {
+                                            for dep in extract_all_type_names(&p.type_node.as_str())
+                                            {
+                                                deps.push(dep);
+                                            }
+                                        }
+                                        found_ret = Some((fn_type.return_type.as_str(), deps));
+                                    }
+                                }
+                            }
+                            if let Some((ret_str, deps)) = found_ret {
+                                for dep in deps {
+                                    self.record_dependency(dep);
+                                }
+                                for arg in args {
+                                    self.visit_expression(arg)?;
+                                }
+                                return Ok(ret_str);
+                            }
+                        }
                     }
                 }
                 let mut arg_types = Vec::new();
@@ -493,14 +642,22 @@ impl SemanticAnalyzer {
                             } else if let Some(bp) =
                                 self.current_env.borrow().lookup_blueprint(namespace)
                             {
-                                if let Some(sig) = bp.methods.get(prop_name) {
+                                if let Some(sig) = bp
+                                    .methods
+                                    .get(prop_name)
+                                    .or_else(|| bp.handle_signatures.get(prop_name))
+                                {
                                     ret_type_from_ns = Some(sig.return_type.as_str());
                                     Some(prop_name.clone())
                                 } else {
                                     Some(qualified)
                                 }
                             } else if let Some(meta) = self.global_metadata.get(namespace) {
-                                if let Some(sig) = meta.methods.get(prop_name) {
+                                if let Some(sig) = meta
+                                    .methods
+                                    .get(prop_name)
+                                    .or_else(|| meta.handle_signatures.get(prop_name))
+                                {
                                     ret_type_from_ns = Some(sig.return_type.as_str());
                                     Some(prop_name.clone())
                                 } else {
@@ -522,12 +679,6 @@ impl SemanticAnalyzer {
 
                 if let Some(ref name) = name_opt {
                     self.record_dependency(name.clone());
-                    if name == "print" || name == "println" {
-                        for a_ty in &arg_types {
-                            let type_clean = a_ty.trim_start_matches("name<").trim_end_matches('>');
-                            self.record_dependency(format!("{}::display", type_clean));
-                        }
-                    }
                     self.current_env.borrow_mut().mark_used(name);
                     if let Some(info) = self.current_env.borrow().lookup(name) {
                         if let SymbolKind::Variable { type_node, .. } = &info.kind {
@@ -575,6 +726,7 @@ impl SemanticAnalyzer {
                                         .unwrap_or_else(|| "void".to_string());
                                     return Ok(target_t);
                                 }
+                                "access" => return Ok("unknown".to_string()),
                                 _ => {}
                             }
                         }
@@ -639,7 +791,10 @@ impl SemanticAnalyzer {
                                 )
                             );
                         }
-                        bp.methods.get("call").map(|s| s.return_type.as_str())
+                        bp.handle_signatures
+                            .get("call")
+                            .or_else(|| bp.methods.get("call"))
+                            .map(|s| s.return_type.as_str())
                     } else {
                         None
                     };
@@ -648,7 +803,11 @@ impl SemanticAnalyzer {
                     }
 
                     if let Some(meta) = self.global_metadata.get(name) {
-                        if let Some(call_sig) = meta.methods.get("call") {
+                        if let Some(call_sig) = meta
+                            .handle_signatures
+                            .get("call")
+                            .or_else(|| meta.methods.get("call"))
+                        {
                             return Ok(call_sig.return_type.as_str());
                         }
                     }
@@ -757,7 +916,8 @@ impl SemanticAnalyzer {
                                             &call_generics,
                                             &arg_types,
                                         );
-                                        let resolved_ret = sig.return_type.substitute_generics(&generic_map);
+                                        let resolved_ret =
+                                            sig.return_type.substitute_generics(&generic_map);
                                         if let BaseType::GenericParam(ret_g) = &resolved_ret {
                                             if let Some(inferred_ret) = gen_bindings.get(ret_g) {
                                                 best_match = Some(inferred_ret.clone());
@@ -780,7 +940,13 @@ impl SemanticAnalyzer {
                     }
 
                     if let Some(info) = self.current_env.borrow().lookup(name) {
-                        if let SymbolKind::Function { return_type, generics: fn_generics, params, .. } = &info.kind {
+                        if let SymbolKind::Function {
+                            return_type,
+                            generics: fn_generics,
+                            params,
+                            ..
+                        } = &info.kind
+                        {
                             let generic_map = resolve_call_generics(
                                 fn_generics,
                                 params,
@@ -875,20 +1041,23 @@ impl SemanticAnalyzer {
                     ">" => Some("greater_than"),
                     "<=" => Some("less_than_equal"),
                     ">=" => Some("greater_than_equal"),
+                    "->" => Some("arrow"),
+                    "=>" => Some("fat_arrow"),
                     _ => None,
                 };
                 if let Some(h) = op_handle {
                     self.record_dependency(format!("{}::{}", left_type, h));
                 }
-                if operator == "+"
-                    && (left_type == "str"
-                        || left_type == "char"
-                        || left_type == "array<char>"
-                        || right_type == "str"
-                        || right_type == "char"
-                        || right_type == "array<char>")
-                {
-                    return Ok("str".to_string());
+                if operator == "->" || operator == "=>" {
+                    let handle_name = if operator == "->" { "arrow" } else { "fat_arrow" };
+                    let clean_left = left_type.trim_end_matches('*').trim();
+                    let bp_opt = self.current_env.borrow().lookup_blueprint(clean_left);
+                    if let Some(bp) = bp_opt {
+                        if let Some(h_sig) = bp.handle_signatures.get(handle_name).or_else(|| bp.methods.get(handle_name)) {
+                            return Ok(h_sig.return_type.as_str().to_string());
+                        }
+                    }
+                    return Ok(left_type);
                 }
                 match operator.as_str() {
                     "==" | "!=" | ">" | "<" | ">=" | "<=" | "&&" | "||" => Ok("bool".to_string()),
@@ -909,15 +1078,17 @@ impl SemanticAnalyzer {
                         "Semantic Error: Cannot use undefined value in operation".to_string()
                     );
                 }
-                if operator == "*" {
-                    for prefix in &["name<", "modify<", "copy<", "pointer<", "array<"] {
+                if operator == "!" {
+                    return Ok("bool".to_string());
+                } else if operator == "*" {
+                    for prefix in &["raw_ptr<", "array<", "address<"] {
                         if op_type.starts_with(prefix) {
                             let inner = strip_wrapper(&op_type, prefix);
                             return Ok(inner.to_string());
                         }
                     }
                 } else if operator == "&" {
-                    return Ok(format!("pointer<{}>", op_type));
+                    return Ok(format!("address<{}>", op_type));
                 }
                 Ok(op_type)
             }
@@ -925,7 +1096,6 @@ impl SemanticAnalyzer {
             Expr::PrefixUpdate { right, .. } => self.visit_expression(right),
             Expr::PostfixUpdate { left, .. } => self.visit_expression(left),
             // TODO: add check if the type of the object contains a index_access handle if it not a name or array or pointer
-            // TODO: add modify and copy
             Expr::IndexAccess { object, indices } => {
                 for idx in indices {
                     self.visit_expression(idx)?; //todo: check if the index is the same type as the parameter of the index_access handle
@@ -935,24 +1105,43 @@ impl SemanticAnalyzer {
 
                 let mut current_type = obj_type.clone();
 
-                while current_type.starts_with("modify<")
-                    || current_type.starts_with("copy<")
-                    || current_type.starts_with("name<")
-                    || current_type.starts_with("pointer<")
-                {
-                    if current_type.starts_with("modify<") {
-                        current_type = strip_wrapper(&current_type, "modify<").to_string();
-                    } else if current_type.starts_with("copy<") {
-                        current_type = strip_wrapper(&current_type, "copy<").to_string();
-                    } else if current_type.starts_with("name<") {
-                        current_type = strip_wrapper(&current_type, "name<").to_string();
-                    } else if current_type.starts_with("pointer<") {
-                        current_type = strip_wrapper(&current_type, "pointer<").to_string();
-                    }
+                while current_type.starts_with("raw_ptr<") {
+                    current_type = strip_wrapper(&current_type, "raw_ptr<").to_string();
                 }
 
-                if current_type == "str" {
-                    return Ok("char".to_string());
+                // Compile-time bounds checking for constant indices
+                if indices.len() == 1 {
+                    if let Expr::LiteralInt(val) = &indices[0] {
+                        if *val < 0 {
+                            return Err(format!(
+                                "Semantic Error: Array index cannot be negative (found {}).",
+                                val
+                            ));
+                        }
+                        if let Some(start_bracket) = current_type.rfind('[') {
+                            if let Some(end_bracket) = current_type.rfind(']') {
+                                if start_bracket < end_bracket {
+                                    let size_str = &current_type[start_bracket + 1..end_bracket];
+                                    if let Ok(size) = size_str.parse::<i128>() {
+                                        if *val >= size {
+                                            return Err(format!(
+                                                "Semantic Error: Array index {} is out of bounds for array of size {}.",
+                                                val, size
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if let Expr::ArrayLiteral(elems) = object.as_ref() {
+                            if (*val as usize) >= elems.len() {
+                                return Err(format!(
+                                    "Semantic Error: Array index {} is out of bounds for array literal of size {}.",
+                                    val, elems.len()
+                                ));
+                            }
+                        }
+                    }
                 }
                 if current_type.starts_with("array<") || current_type == "array" {
                     if indices.len() > 1 {
@@ -967,8 +1156,8 @@ impl SemanticAnalyzer {
                     }
                     return Ok(strip_wrapper(&current_type, "array<").to_string());
                 }
-                if obj_type.starts_with("pointer<") {
-                    return Ok(strip_wrapper(&obj_type, "pointer<").to_string());
+                if obj_type.starts_with("raw_ptr<") {
+                    return Ok(strip_wrapper(&obj_type, "raw_ptr<").to_string());
                 }
                 if current_type != "unknown" {
                     let bp_name = extract_blueprint_name_from_type(&obj_type)
@@ -979,7 +1168,11 @@ impl SemanticAnalyzer {
                             if bp.handles.contains(&HandleMethods::IndexAccess)
                                 || bp.methods.contains_key("index_access")
                             {
-                                let ret = bp.methods.get("index_access").map(|s| s.return_type.as_str()).unwrap_or_else(|| "int32".to_string());
+                                let ret = bp
+                                    .methods
+                                    .get("index_access")
+                                    .map(|s| s.return_type.as_str())
+                                    .unwrap_or_else(|| "int32".to_string());
                                 Some(ret)
                             } else {
                                 None
@@ -997,7 +1190,11 @@ impl SemanticAnalyzer {
                         if meta.handles.contains(&HandleMethods::IndexAccess)
                             || meta.methods.contains_key("index_access")
                         {
-                            let ret = meta.methods.get("index_access").map(|s| s.return_type.as_str()).unwrap_or_else(|| "int32".to_string());
+                            let ret = meta
+                                .methods
+                                .get("index_access")
+                                .map(|s| s.return_type.as_str())
+                                .unwrap_or_else(|| "int32".to_string());
                             Some(ret)
                         } else {
                             None
@@ -1029,12 +1226,6 @@ impl SemanticAnalyzer {
                     }
                 }
 
-                if obj_type.starts_with("array<") || obj_type.ends_with("[]") {
-                    if property == "length" || property == "len" || property == "size" {
-                        return Ok("int32".to_string());
-                    }
-                }
-
                 if matches!(
                     property.as_str(),
                     "broken"
@@ -1055,36 +1246,33 @@ impl SemanticAnalyzer {
                     return Ok("bool".to_string());
                 }
 
-                if obj_type.starts_with("array<") || obj_type == "array" {
-                    if property == "len" || property == "length" || property == "size" {
-                        return Ok("int32".to_string());
-                    }
-                }
-
-                if obj_type.starts_with("scope") {
-                    match property.as_str() {
-                        "has_yield" | "has_leave" | "has_return" | "is_done" => {
-                            return Ok("bool".to_string());
-                        }
-                        "yield_value" | "leave_value" | "return_value" | "result" => {
-                            return Ok("any".to_string());
-                        }
-                        _ => {}
-                    }
-                }
+                // If object is an address<T> (or T&), unwrap to T for direct property access (C++ reference style)
+                let actual_obj_type = if obj_type.starts_with("address<") {
+                    strip_wrapper(&obj_type, "address<").to_string()
+                } else if obj_type.ends_with('&') {
+                    obj_type[..obj_type.len() - 1].trim().to_string()
+                } else {
+                    obj_type.clone()
+                };
 
                 // Try to find in blueprint
-                let bp_name_opt = if obj_type.starts_with("type<") || obj_type == "type" {
-                    Some("type".to_string())
-                } else {
-                    extract_blueprint_name_from_type(&obj_type).or_else(|| Some(obj_type.clone()))
-                };
+                let bp_name_opt =
+                    if actual_obj_type.starts_with("type<") || actual_obj_type == "type" {
+                        Some("type".to_string())
+                    } else {
+                        extract_blueprint_name_from_type(&actual_obj_type)
+                            .or_else(|| Some(actual_obj_type.clone()))
+                    };
                 if let Some(bp_name) = bp_name_opt {
                     if let Some(bp) = self.current_env.borrow().lookup_blueprint(&bp_name) {
                         if let Some(field_type) = bp.fields.get(property) {
                             return Ok(field_type.as_str());
                         }
-                        if let Some(sig) = bp.methods.get(property) {
+                        if let Some(sig) = bp
+                            .methods
+                            .get(property)
+                            .or_else(|| bp.handle_signatures.get(property))
+                        {
                             return Ok(sig.return_type.as_str());
                         }
                     }
@@ -1093,8 +1281,48 @@ impl SemanticAnalyzer {
                         if let Some(field_type) = meta.fields.get(property) {
                             return Ok(field_type.as_str());
                         }
-                        if let Some(fn_type) = meta.methods.get(property) {
+                        if let Some(fn_type) = meta
+                            .methods
+                            .get(property)
+                            .or_else(|| meta.handle_signatures.get(property))
+                        {
                             return Ok(fn_type.return_type.as_str());
+                        }
+                    }
+
+                    // Forward access via `property_access` handle if defined on wrapper
+                    if let Some(target_type) =
+                        self.resolve_property_access_target_type(&actual_obj_type)
+                    {
+                        let target_bp_opt = extract_blueprint_name_from_type(&target_type)
+                            .or_else(|| Some(target_type.clone()));
+                        if let Some(t_bp_name) = target_bp_opt {
+                            if let Some(t_bp) =
+                                self.current_env.borrow().lookup_blueprint(&t_bp_name)
+                            {
+                                if let Some(field_type) = t_bp.fields.get(property) {
+                                    return Ok(field_type.as_str());
+                                }
+                                if let Some(sig) = t_bp
+                                    .methods
+                                    .get(property)
+                                    .or_else(|| t_bp.handle_signatures.get(property))
+                                {
+                                    return Ok(sig.return_type.as_str());
+                                }
+                            }
+                            if let Some(t_meta) = self.global_metadata.get(&t_bp_name) {
+                                if let Some(field_type) = t_meta.fields.get(property) {
+                                    return Ok(field_type.as_str());
+                                }
+                                if let Some(fn_type) = t_meta
+                                    .methods
+                                    .get(property)
+                                    .or_else(|| t_meta.handle_signatures.get(property))
+                                {
+                                    return Ok(fn_type.return_type.as_str());
+                                }
+                            }
                         }
                     }
                 }
@@ -1218,7 +1446,102 @@ impl SemanticAnalyzer {
                     source_type_str, target_type_str
                 ));
             }
+            Expr::HandleCall {
+                object,
+                handle_name,
+                args,
+            } => {
+                let obj_type = self.visit_expression(object)?;
+                for arg in args {
+                    self.visit_expression(arg)?;
+                }
+                if obj_type.starts_with("array<") || obj_type.ends_with("[]") {
+                    let elem = if obj_type.starts_with("array<") {
+                        strip_wrapper(&obj_type, "array<").to_string()
+                    } else {
+                        obj_type.trim_end_matches("[]").to_string()
+                    };
+                    match handle_name.as_str() {
+                        "iter" => return Ok(format!("array_iterator<{}>", elem)),
+                        "is_done_iter" => return Ok("bool".to_string()),
+                        "next" | "index_access" => return Ok(elem),
+                        "display" => return Ok("array<char>".to_string()),
+                        "drop" => return Ok("void".to_string()),
+                        _ => {}
+                    }
+                }
+                let bp_name_opt =
+                    extract_blueprint_name_from_type(&obj_type).or_else(|| Some(obj_type.clone()));
+                if let Some(bp_name) = bp_name_opt {
+                    if let Some(bp) = self.current_env.borrow().lookup_blueprint(&bp_name) {
+                        if let Some(sig) = bp
+                            .handle_signatures
+                            .get(handle_name)
+                            .or_else(|| bp.methods.get(handle_name))
+                        {
+                            return Ok(sig.return_type.as_str());
+                        }
+                    }
+                    if let Some(meta) = self.global_metadata.get(&bp_name) {
+                        if let Some(fn_type) = meta
+                            .handle_signatures
+                            .get(handle_name)
+                            .or_else(|| meta.methods.get(handle_name))
+                        {
+                            return Ok(fn_type.return_type.as_str());
+                        }
+                    }
+                }
+                Ok("unknown".to_string())
+            }
         }
     }
 
+    pub(crate) fn resolve_property_access_target_type(&self, raw_obj_type: &str) -> Option<String> {
+        let (base_name, type_args) = extract_type_args_from_str(raw_obj_type);
+        let has_prop_access = {
+            let env = self.current_env.borrow();
+            if let Some(bp) = env.lookup_blueprint(&base_name) {
+                bp.handles.iter().any(|h| h.as_str() == "property_access")
+                    || bp.handle_signatures.contains_key("property_access")
+            } else if let Some(meta) = self.global_metadata.get(&base_name) {
+                meta.handles.iter().any(|h| h.as_str() == "property_access")
+                    || meta.handle_signatures.contains_key("property_access")
+            } else {
+                false
+            }
+        };
+        if !has_prop_access {
+            return None;
+        }
+
+        // If the wrapper has type arguments (e.g. ref<Point>, mutRef<Point>, pointer<Point>),
+        // the inner target type is the primary type argument.
+        if let Some(first_arg) = type_args.first() {
+            return Some(first_arg.as_str());
+        }
+
+        // If no explicit generic args in string, check if the blueprint defines a field 'ptr'
+        let ptr_type = {
+            let env = self.current_env.borrow();
+            if let Some(bp) = env.lookup_blueprint(&base_name) {
+                bp.fields.get("ptr").cloned()
+            } else if let Some(meta) = self.global_metadata.get(&base_name) {
+                meta.fields.get("ptr").map(|bt| bt.clone())
+            } else {
+                None
+            }
+        };
+
+        if let Some(p) = ptr_type {
+            let p_str = p.as_str();
+            if p_str.starts_with("raw_ptr<") {
+                return Some(strip_wrapper(&p_str, "raw_ptr<").to_string());
+            } else if p_str.ends_with('*') {
+                return Some(p_str[..p_str.len() - 1].trim().to_string());
+            }
+        }
+
+        None
+    }
 }

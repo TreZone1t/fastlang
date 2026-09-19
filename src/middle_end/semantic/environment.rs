@@ -23,6 +23,7 @@ pub struct BlueprintData {
     pub fields: HashMap<String, BaseType>,
     pub methods: HashMap<String, FnSignature>,
     pub handles: HashSet<HandleMethods>,
+    pub handle_signatures: HashMap<String, FnSignature>,
     pub settings: HashSet<Setting>,
     pub generics: Vec<String>,
     pub params: Vec<Param>,
@@ -37,6 +38,7 @@ impl BlueprintData {
             fields: HashMap::new(),
             methods: HashMap::new(),
             handles: HashSet::new(),
+            handle_signatures: HashMap::new(),
             settings: HashSet::new(),
             generics: Vec::new(),
             params: Vec::new(),
@@ -50,22 +52,64 @@ impl BlueprintData {
         self.handles.contains(&h)
     }
 
+    /// Checks if this blueprint is marked as shareable (has handle share)
+    pub fn is_shareable(&self) -> bool {
+        self.has_handle(HandleMethods::Share)
+    }
+
+    /// Defines a handle with its signature in the dedicated handle storage
+    pub fn define_handle(&mut self, h: HandleMethods, sig: FnSignature) {
+        self.handles.insert(h);
+        self.handle_signatures.insert(h.as_str().to_string(), sig);
+    }
+
     /// Checks if the specified handle accepts a parameter of the given type
     /// Used to verify operator overloading compatibility
     pub fn handle_accepts_type(&self, h: HandleMethods, value_type: &str) -> bool {
         let fn_name = h.as_str();
-        if let Some(sig) = self.methods.get(fn_name) {
+        let maybe_sig = self
+            .handle_signatures
+            .get(fn_name)
+            .or_else(|| self.methods.get(fn_name));
+        if let Some(sig) = maybe_sig {
             if sig.params.is_empty() {
                 // Handle without params accepts anything
                 return true;
             }
             let param_type = sig.params[0].type_node.as_str();
+            let clean_p = param_type
+                .trim_start_matches("class::")
+                .trim_start_matches("struct::")
+                .trim_start_matches("blueprint::")
+                .trim_start_matches('.')
+                .trim_start_matches("...");
+
             // If param_type is generic (T, U, ...), accept unconditionally
-            if self.generics.contains(&param_type) {
+            if clean_p == "T"
+                || clean_p == "U"
+                || clean_p == "V"
+                || self.generics.iter().any(|g| {
+                    let clean_g = g.trim_start_matches('.').trim_start_matches("...");
+                    clean_g == clean_p
+                })
+            {
                 return true;
             }
             // Accept if types match or if it is an array
             if param_type == value_type {
+                return true;
+            }
+            if (param_type.starts_with("int") || param_type == "isize" || param_type == "byte")
+                && (value_type.starts_with("int") || value_type == "isize" || value_type == "byte")
+            {
+                return true;
+            }
+            if (param_type.starts_with("uint") || param_type == "usize")
+                && (value_type.starts_with("uint") || value_type == "usize")
+            {
+                return true;
+            }
+            if param_type.starts_with("float") && value_type.starts_with("float") {
                 return true;
             }
             // If param is an array of the same generic
@@ -95,21 +139,54 @@ impl BlueprintData {
 
         let mut new_methods = HashMap::new();
         for (m_name, sig) in &self.methods {
-            let new_params = sig.params.iter().map(|p| Param {
-                name: p.name.clone(),
-                type_node: p.type_node.substitute_generics(&map),
-                default_value: p.default_value.clone(),
-                is_variadic: p.is_variadic,
-            }).collect();
+            let new_params = sig
+                .params
+                .iter()
+                .map(|p| Param {
+                    name: p.name.clone(),
+                    type_node: p.type_node.substitute_generics(&map),
+                    default_value: p.default_value.clone(),
+                    is_variadic: p.is_variadic,
+                })
+                .collect();
             let new_ret = sig.return_type.substitute_generics(&map);
-            new_methods.insert(m_name.clone(), FnSignature {
-                name: sig.name.clone(),
-                params: new_params,
-                return_type: new_ret,
-                is_virtual: sig.is_virtual,
-                is_abstract: sig.is_abstract,
-                generics: sig.generics.clone(),
-            });
+            new_methods.insert(
+                m_name.clone(),
+                FnSignature {
+                    name: sig.name.clone(),
+                    params: new_params,
+                    return_type: new_ret,
+                    is_virtual: sig.is_virtual,
+                    is_abstract: sig.is_abstract,
+                    generics: sig.generics.clone(),
+                },
+            );
+        }
+
+        let mut new_handle_signatures = HashMap::new();
+        for (h_name, sig) in &self.handle_signatures {
+            let new_params = sig
+                .params
+                .iter()
+                .map(|p| Param {
+                    name: p.name.clone(),
+                    type_node: p.type_node.substitute_generics(&map),
+                    default_value: p.default_value.clone(),
+                    is_variadic: p.is_variadic,
+                })
+                .collect();
+            let new_ret = sig.return_type.substitute_generics(&map);
+            new_handle_signatures.insert(
+                h_name.clone(),
+                FnSignature {
+                    name: sig.name.clone(),
+                    params: new_params,
+                    return_type: new_ret,
+                    is_virtual: sig.is_virtual,
+                    is_abstract: sig.is_abstract,
+                    generics: sig.generics.clone(),
+                },
+            );
         }
 
         BlueprintData {
@@ -117,6 +194,7 @@ impl BlueprintData {
             fields: new_fields,
             methods: new_methods,
             handles: self.handles.clone(),
+            handle_signatures: new_handle_signatures,
             settings: self.settings.clone(),
             generics: Vec::new(),
             params: self.params.clone(),
@@ -192,7 +270,11 @@ impl SymbolInfo {
     /// Retrieve variable type name as string for compatibility checks
     pub fn type_str(&self) -> String {
         match &self.kind {
-            SymbolKind::Variable { type_node, is_array, .. } => {
+            SymbolKind::Variable {
+                type_node,
+                is_array,
+                ..
+            } => {
                 let base = type_node.as_str();
                 if *is_array {
                     format!("array<{}>", base)
@@ -200,11 +282,19 @@ impl SymbolInfo {
                     base
                 }
             }
-            SymbolKind::Function { params, return_type, .. } => {
+            SymbolKind::Function {
+                params,
+                return_type,
+                ..
+            } => {
                 let p_strs: Vec<String> = params.iter().map(|p| p.type_node.as_str()).collect();
                 format!("Fn<({}), {}>", p_strs.join(", "), return_type.as_str())
             }
-            SymbolKind::Macro { params, return_type, .. } => {
+            SymbolKind::Macro {
+                params,
+                return_type,
+                ..
+            } => {
                 let p_strs: Vec<String> = params.iter().map(|p| p.type_node.as_str()).collect();
                 format!("Macro<({}), {}>", p_strs.join(", "), return_type.as_str())
             }
@@ -215,9 +305,7 @@ impl SymbolInfo {
 
     pub fn is_editable(&self) -> bool {
         match &self.kind {
-            SymbolKind::Variable { editability, .. } => {
-                *editability == Editability::Editable
-            }
+            SymbolKind::Variable { editability, .. } => *editability == Editability::Editable,
             _ => false,
         }
     }
@@ -278,7 +366,9 @@ impl Environment {
     pub fn define(&mut self, name: String, info: SymbolInfo) -> Result<(), String> {
         if let Some(existing) = self.symbols.get(&name) {
             // If both existing and incoming symbols are functions, allow function overloading
-            if matches!(existing.kind, SymbolKind::Function { .. }) && matches!(info.kind, SymbolKind::Function { .. }) {
+            if matches!(existing.kind, SymbolKind::Function { .. })
+                && matches!(info.kind, SymbolKind::Function { .. })
+            {
                 self.symbols.insert(name, info);
                 return Ok(());
             }
@@ -345,10 +435,62 @@ impl Environment {
         self.blueprints.insert(name, data);
     }
 
+    pub fn resolve_type_alias(&self, name: &str) -> Option<BaseType> {
+        if let Some(info) = self.symbols.get(name) {
+            if let SymbolKind::Variable { type_node, .. } = &info.kind {
+                if let BaseType::Type(inner) = type_node {
+                    let inner_base = inner.as_ref();
+                    if let BaseType::Blueprint {
+                        name: next_name, ..
+                    }
+                    | BaseType::Struct {
+                        name: next_name, ..
+                    }
+                    | BaseType::Class {
+                        name: next_name, ..
+                    }
+                    | BaseType::Enum {
+                        name: next_name, ..
+                    } = inner_base
+                    {
+                        if next_name != name {
+                            if let Some(deeper) = self.resolve_type_alias(next_name) {
+                                return Some(deeper);
+                            }
+                        }
+                    }
+                    return Some(inner_base.clone());
+                }
+            }
+        }
+        if let Some(ref parent) = self.parent {
+            return parent.borrow().resolve_type_alias(name);
+        }
+        None
+    }
+
     /// Look up blueprint in current and parent scopes
     pub fn lookup_blueprint(&self, name: &str) -> Option<BlueprintData> {
+        let clean = Self::extract_blueprint_name(name).unwrap_or(name);
+        let base = clean.split('<').next().unwrap_or(clean).trim();
+        if let Some(bp) = self.blueprints.get(base) {
+            return Some(bp.clone());
+        }
         if let Some(bp) = self.blueprints.get(name) {
             return Some(bp.clone());
+        }
+        if let Some(aliased) = self.resolve_type_alias(base).or_else(|| self.resolve_type_alias(name)) {
+            let target_name = match &aliased {
+                BaseType::Blueprint { name, .. }
+                | BaseType::Struct { name, .. }
+                | BaseType::Class { name, .. }
+                | BaseType::Enum { name, .. } => name.clone(),
+                BaseType::Array { .. } => "array".to_string(),
+                _ => aliased.get_name(),
+            };
+            if !target_name.is_empty() && target_name != name && target_name != base {
+                return self.lookup_blueprint(&target_name);
+            }
         }
         if let Some(ref parent) = self.parent {
             return parent.borrow().lookup_blueprint(name);
@@ -369,11 +511,11 @@ impl Environment {
         None
     }
 
-    /// Extract blueprint name from generic types like "class<Node>" -> "Node"
+    /// Extract blueprint name from generic types like "class::Node" -> "Node"
     pub fn extract_blueprint_name(type_str: &str) -> Option<&str> {
-        for prefix in &["class<", "struct<", "enum<", "blueprint<"] {
+        for prefix in &["class::", "struct::", "enum::", "blueprint::"] {
             if type_str.starts_with(prefix) {
-                return Some(type_str.trim_start_matches(prefix).trim_end_matches('>'));
+                return Some(type_str.trim_start_matches(prefix));
             }
         }
         // Direct type name match (e.g. "list")

@@ -8,6 +8,7 @@ pub fn merge_metadata(target: &mut HashMap<String, TypeMetadata>, incoming: Hash
         entry.methods.extend(v.methods);
         entry.fields.extend(v.fields);
         entry.handles.extend(v.handles);
+        entry.handle_signatures.extend(v.handle_signatures);
     }
 }
 

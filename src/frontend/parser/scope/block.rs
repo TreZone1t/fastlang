@@ -82,15 +82,33 @@ impl Parser {
             let token = self.peek().kind.clone();
             if matches!(token, TokenKind::Identifier(_)) {
                 let type_name = self.get_identifier("Unexpected error happen")?;
-                let name_stored = if is_variadic {
-                    format!("...{}", type_name)
+                if self.metadata.contains_key(&type_name) {
+                    let mut meta_generics = Vec::new();
+                    if self.peek().kind == TokenKind::Less {
+                        self.advance();
+                        self.parse_generic_list(&mut meta_generics)?;
+                        self.consume(TokenKind::Greater, "Expected '>' after generic type parameter")?;
+                    }
+                    generics.push(BaseType::Blueprint {
+                        name: type_name,
+                        fields: Box::new(std::collections::HashMap::new()),
+                        methods: Box::new(std::collections::HashMap::new()),
+                        generics: meta_generics,
+                    });
                 } else {
-                    type_name
-                };
-                generics.push(BaseType::GenericParam(name_stored));
+                    let name_stored = if is_variadic {
+                        format!("...{}", type_name)
+                    } else {
+                        type_name
+                    };
+                    generics.push(BaseType::GenericParam(name_stored));
+                }
                 continue;
             } else if token == TokenKind::Comma {
                 self.advance();
+                continue;
+            } else if let Ok(ty) = self.parse_type() {
+                generics.push(ty);
                 continue;
             } else {
                 return Err(
@@ -120,6 +138,12 @@ impl Parser {
                 allowed_handle.push(HandleMethods::Sub);
                 allowed_handle.push(HandleMethods::Div);
 
+                allowed_handle.push(HandleMethods::AddReassign);
+                allowed_handle.push(HandleMethods::SubReassign);
+                allowed_handle.push(HandleMethods::MulReassign);
+                allowed_handle.push(HandleMethods::DivReassign);
+                allowed_handle.push(HandleMethods::ModReassign);
+
                 allowed_handle.push(HandleMethods::PreDecrement);
                 allowed_handle.push(HandleMethods::PreIncrement);
                 allowed_handle.push(HandleMethods::Decrement);
@@ -138,6 +162,7 @@ impl Parser {
                 allowed_handle.push(HandleMethods::LessThanEqual);
 
                 allowed_handle.push(HandleMethods::Equal);
+                allowed_handle.push(HandleMethods::EqualAssign);
                 allowed_handle.push(HandleMethods::Arrow);
                 allowed_handle.push(HandleMethods::ArrowAssign);
                 allowed_handle.push(HandleMethods::FatArrow);
@@ -147,14 +172,20 @@ impl Parser {
                 allowed_handle.push(HandleMethods::Default);
 
                 allowed_handle.push(HandleMethods::IndexAccess);
+                allowed_handle.push(HandleMethods::PropertyAccess);
+                allowed_handle.push(HandleMethods::NamespaceAccess);
+                allowed_handle.push(HandleMethods::HandleAccess);
 
-                allowed_handle.push(HandleMethods::Iterator);
+                allowed_handle.push(HandleMethods::Iter);
                 allowed_handle.push(HandleMethods::Next);
+                allowed_handle.push(HandleMethods::IterDone);
 
                 allowed_handle.push(HandleMethods::Display);
                 allowed_handle.push(HandleMethods::Throw);
 
                 allowed_handle.push(HandleMethods::Drop);
+                allowed_handle.push(HandleMethods::Share);
+                allowed_handle.push(HandleMethods::Deref);
                 allowed_handle.push(HandleMethods::Copy);
                 allowed_handle.push(HandleMethods::Cast);
             }
@@ -261,8 +292,9 @@ impl Parser {
                     matches!(
                         handle_kind,
                         HandleMethods::Display |
-                            HandleMethods::Iterator |
+                            HandleMethods::Iter |
                             HandleMethods::Next |
+                            HandleMethods::IterDone |
                             HandleMethods::Break |
                             HandleMethods::Continue |
                             HandleMethods::Copy

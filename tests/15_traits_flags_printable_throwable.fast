@@ -83,10 +83,24 @@ fn test_default_values() -> void {
     println("Option.default is_None: ", opt_def.is_None()); // EXPECT: Option.default is_None: true
 }
 
+fn test_new_reflection() -> void {
+    PrintableData print_obj = new PrintableData();
+    println("PrintableData has_handle display: ", typeof(print_obj).has_handle("display")); // EXPECT: PrintableData has_handle display: true
+    println("PrintableData has_handle copy: ", typeof(print_obj).has_handle("copy")); // EXPECT: PrintableData has_handle copy: false
+    println("PrintableData has_field val: ", typeof(print_obj).has_field("val")); // EXPECT: PrintableData has_field val: true
+    println("PrintableData has_field nonexistent: ", typeof(print_obj).has_field("nonexistent")); // EXPECT: PrintableData has_field nonexistent: false
+
+    int32 num = 42;
+    println("int32 is_undefined: ", typeof(num).is_undefined); // EXPECT: int32 is_undefined: false
+    println("int32 is_runtime: ", typeof(num).is_runtime); // EXPECT: int32 is_runtime: false
+    println("int32 is_comptime: ", typeof(num).is_comptime); // EXPECT: int32 is_comptime: true
+}
+
 fn main() -> int32 {
     test_primitive_traits();
     test_custom_traits();
     test_default_values();
+    test_new_reflection();
     println("ALL 15_TRAITS_FLAGS TESTS PASSED"); // EXPECT: ALL 15_TRAITS_FLAGS TESTS PASSED
     return 0;
 }

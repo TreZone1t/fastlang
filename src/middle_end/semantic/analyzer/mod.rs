@@ -17,7 +17,7 @@ pub mod stmt;
 pub mod type_system;
 
 pub use overload::{detect_execution_mode, has_compile_directive, resolve_call_generics};
-pub(crate) use type_system::{extract_iter_payload_type, extract_type_args_from_str, strip_wrapper};
+pub(crate) use type_system::{extract_type_args_from_str, strip_wrapper};
 
 // ============================================================
 // SemanticAnalyzer - main orchestrator
@@ -228,11 +228,27 @@ impl SemanticAnalyzer {
                 }
             } else {
                 // curr is a top-level symbol or type name
-                // If it's a type name: automatically include its init and drop if defined
+                // If it's a type name: automatically include its init, drop, and all handles
                 let init_sym = format!("{}::init", curr);
                 if self.dependency_graph.contains_key(&init_sym) {
                     if reachable.insert(init_sym.clone()) {
                         queue.push(init_sym);
+                    }
+                }
+                if let Some(bp) = self.current_env.borrow().lookup_blueprint(&curr) {
+                    for h_name in bp.handle_signatures.keys() {
+                        let h_sym = format!("{}::{}", curr, h_name);
+                        if reachable.insert(h_sym.clone()) {
+                            queue.push(h_sym);
+                        }
+                    }
+                }
+                if let Some(meta) = self.global_metadata.get(&curr) {
+                    for h_name in meta.handle_signatures.keys() {
+                        let h_sym = format!("{}::{}", curr, h_name);
+                        if reachable.insert(h_sym.clone()) {
+                            queue.push(h_sym);
+                        }
                     }
                 }
                 let drop_sym = format!("{}::drop", curr);

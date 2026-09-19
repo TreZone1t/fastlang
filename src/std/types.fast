@@ -1,0 +1,466 @@
+// FastLang Standard Library: Core Types & Aliases
+import std::error;
+
+public enum Option<T> -> {
+    Some(T),
+    None,
+}
+
+public blueprint shared -> {
+    int32 owners = 0;
+}
+
+public impl shared -> {
+    handle -> {
+        fn share() -> void {
+            this.owners = this.owners + 1;
+        }
+    }
+}
+
+public blueprint MemberType -> {
+    char name[];
+    type ty;
+}
+
+public blueprint pointer<T> -> {
+    raw_ptr<T> ptr = undefined;
+    raw_ptr<shared> counter = undefined;
+    share counter if (this.ptr == other.ptr);
+}
+public impl pointer<T> -> {
+    handle -> {
+        fn property_access(prop: MemberType) -> raw_ptr<unknown> {
+            return @compile::access(this.ptr, prop);
+        }
+        fn display() -> char[] {
+            if (!this.ptr) {
+                return "None";
+            }
+            return "" + *this.ptr;
+        }
+        fn drop() -> void {
+            if (!this.ptr) {
+                return;
+            }
+            if (!this.counter) {
+                return;
+            }
+            if (this.counter.owners <= 1) {
+                del this.counter;
+            } else {
+                this.counter.owners = this.counter.owners - 1;
+            }
+        }
+    }
+}
+public blueprint ref<...T> -> {
+    raw_ptr<T> ptr = undefined;
+    type inner = T;
+}
+public impl ref<...T> -> {
+    handle -> {
+        fn property_access(prop: MemberType) -> raw_ptr<unknown> {
+            return @compile::access(this.ptr, prop);
+        }
+        fn display() -> char[] {
+            if (!this.ptr) {
+                return "None";
+            }
+            return "" + *this.ptr;
+        }
+        /*
+        fn drop() -> void {
+            // TODO: that is a bug (that don't run at compile time)
+            @compile::throw new Error(" Attempting to delete a borrowed reference 'ref<T>'");
+        }
+        */
+    }
+}
+public blueprint mutRef<...T> -> {
+    raw_ptr<T> ptr = undefined;
+    raw_ptr<shared> counter = undefined;
+    type inner = T;
+    type expect[] = [...T];
+    share counter if (this.ptr == other.ptr);
+}
+
+public impl mutRef<...T> -> {
+    fn claim() -> void {
+        if (this.counter) {
+            this.counter.owners = 1;
+        }
+    }
+    handle -> {
+        fn property_access(prop: MemberType) -> raw_ptr<unknown> {
+            return @compile::access(this.ptr, prop);
+        }
+        fn display() -> char[] {
+            if (!this.ptr) {
+                return "None";
+            }
+            return "" + *this.ptr;
+        }
+        fn add_reassign(val: T) -> void {
+            *this.ptr += val;
+        }
+        fn sub_reassign(val: T) -> void {
+            *this.ptr -= val;
+        }
+        fn mul_reassign(val: T) -> void {
+            *this.ptr *= val;
+        }
+        fn div_reassign(val: T) -> void {
+            *this.ptr /= val;
+        }
+        fn drop() -> void {
+            if (!this.ptr) {
+                return;
+            }
+            if (!this.counter) {
+                return;
+            }
+            if (this.counter.owners <= 1) {
+                del this.counter;
+            }else {
+                this.counter.owners = this.counter.owners - 1;
+            }
+        }
+    }
+}
+
+public blueprint iterator<T> -> {
+    raw_ptr<T> ptr = undefined;
+    usize total = 0;
+    usize idx = 0;
+}
+        
+public impl iterator<T> -> {
+    handle -> {
+        fn is_done_iter() -> bool {
+            return this.idx >= this.total;
+        }
+        fn next() -> T {
+            T val = this.ptr[this.idx];
+            this.idx = this.idx + 1;
+            return val;
+        }
+    }
+}
+
+public define str = array<char>;
+
+public impl Option<T> -> {
+    fn is_Some() -> bool {
+        match this {
+            Some(_) => return true,
+            None => return false,
+        }
+        return false;
+    }
+    fn is_None() -> bool {
+        match this {
+            Some(_) => return false,
+            None => return true,
+        }
+        return true;
+    }
+    fn get() -> T {
+        match this {
+            Some(val) => {
+                return val;
+            }
+            None => {
+                throw new Error("Option is None");
+            }
+        }
+    }
+    fn get_or(default_val := T.default()) -> T {
+        match this {
+            Some(val) => {
+                return val;
+            }
+            None => {
+                return default_val;
+            }
+        }
+    }
+    fn get_else(msg: method<() -> void>) -> T {
+        match this {
+            Some(val) => {
+                return val;
+            }
+            None => {
+                msg();
+                return T.default();
+            }
+        }
+    }
+    fn as_str() -> str {
+        match this {
+            Some(val) => {
+                return "Some(" + val + ")";
+            }
+            None => {
+                return "None";
+            }
+        }
+    }
+    handle -> {
+        fn default() -> Option<T> {
+            return Option::None;
+        }
+        fn display() -> str {
+            match this {
+                Some(val) => {
+                    return "Some(" + val + ")";
+                }
+                None => {
+                    return "None";
+                }
+            }
+        }
+        fn drop() -> void {
+            match this {
+                Some(val) => {
+                    return;
+                }
+                None => {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+public impl char -> {
+    handle -> {
+        fn default() -> char {
+            return ' ';
+        }
+        fn add(other: char[]) -> char[] {
+            return [this, ...other];
+        }
+        fn add(other: char) -> char[] {
+            return [this, other];
+        }
+    }
+    fn is_digit() -> bool {
+        return this >= '0' && this <= '9';
+    }
+
+    fn is_alpha() -> bool {
+        return (this >= 'a' && this <= 'z') || (this >= 'A' && this <= 'Z');
+    }
+
+    fn is_alphanumeric() -> bool {
+        return (this >= 'a' && this <= 'z') || (this >= 'A' && this <= 'Z') || (this >= '0' && this <= '9');
+    }
+
+    fn is_whitespace() -> bool {
+        return this == ' ' || this == '\t' || this == '\n' || this == '\r';
+    }
+
+    fn to_upper() -> char {
+        if (this >= 'a' && this <= 'z') {
+            return this - 'a' + 'A';
+        }
+        return this;
+    }
+
+    fn to_lower() -> char {
+        if (this >= 'A' && this <= 'Z') {
+            return this - 'A' + 'a';
+        }
+        return this;
+    }
+}
+
+public impl array<char> -> {
+
+    fn to_upper() -> char[] {
+        char result[] = new char[](this.len);
+        for (usize i = 0; i < this.len; i = i + 1) {
+            result[i] = this[i].to_upper();
+        }
+        return result;
+    }
+
+    fn to_lower() -> char[] {
+        char result[] = new char[](this.len);
+        for (usize i = 0; i < this.len; i = i + 1) {
+            result[i] = this[i].to_lower();
+        }
+        return result;
+    }
+
+    fn is_empty() -> bool {
+        return this.len == 0;
+    }
+
+    fn first() -> Option<char> {
+        if (this.len == 0) {
+            return None;
+        }
+        return Some(this[0]);
+    }
+
+    fn last() -> Option<char> {
+        if (this.len == 0) {
+            return None;
+        }
+        return Some(this[this.len - 1]);
+    }
+
+    fn as_str() -> str {
+        return this;
+    }
+}
+
+public impl array<T> -> {
+    handle -> { 
+        fn iter() -> iterator<T> {
+            iterator<T> it;
+            it.ptr = this;
+            it.total = this.len;
+            it.idx = 0;
+            return it;
+        }
+        fn index_access(idx: int32) -> T {
+            @compile{
+                //check index bounds in compile time
+                if (!typeof(idx).is_runtime() && (idx < 0 || idx >= this.len)) {
+                    throw new Error("Index out of bounds");
+                }
+            }(idx);
+            if (idx < 0 || idx >= this.len) {
+                throw new Error("Index out of bounds");
+            }
+            return this[idx];
+        }
+        fn partial_equal(other: array<T>) -> bool {
+            if (this.len != other.len) {
+                return false;
+            }
+            for (usize i = 0; i < this.len; i = i + 1) {
+                if (this[i] != other[i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        fn not_equal(other: array<T>) -> bool {
+            if (this.len != other.len) {
+                return true;
+            }
+            for (usize i = 0; i < this.len; i = i + 1) {
+                if (this[i] != other[i]) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        fn add(other: array<T>) -> array<T> {
+            return [...this, ...other];
+        }
+        fn add(item: T) -> array<T> {
+            return [...this, item];
+        }
+        fn default() -> T[] {
+            T arr[] = new T[](this.len || 0);
+            for (usize i = 0; i < this.len; i = i + 1) {
+                arr[i] = ();
+            }
+            return arr;
+        }
+        fn display() -> str {
+            return this.as_str();
+        }
+    }
+    fn as_str() -> str {
+        str result = "[";
+        for (usize i = 0; i < this.len; i = i + 1) {
+            result += this[i].as_str();
+            if (i < this.len - 1) {
+                result += ", ";
+            }
+        }
+        result += "]";
+        return result;
+    }
+    fn is_empty() -> bool {
+        return this.len == 0;
+    }
+
+    fn first() -> Option<T> {
+        if (this.len == 0) {
+            return None;
+        }
+        return Some(this[0]);
+    }
+
+    fn last() -> Option<T> {
+        if (this.len == 0) {
+            return None;
+        }
+        return Some(this[this.len - 1]);
+    }
+    fn contains(val: T) -> bool {
+        for ele in this {
+            if (ele == val) {
+                return true;
+            }
+        }
+         return false;
+    }
+    fn sort(compare: lambda<(T, T) -> int32>) -> void {
+        for (usize i = 0; i < this.len - 1; i = i + 1) {
+            for (usize j = 0; j < this.len - i - 1; j = j + 1) {
+                if (compare(this[j], this[j + 1]) > 0) {
+                    T temp = this[j];
+                    this[j] = this[j + 1];
+                    this[j + 1] = temp;
+                }
+            }
+        }
+    }
+    fn reverse() -> void {
+    usize len = this.len;
+    usize half = len / 2;
+    for (usize i = 0; i < half; i = i + 1) {
+        usize j = len - i - 1;
+        T temp = this[i];
+        this[i] = this[j];
+        this[j] = temp;
+    }
+    }
+    fn map(transform: lambda<(T) -> T>) -> void {
+        for (usize i = 0; i < this.len; i = i + 1) {
+            this[i] = transform(this[i]);
+        }
+    }
+    fn chain(other: T[]) -> T[] {
+        return [...this, ...other];
+    }
+    fn slice(start: usize, end: usize) -> T[] {
+        @compile {
+            if (!typeof(start).is_runtime() && !typeof(end).is_runtime()) {
+                if (start > end) {
+                    throw new Error("start must be less than or equal to end");
+                }
+            }
+        }(start, end);
+        if (start > end || start > this.len || end > this.len) {
+            throw new Error("Slice bounds out of range");
+        }
+        if (start == end) {
+            return [];
+        }
+        usize new_len = end - start;
+        T arr[] = new T[](new_len);
+        for (usize i = 0; i < new_len; i = i + 1) {
+            arr[i] = this[start + i];
+        }
+        return arr;
+    }
+}

@@ -1,73 +1,10 @@
 // FastLang Standard Library: Core Prelude, Option & Base Types
+import std::types;
 import std::error;
 import std::io;
 import std::string;
 import std::range;
 
-public enum Option<T> -> {
-    Some(T),
-    None,
-}
-
-impl Option<T> -> {
-    fn is_Some() -> bool {
-        match this {
-            Some(_) => return true,
-            None => return false,
-        }
-    }
-    fn is_None() -> bool {
-        match this {
-            Some(_) => return false,
-            None => return true,
-        }
-    }
-    fn get() -> T {
-        match this {
-            Some(val) => {
-                return val;
-            }
-            None => {
-                throw new Error("Option is None");
-            }
-        }
-    }
-    fn get_or(default_val: T) -> T {
-        match this {
-            Some(val) => {
-                return val;
-            }
-            None => {
-                return default_val;
-            }
-        }
-    }
-    fn as_str() -> str {
-        match this {
-            Some(val) => {
-                return "Some(" + val + ")";
-            }
-            None => {
-                return "None";
-            }
-        }
-    }
-    handle -> {
-        fn default() -> Option<T> {
-            return Option::None;
-        }
-        fn display() -> str {
-            match this {
-                Some(val) => {
-                    return "Some(" + val + ")";
-                }
-                None => {
-                    return "None";
-                }
-            }
-        }
-    }
-}
 
 public micro stop = ()-> {
     break;
@@ -77,6 +14,7 @@ public @compile -> {
 
     set typeof<T>(T) -> type;
     set sizeof<T>(T) -> uint32;
+    set access<T>(T, MemberType) -> raw_ptr<unknown>;
     set rand<T>() -> T;
     set rand<T>(T) -> T;
     set rand<T>(T, T) -> T;
@@ -84,17 +22,38 @@ public @compile -> {
     set print<...T>(...T) -> void;
     impl type<T> -> {
         set printable() -> bool;
+        set as_str() -> str;
         set is_pointer() -> bool;
         set is_array() -> bool;
+        set is_const() -> bool;
+        set is_constant() -> bool;
+        set is_runtime() -> bool;
+        set is_comptime() -> bool;
+        set is_undefined() -> bool;
+        set has_handle(char[]) -> bool;
+        set has_handle(type) -> bool;
+        set has_handle(char[], type) -> bool;
+        set has_method(char[]) -> bool;
+        set has_method(type) -> bool;
+        set has_method(char[], type) -> bool;
+        set has_field(char[]) -> bool;
+        set has_field(type) -> bool;
+        set has_field(char[], type) -> bool;
         set is_primitive() -> bool;
         set throwable() -> bool;
+        set shareable() -> bool;
         set copyable() -> bool;
-        set as_str() -> str;
         set default() -> T;
         set castable() -> bool;
         set castable_to(type) -> bool;
         set size() -> uint32;
     }
+    /*
+    impl type<address<T>> {
+        set on_heap() -> bool;
+        set on_stack() -> bool;
+    }
+    */
     micro todo = (msg: str) -> {
         throw new Error("TODO: " + msg);
     }
@@ -111,6 +70,13 @@ public @compile -> {
             throw new Error("Type " + Source.as_str() + " cannot be casted to " + Target.as_str());
         }
     }
+    method rand_range<T>(size: int32) -> T[] {
+        T arr[] = new T[size];
+        for (int32 i = 0; i < size; i = i + 1) {
+            arr[i] = rand<T>();
+        }
+        return arr;
+    }
 
 }
 // @compile wrapper
@@ -121,7 +87,9 @@ public micro todo = (msg: str) -> void {
 public method cast<Target, Source>(val: Source) -> Target {
     return @compile::cast<Target>(val);
 }
-
+public method rand_range<T>(size: int32) -> T[] {
+    return @compile::rand_range<T>(size);
+}
 public method typeof<T>(val: T) -> type {
     return @compile::typeof(val);
 }
@@ -146,108 +114,8 @@ public fn rand<T>(min: T, max: T, step: T) -> T {
     return @compile::rand<T>(min, max, step);
 }
 
-public method deepCopy<T>(val: T) -> modify<T> {
-    copy<T> temp = val;
+public method deepCopy<T>(val: T) -> T {
+    T temp = val-.copy();
     return temp;
 }
 
-public impl str -> {
-    handle -> {
-        fn default() -> str {
-            return "";
-        }
-    }
-    fn is_empty() -> bool {
-        return this.len == 0;
-    }
-
-    fn first() -> Option<char> {
-        if (this.len == 0) {
-            return None;
-        }
-        return Some(this[0]);
-    }
-
-    fn last() -> Option<char> {
-        if (this.len == 0) {
-            return None;
-        }
-        return Some(this[this.len - 1]);
-    }
-}
-
-public impl char -> {
-    handle -> {
-        fn default() -> char {
-            return ' ';
-        }
-    }
-    fn is_digit() -> bool {
-        return this >= '0' && this <= '9';
-    }
-
-    fn is_alpha() -> bool {
-        return (this >= 'a' && this <= 'z') || (this >= 'A' && this <= 'Z');
-    }
-
-    fn is_alphanumeric() -> bool {
-        return (this >= 'a' && this <= 'z') || (this >= 'A' && this <= 'Z') || (this >= '0' && this <= '9');
-    }
-
-    fn is_whitespace() -> bool {
-        return this == ' ' || this == '\t' || this == '\n' || this == '\r';
-    }
-
-    fn to_upper() -> char {
-        if (this >= 'a' && this <= 'z') {
-            return this - 'a' + 'A';
-        }
-        return this;
-    }
-
-    fn to_lower() -> char {
-        if (this >= 'A' && this <= 'Z') {
-            return this - 'A' + 'a';
-        }
-        return this;
-    }
-}
-
-public impl array<T> -> {
-    handle -> { 
-        fn default() -> T[] {
-            T arr[] = new T[this.len || 0];
-            for (int32 i = 0; i < this.len; i = i + 1) {
-                arr[i] = ();
-            }
-            return arr;
-        }
-    }
-    fn is_empty() -> bool {
-        return this.len == 0;
-    }
-
-    fn first() -> Option<T> {
-        if (this.len == 0) {
-            return None;
-        }
-        return Some(this[0]);
-    }
-
-    fn last() -> Option<T> {
-        if (this.len == 0) {
-            return None;
-        }
-        return Some(this[this.len - 1]);
-    }
-
-    fn map(transform: lambda<(T) -> T>) -> void {
-        for (int32 i = 0; i < this.len; i = i + 1) {
-            this[i] = transform(this[i]);
-        }
-    }
-    // todo: chain test in for in
- fn chain(other: T[]) -> T[] {
-    return [...this, ...other];
-}
-}

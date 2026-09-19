@@ -1,0 +1,132 @@
+// Test 17: Legal Handle Access Operator (-.) and Iteration Handles
+class CustomPrinter -> {
+    public -> {
+        str name = "FastPrinter";
+    }
+    handle -> {
+        fn display() -> str {
+            return "CustomPrinter:" + this.name;
+        }
+    }
+}
+
+class CounterSeq -> {
+    public -> {
+        int32 current = 0;
+        int32 max_val = 3;
+    }
+    handle -> {
+        fn is_done_iter() -> bool {
+            return this.current >= this.max_val;
+        }
+        fn next() -> int32 {
+            int32 val = this.current;
+            this.current = this.current + 1;
+            return val;
+        }
+    }
+}
+
+fn test_direct_handle_access() -> void {
+    CustomPrinter p = new CustomPrinter();
+    str text = p-.display();
+    println("Handle display output: ", text); // EXPECT: Handle display output: CustomPrinter:FastPrinter
+}
+
+fn test_custom_iter_handle() -> void {
+    CounterSeq seq = new CounterSeq();
+    println("is_done before: ", seq-.is_done_iter()); // EXPECT: is_done before: false
+    
+    int32 v0 = seq-.next();
+    int32 v1 = seq-.next();
+    int32 v2 = seq-.next();
+    println("Values: ", v0, ", ", v1, ", ", v2); // EXPECT: Values: 0, 1, 2
+    println("is_done after: ", seq-.is_done_iter()); // EXPECT: is_done after: true
+}
+
+fn test_array_handle_access() -> void {
+    int32 nums[] = [10, 20, 30];
+    int32 first_elem = nums-.index_access(0);
+    int32 second_elem = nums-.index_access(1);
+    println("Array index_access: ", first_elem, ", ", second_elem); // EXPECT: Array index_access: 10, 20
+
+     it := nums-.iter();
+    println("Array it done before: ", it-.is_done_iter()); // EXPECT: Array it done before: false
+    int32 n0 = it-.next();
+    int32 n1 = it-.next();
+    int32 n2 = it-.next();
+    println("Array next values: ", n0, ", ", n1, ", ", n2); // EXPECT: Array next values: 10, 20, 30
+    println("Array it done after: ", it-.is_done_iter()); // EXPECT: Array it done after: true
+}
+
+fn test_for_in_with_handles() -> void {
+    CounterSeq seq = new CounterSeq();
+    for c in seq {
+        print(c, " ");
+    }
+    println("");
+    // EXPECT: 0 1 2 
+}
+
+fn test_mut_ref_set_rebind() -> void {
+    int32 a = 100;
+    int32 b = 200;
+    mutRef<int32> m = &a;
+    println("Initial m: ", *m); // EXPECT: Initial m: 100
+    set m = &b;
+    println("Rebound m: ", *m); // EXPECT: Rebound m: 200
+}
+
+class AssignBox -> {
+    public -> {
+        int32 val = 0;
+        str log = "";
+    }
+    handle -> {
+        fn arrow_assign(v: int32) -> void {
+            this.val = v;
+            this.log = "arrow_assign:" + v;
+            println("arrow_assign called");
+        }
+        fn arrow(v: int32) -> void {
+            this.val = v;
+            this.log = "arrow:" + v;
+            println("arrow called");
+        }
+        fn equal_assign(v: int32) -> void {
+            this.val = v;
+            this.log = "equal_assign:" + v;
+            println("equal_assign called");
+        }
+        fn equal(v: int32) -> void {
+            this.val = v;
+            this.log = "equal:" + v;
+            println("equal called");
+        }
+    }
+}
+
+fn test_assign_handles_dispatch() -> void {
+    AssignBox b1 -> 42;
+    println("Decl arrow_assign: ", b1.log, " val=", b1.val); // EXPECT: Decl arrow_assign: arrow_assign:42 val=42
+
+    b1 -> 100;
+    println("Reassign arrow: ", b1.log, " val=", b1.val); // EXPECT: Reassign arrow: arrow:100 val=100
+
+    AssignBox b2 = 50;
+    println("Decl equal_assign: ", b2.log, " val=", b2.val); // EXPECT: Decl equal_assign: equal_assign:50 val=50
+
+    b2 = 200;
+    println("Reassign equal: ", b2.log, " val=", b2.val); // EXPECT: Reassign equal: equal:200 val=200
+}
+
+fn main() -> int32 {
+    test_direct_handle_access();
+    test_custom_iter_handle();
+    test_array_handle_access();
+    test_for_in_with_handles();
+    test_mut_ref_set_rebind();
+    test_assign_handles_dispatch();
+    return 0;
+}
+

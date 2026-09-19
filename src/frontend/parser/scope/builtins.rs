@@ -7,7 +7,7 @@ impl Parser {
     pub(crate) fn parse_fn_decl(&mut self) -> Result<Decl, String> {
         let mut statement_block: Vec<Stmt> = Vec::new();
         let mut params: Vec<Param> = Vec::new();
-        let mut return_type: BaseType = BaseType::Void;
+        let mut return_type: BaseType = BaseType::Unknown;
 
         let mut is_virtual = false;
         let mut is_abstract = false;

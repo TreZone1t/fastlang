@@ -11,7 +11,7 @@
 
 ## 🌟 What is FastLang?
 
-FastLang is a compiled, statically typed language designed with an emphasis on **explicit control**, **zero runtime ambiguity**, and **raw execution speed**. It eliminates unpredictable hidden overhead while providing powerful modern abstractions like Custom Scopes, Smart Pointer semantics (`name<T>`, `modify<T>`, `copy<T>`), Pattern Matching, and Built-in Macros (`default()`).
+FastLang is a compiled, statically typed language designed with an emphasis on **explicit control**, **zero runtime ambiguity**, and **raw execution speed**. It eliminates unpredictable hidden overhead while providing powerful modern abstractions like Custom Scopes, Smart Pointer semantics (`ref<T>`, `mutRef<T>`, `copy<T>`), Pattern Matching, and Built-in Macros (`default()`).
 
 Source files use the official **`.fast`** file extension.
 
@@ -23,8 +23,8 @@ Source files use the official **`.fast`** file extension.
 - **Zero-Arrow Scope Declarations**: Clean struct, class, enum, and custom scope definitions (`struct Point { ... }`, `class Node { ... }`, `enum Status { ... }`).
 - **Unified `using` System**: Instant namespace imports for enum variants (`using Status;`), static class methods, and zero-parameter usable micros.
 - **Explicit Memory Model**:
-  - `name<T>`: Tracked pointer reference.
-  - `modify<T>`: Mutable pointer borrow.
+  - `ref<T>`: Immutable tracked pointer reference / borrow.
+  - `mutRef<...T>`: Mutable pointer borrow with reference counting and capability tracking.
   - `copy<T>`: Strict deep value snapshot.
 - **Algebraic Data Types & Pattern Matching**: Enums with tuple payloads and exhaustive `match` branches.
 - **Custom Scopes & Operator Overloading**: Extensible scopes with lifecycle handles (`add`, `sub`, `mul`, `display`, `default`, etc.).
@@ -177,5 +177,9 @@ cargo run -- tests/01_variables.fast
 <br />
 
 <div align="center">
+  <a href="https://ko-fi.com/W5V0236W86" target="_blank">
+      <img src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" alt="Support me on Ko-fi" height="36" style="border:0px;height:36px;" />
+  </a>
+  <br /><br />
   <sub>Built with ❤️ by TreZone1t.</sub>
 </div>

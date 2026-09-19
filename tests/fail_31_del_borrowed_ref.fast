@@ -1,0 +1,7 @@
+// Test (Expected Failure): Attempting to delete a borrowed reference (&T / ref<T>)
+fn main() -> int32 {
+    int32 x = 10;
+    ref<int32> r = &x;
+    del r;
+    return 0;
+}

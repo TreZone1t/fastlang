@@ -1,9 +1,26 @@
 // Comprehensive Suite 02: Control Flow, Conditions, While, Do-While, For-In, and Custom Iterators
 
+blueprint NumberListIter -> {
+    int32 items[];
+    int32 count;
+    int32 limit;
+}
+
+impl NumberListIter -> {
+    handle -> {
+        fn is_done_iter() -> bool {
+            return this.count >= this.limit;
+        }
+        fn next() -> int32 {
+            this.count += 1;
+            return this.items[this.count - 1];
+        }
+    }
+}
+
 class NumberList -> {
     private -> {
         int32 items[5] = [10, 20, 30, 40, 50];
-        int32 count = 0;
         int32 limit = 3;
     }
     public -> {
@@ -12,42 +29,58 @@ class NumberList -> {
         }
     }
     handle -> {
-        fn iterator() -> void {
-            this.count = 0;
-        }
-        fn next() -> modify<int32, micro::stop<(),>> {
-            if (this.count >= this.limit) {
-                return stop;
-            }
-            this.count += 1;
-            return this.items[this.count - 1];
+        fn iter() -> NumberListIter {
+            NumberListIter it;
+            it.items = this.items;
+            it.count = 0;
+            it.limit = this.limit;
+            return it;
         }
     }
     constructor -> {
         init(l: int32) -> {
-            this.count = 0;
             this.limit = l;
         }
     }
 }
-
+/* 
+// that will generate a fn with only result in it and will return 0; for all 
+// the right is all of the check_score consider as a compile time function 
 fn check_score(score: int32) -> int32 {
+    int result = 0;
+    @compile {
     if (score >= 90) {
-        return 1;
+        result = 1;
     } else if (score >= 75) {
-        return 2;
+        result = 2;
     } else if (score >= 50) {
-        return 3;
+        result = 3;
     } else {
-        return 4;
+      result = 4;
+    }
+}(result , score);
+    return result;
+}
+*/
+@compile {
+    fn check_score(score: int32) -> int32 {
+        if (score >= 90) {
+            return 1;
+        } else if (score >= 75) {
+            return 2;
+        } else if (score >= 50) {
+            return 3;
+        } else {
+            return 4;
+        }
     }
 }
 
 fn test_conditions() -> void {
-    int32 c1 = check_score(95);
-    int32 c2 = check_score(80);
-    int32 c3 = check_score(60);
-    int32 c4 = check_score(40);
+    int32 c1 = @compile::check_score(95);
+    int32 c2 = @compile::check_score(80);
+    int32 c3 = @compile::check_score(60);
+    int32 c4 = @compile::check_score(40);
     println("Conditions: ", c1, " ", c2, " ", c3, " ", c4); // EXPECT: Conditions: 1 2 3 4
 }
 

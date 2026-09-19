@@ -1,4 +1,4 @@
-use crate::frontend::lexer::token::{ Token, TokenKind };
+use crate::frontend::lexer::token::{Token, TokenKind};
 
 pub struct Scanner {
     source: Vec<char>,
@@ -105,7 +105,7 @@ impl Scanner {
 
             // Primitives
             "char" => Some(TokenKind::TypeChar),
-            "str" => Some(TokenKind::TypeStr),
+            "uchar" => Some(TokenKind::TypeUChar),
             "int" => Some(TokenKind::TypeInt(32)),
             "int8" => Some(TokenKind::TypeInt(8)),
             "int16" => Some(TokenKind::TypeInt(16)),
@@ -135,6 +135,7 @@ impl Scanner {
 
             "type" => Some(TokenKind::TypeType),
             "handle" => Some(TokenKind::Handle),
+            "share" => Some(TokenKind::Share),
             "public" => Some(TokenKind::Public),
             "private" => Some(TokenKind::Private),
 
@@ -144,9 +145,6 @@ impl Scanner {
             "machine" => Some(TokenKind::TypeMachine),
 
             // memory / instances
-            "modify" => Some(TokenKind::TypeModify),
-            "copy" => Some(TokenKind::TypeCopy),
-
             "this" => Some(TokenKind::This),
             "global" => Some(TokenKind::Global),
 
@@ -163,7 +161,6 @@ impl Scanner {
 
             "constructor" => Some(TokenKind::Constructor),
             // context / magic types
-            "name" => Some(TokenKind::TypeName),
             "void" => Some(TokenKind::TypeVoid),
             "object" => Some(TokenKind::TypeObject),
             "block" => Some(TokenKind::TypeBlock),
@@ -177,6 +174,8 @@ impl Scanner {
             "import" => Some(TokenKind::Import),
             "extern" => Some(TokenKind::Extern),
             "undefined" => Some(TokenKind::Undefined),
+            "unknown" => Some(TokenKind::TypeUnknown),
+            "function" => Some(TokenKind::TypeFunction),
 
             "_" => Some(TokenKind::Underscore),
             _ => None,
@@ -256,7 +255,10 @@ impl Scanner {
                         }
                     }
                     if digits_str.is_empty() {
-                        TokenKind::Error(format!("Empty numeric literal with prefix '0{}' at line {}", prefix, start_line))
+                        TokenKind::Error(format!(
+                            "Empty numeric literal with prefix '0{}' at line {}",
+                            prefix, start_line
+                        ))
                     } else {
                         // Optional suffix (e.g. u8, u16, u32, u64, u128, uint, usize, i8, i16, i32, i64, i128, int, isize)
                         let mut suffix = String::new();
@@ -267,7 +269,8 @@ impl Scanner {
                                 break;
                             }
                         }
-                        let is_unsigned = suffix.starts_with('u') || suffix == "usize" || suffix == "byte";
+                        let is_unsigned =
+                            suffix.starts_with('u') || suffix == "usize" || suffix == "byte";
                         match u128::from_str_radix(&digits_str, radix) {
                             Ok(u_val) => {
                                 if is_unsigned || u_val > i128::MAX as u128 {
@@ -276,7 +279,10 @@ impl Scanner {
                                     TokenKind::Int(u_val as i128)
                                 }
                             }
-                            Err(_) => TokenKind::Error(format!("Numeric literal '0{}{}{}' out of range at line {}", prefix, digits_str, suffix, start_line)),
+                            Err(_) => TokenKind::Error(format!(
+                                "Numeric literal '0{}{}{}' out of range at line {}",
+                                prefix, digits_str, suffix, start_line
+                            )),
                         }
                     }
                 } else {
@@ -298,9 +304,8 @@ impl Scanner {
                     // Float: a '.' followed by at least one digit. A trailing bare '.'
                     // (e.g. `5.` or `5.foo`) is left alone so `.` can still be a Dot token
                     // (property access, etc.) on the next scan.
-                    let is_float =
-                        self.peek() == Some('.') &&
-                        matches!(self.peek_at(1), Some(d) if d.is_ascii_digit());
+                    let is_float = self.peek() == Some('.')
+                        && matches!(self.peek_at(1), Some(d) if d.is_ascii_digit());
 
                     if is_float {
                         num_str.push(self.advance().unwrap()); // consume '.'
@@ -326,15 +331,10 @@ impl Scanner {
                         }
                         match num_str.parse::<f64>() {
                             Ok(f) => TokenKind::Float(f),
-                            Err(_) =>
-                                TokenKind::Error(
-                                    format!(
-                                        "Invalid float literal '{}{}' at line {}",
-                                        num_str,
-                                        suffix,
-                                        start_line
-                                    )
-                                ),
+                            Err(_) => TokenKind::Error(format!(
+                                "Invalid float literal '{}{}' at line {}",
+                                num_str, suffix, start_line
+                            )),
                         }
                     } else {
                         // Optional int/uint suffix
@@ -346,51 +346,35 @@ impl Scanner {
                                 break;
                             }
                         }
-                        let is_unsigned = suffix.starts_with('u') || suffix == "usize" || suffix == "byte";
+                        let is_unsigned =
+                            suffix.starts_with('u') || suffix == "usize" || suffix == "byte";
                         let is_float_suffix = suffix.starts_with('f') || suffix == "float";
                         if is_float_suffix {
                             match num_str.parse::<f64>() {
                                 Ok(f) => TokenKind::Float(f),
-                                Err(_) =>
-                                    TokenKind::Error(
-                                        format!(
-                                            "Invalid float literal '{}{}' at line {}",
-                                            num_str,
-                                            suffix,
-                                            start_line
-                                        )
-                                    ),
+                                Err(_) => TokenKind::Error(format!(
+                                    "Invalid float literal '{}{}' at line {}",
+                                    num_str, suffix, start_line
+                                )),
                             }
                         } else if is_unsigned {
                             match num_str.parse::<u128>() {
                                 Ok(u) => TokenKind::UInt(u),
-                                Err(_) =>
-                                    TokenKind::Error(
-                                        format!(
-                                            "Unsigned integer literal '{}{}' out of range at line {}",
-                                            num_str,
-                                            suffix,
-                                            start_line
-                                        )
-                                    ),
+                                Err(_) => TokenKind::Error(format!(
+                                    "Unsigned integer literal '{}{}' out of range at line {}",
+                                    num_str, suffix, start_line
+                                )),
                             }
                         } else {
                             match num_str.parse::<i128>() {
                                 Ok(i) => TokenKind::Int(i),
-                                Err(_) => {
-                                    match num_str.parse::<u128>() {
-                                        Ok(u) => TokenKind::UInt(u),
-                                        Err(_) =>
-                                            TokenKind::Error(
-                                                format!(
-                                                    "Integer literal '{}{}' out of range at line {}",
-                                                    num_str,
-                                                    suffix,
-                                                    start_line
-                                                )
-                                            ),
-                                    }
-                                }
+                                Err(_) => match num_str.parse::<u128>() {
+                                    Ok(u) => TokenKind::UInt(u),
+                                    Err(_) => TokenKind::Error(format!(
+                                        "Integer literal '{}{}' out of range at line {}",
+                                        num_str, suffix, start_line
+                                    )),
+                                },
                             }
                         }
                     }
@@ -435,9 +419,10 @@ impl Scanner {
                 if terminated {
                     TokenKind::String(s.clone())
                 } else {
-                    TokenKind::Error(
-                        format!("Unterminated string literal starting at line {}", start_line)
-                    )
+                    TokenKind::Error(format!(
+                        "Unterminated string literal starting at line {}",
+                        start_line
+                    ))
                 }
             }
 
@@ -465,11 +450,16 @@ impl Scanner {
 
                 if self.peek() == Some('\'') {
                     self.advance(); // consume closing quote
-                    TokenKind::Char(inner)
+                    if inner.is_ascii() {
+                        TokenKind::Char(inner)
+                    } else {
+                        TokenKind::UChar(inner as u32)
+                    }
                 } else {
-                    TokenKind::Error(
-                        format!("Invalid char literal starting at line {}: expected closing '\''", start_line)
-                    )
+                    TokenKind::Error(format!(
+                        "Invalid char literal starting at line {}: expected closing '\''",
+                        start_line
+                    ))
                 }
             }
 
@@ -506,9 +496,10 @@ impl Scanner {
                     if closed {
                         TokenKind::MultiLineComment
                     } else {
-                        TokenKind::Error(
-                            format!("Unterminated block comment starting at line {}", start_line)
-                        )
+                        TokenKind::Error(format!(
+                            "Unterminated block comment starting at line {}",
+                            start_line
+                        ))
                     }
                 } else if let Some('=') = self.peek() {
                     self.advance();
@@ -598,6 +589,9 @@ impl Scanner {
                 } else if let Some('=') = self.peek() {
                     self.advance();
                     TokenKind::MinusAssign
+                } else if let Some('.') = self.peek() {
+                    self.advance();
+                    TokenKind::DashDot
                 } else {
                     TokenKind::Minus
                 }
@@ -635,10 +629,10 @@ impl Scanner {
                 }
             }
 
-            other =>
-                TokenKind::Error(
-                    format!("Unexpected character '{}' at line {}", other, start_line)
-                ),
+            other => TokenKind::Error(format!(
+                "Unexpected character '{}' at line {}",
+                other, start_line
+            )),
         };
 
         Token::new(kind, start_line, start_column)

@@ -55,7 +55,9 @@ impl SemanticAnalyzer {
                                 is_uninitialized: false,
                                 is_compilable: true,
                             };
-                            self.current_env.borrow_mut().define_or_update(alias, alias_info);
+                            self.current_env
+                                .borrow_mut()
+                                .define_or_update(alias, alias_info);
                         }
                     } else if let Decl::FnDecl {
                         name: ref f_name,
@@ -82,7 +84,9 @@ impl SemanticAnalyzer {
                             is_uninitialized: false,
                             is_compilable: true,
                         };
-                        self.current_env.borrow_mut().define_or_update(f_name.clone(), fn_info);
+                        self.current_env
+                            .borrow_mut()
+                            .define_or_update(f_name.clone(), fn_info);
                     } else if let Decl::ImplDecl {
                         target,
                         methods,
@@ -90,19 +94,55 @@ impl SemanticAnalyzer {
                         ..
                     } = d
                     {
-                        let entry = self.global_metadata.entry(target.clone()).or_insert_with(|| TypeMetadata {
-                            name: target.clone(),
-                            ty: BaseType::from_str(target),
-                            fields: std::collections::HashMap::new(),
-                            methods: std::collections::HashMap::new(),
-                            constructor: None,
-                            handles: vec![],
-                            vars: std::collections::HashMap::new(),
-                            variants: None,
-                        });
-                        for m in methods.iter().chain(handle_block.iter()) {
-                            if let Decl::FnDecl { name, generics, params, return_type, .. } = m {
+                        let entry =
+                            self.global_metadata
+                                .entry(target.clone())
+                                .or_insert_with(|| TypeMetadata {
+                                    name: target.clone(),
+                                    ty: BaseType::from_str(target),
+                                    fields: std::collections::HashMap::new(),
+                                    methods: std::collections::HashMap::new(),
+                                    constructor: None,
+                                    handles: vec![],
+                                    handle_signatures: std::collections::HashMap::new(),
+                                    vars: std::collections::HashMap::new(),
+                                    variants: None,
+                                });
+                        for m in methods {
+                            if let Decl::FnDecl {
+                                name,
+                                generics,
+                                params,
+                                return_type,
+                                ..
+                            } = m
+                            {
                                 entry.methods.insert(
+                                    name.clone(),
+                                    FnType {
+                                        name: name.clone(),
+                                        generics: generics.clone(),
+                                        params: params.clone(),
+                                        return_type: return_type.clone(),
+                                        mode: ExecutionMode::Runtime,
+                                    },
+                                );
+                            }
+                        }
+                        for h in handle_block {
+                            if let Decl::FnDecl {
+                                name,
+                                generics,
+                                params,
+                                return_type,
+                                ..
+                            } = h
+                            {
+                                let hk = HandleMethods::from_str(name.as_str());
+                                if hk != HandleMethods::NotFound && !entry.handles.contains(&hk) {
+                                    entry.handles.push(hk);
+                                }
+                                entry.handle_signatures.insert(
                                     name.clone(),
                                     FnType {
                                         name: name.clone(),
@@ -141,28 +181,85 @@ impl SemanticAnalyzer {
                         is_uninitialized: false,
                         is_compilable: true,
                     };
-                    self.current_env.borrow_mut().define_or_update(alias, alias_info);
+                    self.current_env
+                        .borrow_mut()
+                        .define_or_update(alias, alias_info);
                 }
             }
             Decl::ImplDecl {
                 target,
+                target_generics,
                 methods,
                 handle_block,
                 ..
             } => {
-                let entry = self.global_metadata.entry(target.clone()).or_insert_with(|| TypeMetadata {
-                    name: target.clone(),
-                    ty: BaseType::from_str(target),
-                    fields: std::collections::HashMap::new(),
-                    methods: std::collections::HashMap::new(),
-                    constructor: None,
-                    handles: vec![],
-                    vars: std::collections::HashMap::new(),
-                    variants: None,
-                });
-                for m in methods.iter().chain(handle_block.iter()) {
-                    if let Decl::FnDecl { name, generics, params, return_type, .. } = m {
+                let spec_key = if target_generics.is_empty()
+                    || target_generics
+                        .iter()
+                        .all(|g| matches!(g, BaseType::GenericParam(_)))
+                {
+                    target.clone()
+                } else {
+                    let g_str: Vec<String> = target_generics.iter().map(|g| g.as_str()).collect();
+                    format!("{}<{}>", target, g_str.join(", "))
+                };
+
+                let entry = self
+                    .global_metadata
+                    .entry(spec_key.clone())
+                    .or_insert_with(|| TypeMetadata {
+                        name: spec_key.clone(),
+                        ty: if target == "array" && !target_generics.is_empty() {
+                            BaseType::Array {
+                                base_type: Box::new(target_generics[0].clone()),
+                                size: Box::new(None),
+                            }
+                        } else {
+                            BaseType::from_str(target)
+                        },
+                        fields: std::collections::HashMap::new(),
+                        methods: std::collections::HashMap::new(),
+                        constructor: None,
+                        handles: vec![],
+                        handle_signatures: std::collections::HashMap::new(),
+                        vars: std::collections::HashMap::new(),
+                        variants: None,
+                    });
+                for m in methods {
+                    if let Decl::FnDecl {
+                        name,
+                        generics,
+                        params,
+                        return_type,
+                        ..
+                    } = m
+                    {
                         entry.methods.insert(
+                            name.clone(),
+                            FnType {
+                                name: name.clone(),
+                                generics: generics.clone(),
+                                params: params.clone(),
+                                return_type: return_type.clone(),
+                                mode: ExecutionMode::Runtime,
+                            },
+                        );
+                    }
+                }
+                for h in handle_block {
+                    if let Decl::FnDecl {
+                        name,
+                        generics,
+                        params,
+                        return_type,
+                        ..
+                    } = h
+                    {
+                        let hk = HandleMethods::from_str(name.as_str());
+                        if hk != HandleMethods::NotFound && !entry.handles.contains(&hk) {
+                            entry.handles.push(hk);
+                        }
+                        entry.handle_signatures.insert(
                             name.clone(),
                             FnType {
                                 name: name.clone(),
@@ -310,7 +407,6 @@ impl SemanticAnalyzer {
                     && !self.types_are_compatible(&declared_type, &expr_type)
                     && !self.types_are_compatible(&declared_type, &array_inner)
                     && !self.types_are_compatible(&declared_type, array_inner_base)
-                    && !(declared_type.contains("char") && expr_type == "str")
                 {
                     return Err(format!(
                         "Semantic Error: Type mismatch for array '{}'. Declared '{}', got '{}'",
@@ -399,8 +495,14 @@ impl SemanticAnalyzer {
                 let info = self.make_blueprint_symbol(name, visibility.clone());
                 self.current_env.borrow_mut().define(name.clone(), info)?;
                 for v in variants {
-                    self.dependency_graph.entry(v.name.clone()).or_default().insert(name.clone());
-                    self.dependency_graph.entry(name.clone()).or_default().insert(v.name.clone());
+                    self.dependency_graph
+                        .entry(v.name.clone())
+                        .or_default()
+                        .insert(name.clone());
+                    self.dependency_graph
+                        .entry(name.clone())
+                        .or_default()
+                        .insert(v.name.clone());
                     let var_symbol = SymbolInfo {
                         name: v.name.clone(),
                         kind: SymbolKind::Variable {
@@ -426,7 +528,10 @@ impl SemanticAnalyzer {
                 let prev_type = self.current_type_name.clone();
                 self.current_type_name = Some(name.clone());
                 for d in handle_block {
-                    if let Decl::FnDecl { is_virtual: true, .. } = d {
+                    if let Decl::FnDecl {
+                        is_virtual: true, ..
+                    } = d
+                    {
                         return Err(format!(
                             "Semantic Error: 'virtual' modifier is only allowed in 'class' methods, not in enum '{}'",
                             name
@@ -789,7 +894,6 @@ impl SemanticAnalyzer {
                                     "float" | "float32" => BaseType::Float(Size::S32),
                                     "float64" => BaseType::Float(Size::S64),
                                     "bool" => BaseType::Bool,
-                                    "str" => BaseType::Str,
                                     "char" => BaseType::Char,
                                     _ => BaseType::Blueprint {
                                         name: inferred.clone(),
@@ -883,7 +987,8 @@ impl SemanticAnalyzer {
                         });
                 }
                 let exec_mode = detect_execution_mode(body);
-                let is_compilable_fn = name.starts_with("@compile::") || exec_mode == ExecutionMode::FullyCompilable;
+                let is_compilable_fn =
+                    name.starts_with("@compile::") || exec_mode == ExecutionMode::FullyCompilable;
 
                 let fn_info = SymbolInfo {
                     name: name.clone(),
@@ -928,7 +1033,10 @@ impl SemanticAnalyzer {
                 };
                 self.current_context = Some(ctx_name.clone());
                 let sig_key = make_sig_key(name, &resolved_params);
-                self.dependency_graph.entry(sig_key).or_default().insert(ctx_name.clone());
+                self.dependency_graph
+                    .entry(sig_key)
+                    .or_default()
+                    .insert(ctx_name.clone());
                 self.active_flags.push("+has_return".to_string());
                 self.active_flags.push("+has_throw".to_string());
                 self.active_flags.push("+has_yield".to_string());
@@ -947,7 +1055,9 @@ impl SemanticAnalyzer {
                         let g_info = SymbolInfo {
                             name: clean_name.clone(),
                             kind: SymbolKind::Variable {
-                                type_node: BaseType::Type(Box::new(BaseType::GenericParam(clean_name.clone()))),
+                                type_node: BaseType::Type(Box::new(BaseType::GenericParam(
+                                    clean_name.clone(),
+                                ))),
                                 editability: Editability::NotEditable,
                                 is_array: false,
                             },
@@ -958,7 +1068,10 @@ impl SemanticAnalyzer {
                             is_uninitialized: false,
                             is_compilable: false,
                         };
-                        let _ = self.current_env.borrow_mut().define(clean_name.clone(), g_info.clone());
+                        let _ = self
+                            .current_env
+                            .borrow_mut()
+                            .define(clean_name.clone(), g_info.clone());
                         if g_name != clean_name {
                             let _ = self.current_env.borrow_mut().define(g_name, g_info);
                         }
@@ -971,13 +1084,13 @@ impl SemanticAnalyzer {
                     let (param_type, is_arr) = if p.is_variadic {
                         (
                             BaseType::Array {
-                                base_type: Box::new(p.type_node.clone()),
+                                base_type: Box::new(self.resolve_type(&p.type_node)),
                                 size: Box::new(None),
                             },
                             true,
                         )
                     } else {
-                        (p.type_node.clone(), false)
+                        (self.resolve_type(&p.type_node), false)
                     };
                     let param_info = SymbolInfo {
                         name: p.name.clone(),
@@ -1080,7 +1193,7 @@ impl SemanticAnalyzer {
                     let param_info = SymbolInfo {
                         name: p.name.clone(),
                         kind: SymbolKind::Variable {
-                            type_node: p.type_node.clone(),
+                            type_node: self.resolve_type(&p.type_node),
                             editability: Editability::Editable,
                             is_array: false,
                         },
@@ -1131,8 +1244,59 @@ impl SemanticAnalyzer {
             }
 
             Decl::BlueprintDecl {
-                name, visibility, ..
+                name,
+                visibility,
+                definition,
+                share_directive,
+                ..
             } => {
+                if let Some(ref sd) = share_directive {
+                    // Check nested share: cannot declare share inside a type that is already shareable
+                    let is_self_shareable = self
+                        .current_env
+                        .borrow()
+                        .lookup_blueprint(name)
+                        .map(|bp| bp.is_shareable())
+                        .unwrap_or(false);
+                    if is_self_shareable {
+                        return Err(format!(
+                            "Semantic Error: Blueprint '{}' cannot declare 'share' directive because it is already shareable (nested sharing is forbidden).",
+                            name
+                        ));
+                    }
+                    if let crate::frontend::parser::ast::BlueprintDef::Explicit(fields) = definition
+                    {
+                        let field_opt = fields.iter().find(|f| f.name == sd.target_field);
+                        match field_opt {
+                            None => {
+                                return Err(format!(
+                                    "Semantic Error: Share target field '{}' not found in blueprint '{}'.",
+                                    sd.target_field, name
+                                ));
+                            }
+                            Some(field) => {
+                                let target_type_name = match &field.type_node {
+                                    BaseType::RawPointer(inner) => inner.as_str(),
+                                    other => other.as_str(),
+                                };
+                                if let Some(bp) = self
+                                    .current_env
+                                    .borrow()
+                                    .lookup_blueprint(&target_type_name)
+                                {
+                                    if !bp.is_shareable() {
+                                        return Err(format!(
+                                            "Semantic Error: Field '{}' of type '{}' in blueprint '{}' is not shareable (target type must define handle share).",
+                                            sd.target_field,
+                                            field.type_node.as_str(),
+                                            name
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 let info = self.make_blueprint_symbol(name, visibility.clone());
                 self.current_env.borrow_mut().define(name.clone(), info)?;
             }
@@ -1148,7 +1312,7 @@ impl SemanticAnalyzer {
                     || matches!(
                         target.as_str(),
                         "char"
-                            | "str"
+                            | "uchar"
                             | "bool"
                             | "flag"
                             | "array"
@@ -1156,6 +1320,7 @@ impl SemanticAnalyzer {
                             | "usize"
                             | "isize"
                             | "type"
+                            | "raw_ptr"
                     );
                 let symbol_opt = self.current_env.borrow().lookup(target);
                 let meta_opt = self.global_metadata.get(target).cloned();
@@ -1178,6 +1343,8 @@ impl SemanticAnalyzer {
                     }
                 } else if let Some(bp) = self.current_env.borrow().lookup_blueprint(target) {
                     bp.generics.len()
+                } else if target == "array" {
+                    1
                 } else {
                     0
                 };
@@ -1199,7 +1366,10 @@ impl SemanticAnalyzer {
 
                 if !is_target_class {
                     for m in methods.iter().chain(handle_block.iter()) {
-                        if let Decl::FnDecl { is_virtual: true, .. } = m {
+                        if let Decl::FnDecl {
+                            is_virtual: true, ..
+                        } = m
+                        {
                             return Err(format!(
                                 "Semantic Error: 'virtual' modifier is only allowed in 'class' methods, not in '{}'",
                                 target
@@ -1208,16 +1378,35 @@ impl SemanticAnalyzer {
                     }
                 }
 
-                if self.global_metadata.get(target).is_none() {
+                let spec_key = if target_generics.is_empty()
+                    || target_generics
+                        .iter()
+                        .all(|g| matches!(g, BaseType::GenericParam(_)))
+                {
+                    target.clone()
+                } else {
+                    let g_str: Vec<String> = target_generics.iter().map(|g| g.as_str()).collect();
+                    format!("{}<{}>", target, g_str.join(", "))
+                };
+
+                if self.global_metadata.get(&spec_key).is_none() {
                     self.global_metadata.insert(
-                        target.clone(),
+                        spec_key.clone(),
                         TypeMetadata {
-                            name: target.clone(),
-                            ty: BaseType::from_str(target),
+                            name: spec_key.clone(),
+                            ty: if target == "array" && !target_generics.is_empty() {
+                                BaseType::Array {
+                                    base_type: Box::new(target_generics[0].clone()),
+                                    size: Box::new(None),
+                                }
+                            } else {
+                                BaseType::from_str(target)
+                            },
                             fields: std::collections::HashMap::new(),
                             methods: std::collections::HashMap::new(),
                             constructor: None,
                             handles: vec![],
+                            handle_signatures: std::collections::HashMap::new(),
                             vars: std::collections::HashMap::new(),
                             variants: None,
                         },
@@ -1243,11 +1432,6 @@ impl SemanticAnalyzer {
                     "div",
                     "mod",
                     "index_access",
-                    "index_add",
-                    "index_sub",
-                    "index_mul",
-                    "index_div",
-                    "index_mod",
                     "arrow",
                     "arrow_assign",
                     "equal",
@@ -1311,8 +1495,9 @@ impl SemanticAnalyzer {
                                 );
                             }
                             if h_name == "display" {
-                                let is_valid = match return_type {
-                                    BaseType::Str | BaseType::Char => true,
+                                let resolved_ret = self.resolve_type(return_type);
+                                let is_valid = match &resolved_ret {
+                                    BaseType::Char => true,
                                     BaseType::Array { base_type, .. } => {
                                         matches!(base_type.as_ref(), BaseType::Char)
                                     }
@@ -1353,8 +1538,6 @@ impl SemanticAnalyzer {
                     }
                 } else if target == "char" {
                     BaseType::Char
-                } else if target == "str" {
-                    BaseType::Str
                 } else if target == "bool" || target == "flag" {
                     BaseType::Bool
                 } else if target.starts_with("int") {
@@ -1430,6 +1613,19 @@ impl SemanticAnalyzer {
                                 },
                             );
                         }
+                        if let Some(bp) = self.current_env.borrow_mut().blueprints.get_mut(target) {
+                            bp.methods.insert(
+                                name.clone(),
+                                FnSignature {
+                                    name: name.clone(),
+                                    generics: generics.clone(),
+                                    params: params.clone(),
+                                    return_type: return_type.clone(),
+                                    is_virtual: false,
+                                    is_abstract: false,
+                                },
+                            );
+                        }
                     }
                 }
 
@@ -1437,6 +1633,9 @@ impl SemanticAnalyzer {
                     self.visit_declaration(h)?;
                     if let Decl::FnDecl {
                         name,
+                        generics,
+                        params,
+                        return_type,
                         ..
                     } = h
                     {
@@ -1445,6 +1644,37 @@ impl SemanticAnalyzer {
                             if hk != HandleMethods::NotFound && !meta.handles.contains(&hk) {
                                 meta.handles.push(hk);
                             }
+                            meta.handle_signatures.insert(
+                                name.clone(),
+                                FnType {
+                                    name: name.clone(),
+                                    generics: generics.clone(),
+                                    params: params.clone(),
+                                    return_type: return_type.clone(),
+                                    mode: ExecutionMode::Runtime,
+                                },
+                            );
+                        }
+                        if let Some(bp) = self.current_env.borrow_mut().blueprints.get_mut(target) {
+                            if bp.generics.is_empty() {
+                                for g in target_generics {
+                                    bp.generics.push(g.as_str());
+                                }
+                            }
+                            if hk != HandleMethods::NotFound && !bp.handles.contains(&hk) {
+                                bp.handles.insert(hk);
+                            }
+                            bp.handle_signatures.insert(
+                                name.clone(),
+                                FnSignature {
+                                    name: name.clone(),
+                                    generics: generics.clone(),
+                                    params: params.clone(),
+                                    return_type: return_type.clone(),
+                                    is_virtual: false,
+                                    is_abstract: false,
+                                },
+                            );
                         }
                     }
                 }
@@ -1536,15 +1766,27 @@ impl SemanticAnalyzer {
                 for d in decls {
                     let mut namespaced_d = d.clone();
                     match &mut namespaced_d {
-                        Decl::FnDecl { name: fn_name, visibility, .. } => {
+                        Decl::FnDecl {
+                            name: fn_name,
+                            visibility,
+                            ..
+                        } => {
                             *fn_name = format!("{}::{}", name, fn_name);
                             *visibility = Visibility::Public;
                         }
-                        Decl::MicroDecl { name: m_name, visibility, .. } => {
+                        Decl::MicroDecl {
+                            name: m_name,
+                            visibility,
+                            ..
+                        } => {
                             *m_name = format!("{}::{}", name, m_name);
                             *visibility = Visibility::Public;
                         }
-                        Decl::MacroDecl { name: m_name, visibility, .. } => {
+                        Decl::MacroDecl {
+                            name: m_name,
+                            visibility,
+                            ..
+                        } => {
                             *m_name = format!("{}::{}", name, m_name);
                             *visibility = Visibility::Public;
                         }
@@ -1654,7 +1896,10 @@ impl SemanticAnalyzer {
             }
         }
 
-        let expr_type = self.visit_expression(value)?;
+        let mut expr_type: String = self.visit_expression(value)?;
+        if expr_type == "int" {
+            expr_type = "int32".to_string();
+        }
         if assign_op == ":=" && expr_type == "undefined" {
             return Err(
                 format!(
@@ -1690,163 +1935,6 @@ impl SemanticAnalyzer {
             let base_decl: &str = declared_type.split('<').next().unwrap_or(&declared_type);
 
             match base_decl {
-                // smart pointer - accept anything, infer inner if needed
-                // smart pointers - accept anything, infer inner if needed
-                "name" | "modify" | "copy" => {
-                    let is_modify = base_decl == "modify";
-                    let is_copy = base_decl == "copy";
-                    let is_arr = expr_type.starts_with("array<");
-
-                    let inner_type_str = if declared_type.contains("<name<") {
-                        let extracted = if is_modify {
-                            declared_type
-                                .trim_start_matches("modify<name<")
-                                .trim_end_matches(">>")
-                        } else {
-                            declared_type
-                                .trim_start_matches("copy<name<")
-                                .trim_end_matches(">>")
-                        };
-                        if extracted == "unknown" && expr_type != "unknown" {
-                            if is_arr {
-                                expr_type.trim_start_matches("array<").trim_end_matches('>')
-                            } else {
-                                &expr_type
-                            }
-                        } else {
-                            extracted
-                        }
-                    } else if declared_type.starts_with("name<") {
-                        let extracted = declared_type
-                            .trim_start_matches("name<")
-                            .trim_end_matches('>');
-                        if extracted == "unknown" && expr_type != "unknown" {
-                            if is_arr {
-                                expr_type.trim_start_matches("array<").trim_end_matches('>')
-                            } else {
-                                &expr_type
-                            }
-                        } else {
-                            extracted
-                        }
-                    } else if is_arr {
-                        expr_type.trim_start_matches("array<").trim_end_matches('>')
-                    } else {
-                        &expr_type
-                    };
-
-                    let base_inner = BaseType::Name(Box::new(BaseType::from_str(inner_type_str)));
-                    let final_type_node = if is_modify {
-                        BaseType::Modify(Box::new(base_inner))
-                    } else if is_copy {
-                        BaseType::Copy(Box::new(base_inner))
-                    } else {
-                        base_inner
-                    };
-
-                    let deps = self
-                        .dependency_graph
-                        .get(name)
-                        .cloned()
-                        .unwrap_or_default()
-                        .into_iter()
-                        .collect();
-                    if !is_modify && !is_copy && !self.is_valid_pointer_rhs(value, &expr_type) {
-                        return Err(
-                            format!("Semantic Error: Invalid assignment to smart pointer '{}'. Must be a reference (&), 'new' allocation, or another smart pointer.", name)
-                        );
-                    }
-                    let info = SymbolInfo {
-                        name: name.to_string(),
-                        kind: SymbolKind::Variable {
-                            type_node: final_type_node,
-                            editability: editability.clone(),
-                            is_array: is_arr,
-                        },
-                        visibility: visibility.clone(),
-                        dependencies: deps,
-                        is_used: false,
-                        is_param: false,
-                        is_uninitialized: false,
-                        is_compilable: false,
-                    };
-                    self.current_env
-                        .borrow_mut()
-                        .define(name.to_string(), info)?;
-                    self.heap_allocated_vars.insert(name.to_string());
-                    self.current_context = prev_context;
-                    return Ok(());
-                }
-                // pointer type
-                "pointer" => {
-                    let is_arr = expr_type.starts_with("array<");
-                    let inner_type_str = if declared_type.starts_with("pointer<") {
-                        declared_type
-                            .trim_start_matches("pointer<")
-                            .trim_end_matches('>')
-                    } else {
-                        "unknown"
-                    };
-                    let expr_inner = if is_arr {
-                        expr_type.trim_start_matches("array<").trim_end_matches('>')
-                    } else if expr_type.starts_with("pointer<") {
-                        expr_type
-                            .trim_start_matches("pointer<")
-                            .trim_end_matches('>')
-                    } else {
-                        &expr_type
-                    };
-
-                    if expr_type != "default"
-                        && inner_type_str != "unknown"
-                        && !self.types_are_compatible(inner_type_str, expr_inner)
-                    {
-                        return Err(
-                            format!(
-                                "Semantic Error: Type mismatch for pointer '{}'. Declared '{}', got '{}'",
-                                name,
-                                declared_type,
-                                expr_type
-                            )
-                        );
-                    }
-
-                    let deps = self
-                        .dependency_graph
-                        .get(name)
-                        .cloned()
-                        .unwrap_or_default()
-                        .into_iter()
-                        .collect();
-                    if expr_type != "default" && !self.is_valid_pointer_rhs(value, &expr_type) {
-                        return Err(
-                            format!("Semantic Error: Invalid assignment to a pointer '{}'. Must be a reference (&), 'new' allocation, or another  pointer.", name)
-                        );
-                    }
-                    let info = SymbolInfo {
-                        name: name.to_string(),
-                        kind: SymbolKind::Variable {
-                            type_node: BaseType::Pointer(Box::new(BaseType::from_str(
-                                inner_type_str,
-                            ))),
-                            editability: editability.clone(),
-                            is_array: is_arr,
-                        },
-                        visibility: visibility.clone(),
-                        dependencies: deps,
-                        is_used: false,
-                        is_param: false,
-                        is_uninitialized: false,
-                        is_compilable: false,
-                    };
-                    self.current_env
-                        .borrow_mut()
-                        .define(name.to_string(), info)?;
-                    self.heap_allocated_vars.insert(name.to_string());
-                    self.current_context = prev_context;
-                    return Ok(());
-                }
-
                 // complex types with possible handle overloading
                 "custom" | "class" | "struct" | "enum" => {
                     let bp_name = extract_blueprint_name_from_type(&declared_type)
@@ -2033,18 +2121,11 @@ impl SemanticAnalyzer {
                 BaseType::Bool
             } else if expr_type == "char" {
                 BaseType::Char
-            } else if expr_type == "str" {
-                BaseType::Str
-            } else if expr_type == "array<char>" {
-                BaseType::Array {
-                    base_type: Box::new(BaseType::Char),
-                    size: Box::new(None),
-                }
             } else {
                 BaseType::from_str(&expr_type)
             }
         } else {
-            type_node.clone()
+            self.resolve_type(type_node)
         };
 
         for dep in extract_all_type_names(&final_type_node.as_str()) {
@@ -2057,19 +2138,6 @@ impl SemanticAnalyzer {
             | BaseType::Blueprint { .. }
             | BaseType::Enum { .. }
             | BaseType::Array { .. } => true,
-            BaseType::Name(inner) => {
-                matches!(
-                    &**inner,
-                    BaseType::Class { .. }
-                        | BaseType::Struct { .. }
-                        | BaseType::Blueprint { .. }
-                        | BaseType::Enum { .. }
-                ) || self
-                    .current_env
-                    .borrow()
-                    .lookup_blueprint(&inner.as_str())
-                    .is_some()
-            }
             _ => self
                 .current_env
                 .borrow()
@@ -2126,12 +2194,21 @@ impl SemanticAnalyzer {
         let prev_context = self.current_context.clone();
         self.current_context = Some(name.to_string());
         if let Some(parent) = extends {
-            self.class_hierarchy.insert(name.to_string(), parent.to_string());
+            self.class_hierarchy
+                .insert(name.to_string(), parent.to_string());
             self.record_dependency(parent.to_string());
         }
         if !is_class {
-            for d in private_block.iter().chain(public_block).chain(static_block).chain(handle_block) {
-                if let Decl::FnDecl { is_virtual: true, .. } = d {
+            for d in private_block
+                .iter()
+                .chain(public_block)
+                .chain(static_block)
+                .chain(handle_block)
+            {
+                if let Decl::FnDecl {
+                    is_virtual: true, ..
+                } = d
+                {
                     return Err(format!(
                         "Semantic Error: 'virtual' modifier is only allowed in 'class' methods, not in struct '{}'",
                         name
@@ -2208,6 +2285,11 @@ impl SemanticAnalyzer {
                 for h in &parent_bp.handles {
                     bp.handles.insert(*h);
                 }
+                for (h_k, h_v) in &parent_bp.handle_signatures {
+                    bp.handle_signatures
+                        .entry(h_k.clone())
+                        .or_insert_with(|| h_v.clone());
+                }
             }
         }
         for h in handles {
@@ -2228,8 +2310,9 @@ impl SemanticAnalyzer {
                     if !fn_params.is_empty() {
                         return Err(format!("Semantic Error: Handle method 'display' cannot take any parameters on target '{}'", name));
                     }
-                    let is_valid = match return_type {
-                        BaseType::Str | BaseType::Char => true,
+                    let resolved_ret = self.resolve_type(return_type);
+                    let is_valid = match &resolved_ret {
+                        BaseType::Char => true,
                         BaseType::Array { base_type, .. } => {
                             matches!(base_type.as_ref(), BaseType::Char)
                         }
@@ -2247,20 +2330,19 @@ impl SemanticAnalyzer {
                 }
 
                 let hk = HandleMethods::from_str(fn_name.as_str());
+                let sig = FnSignature {
+                    name: fn_name.clone(),
+                    generics: fn_generics.clone(),
+                    params: fn_params.clone(),
+                    return_type: return_type.clone(),
+                    is_virtual: *is_virtual,
+                    is_abstract: *is_abstract,
+                };
                 if hk != HandleMethods::NotFound {
-                    bp.handles.insert(hk);
+                    bp.define_handle(hk, sig);
+                } else {
+                    bp.handle_signatures.insert(fn_name.clone(), sig);
                 }
-                bp.methods.insert(
-                    fn_name.clone(),
-                    FnSignature {
-                        name: fn_name.clone(),
-                        generics: fn_generics.clone(),
-                        params: fn_params.clone(),
-                        return_type: return_type.clone(),
-                        is_virtual: *is_virtual,
-                        is_abstract: *is_abstract,
-                    },
-                );
             }
         }
         for d in private_block.iter().chain(public_block).chain(static_block) {
@@ -2330,7 +2412,7 @@ impl SemanticAnalyzer {
                     let pi = SymbolInfo {
                         name: param.name.clone(),
                         kind: SymbolKind::Variable {
-                            type_node: param.type_node.clone(),
+                            type_node: self.resolve_type(&param.type_node),
                             editability: Editability::Editable,
                             is_array: false,
                         },
@@ -2375,5 +2457,4 @@ impl SemanticAnalyzer {
             is_compilable: false,
         }
     }
-
 }

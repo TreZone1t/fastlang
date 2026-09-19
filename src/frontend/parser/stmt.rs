@@ -34,7 +34,7 @@ impl Parser {
             | TokenKind::TypeISize
             | TokenKind::TypeFloat(_)
             | TokenKind::TypeChar
-            | TokenKind::TypeStr
+            | TokenKind::TypeUChar
             | TokenKind::TypeBool
             | TokenKind::Flag
             | TokenKind::TypeMethod => {
@@ -52,10 +52,7 @@ impl Parser {
             | TokenKind::TypeFn
             | TokenKind::TypeLambda
             /*//todo | TokenKind::TypeObject */
-            | TokenKind::TypeType
-            | TokenKind::TypeName
-            | TokenKind::TypeModify
-            | TokenKind::TypeCopy => self.parse_var_decl(scope).map(Stmt::Declaration),
+            | TokenKind::TypeType => self.parse_var_decl(scope).map(Stmt::Declaration),
 
             TokenKind::Using => self.parse_using_stmt(),
             TokenKind::Set => self.parse_reassign_stmt(),
@@ -192,46 +189,7 @@ impl Parser {
             TokenKind::Try => self.parse_try_catch_stmt(),
 
             TokenKind::LabelName(lbl) if lbl.eq_ignore_ascii_case("@compile") => {
-                if self.peek_ahead(1).map(|t| &t.kind) == Some(&TokenKind::DoubleColon) {
-                    self.advance(); // consume '@compile'
-                    self.advance(); // consume '::'
-                    let member_name = self.get_handle_identifier("Expected member after '@compile::'")?;
-                    let mut generics = Vec::new();
-                    if self.peek().kind == TokenKind::Less && self.is_generic_call_ahead() {
-                        self.advance();
-                        self.parse_generic_list(&mut generics)?;
-                        self.consume(TokenKind::Greater, "Expected '>' after generic type arguments")?;
-                    }
-                    let mut args = Vec::new();
-                    if self.peek().kind == TokenKind::LParen {
-                        self.advance();
-                        if self.peek().kind != TokenKind::RParen {
-                            args.push(self.parse_expression()?);
-                            while self.peek().kind == TokenKind::Comma {
-                                self.advance();
-                                args.push(self.parse_expression()?);
-                            }
-                        }
-                        self.consume(TokenKind::RParen, "Expected ')' after argument list")?;
-                    } else if self.peek().kind != TokenKind::SemiColon {
-                        args.push(self.parse_expression()?);
-                        while self.peek().kind == TokenKind::Comma {
-                            self.advance();
-                            args.push(self.parse_expression()?);
-                        }
-                    }
-                    if self.peek().kind == TokenKind::SemiColon {
-                        self.advance();
-                    }
-                    Ok(Stmt::CallStmt(Expr::Call {
-                        callee: Box::new(Expr::NamespaceAccess {
-                            namespace: "@compile".to_string(),
-                            property: Box::new(Expr::Identifier(member_name)),
-                        }),
-                        generics,
-                        args,
-                    }))
-                } else if self.is_compile_validation_ahead() {
+                if self.is_compile_validation_ahead() {
                     self.advance(); // consume '@compile'
                     if self.peek().kind == TokenKind::Arrow {
                         self.advance();
@@ -258,8 +216,12 @@ impl Parser {
                         self.advance();
                     }
                     Ok(Stmt::CompileValidation { body, args })
-                } else {
+                } else if self.peek_ahead(1).map(|t| &t.kind) == Some(&TokenKind::Arrow)
+                    || self.peek_ahead(1).map(|t| &t.kind) == Some(&TokenKind::LBrace)
+                {
                     self.parse_compile_decl().map(Stmt::Declaration)
+                } else {
+                    self.parse_expression_or_reassignment()
                 }
             }
 
@@ -503,8 +465,8 @@ impl Parser {
                 | TokenKind::TypeUSize
                 | TokenKind::TypeISize
                 | TokenKind::TypeChar
+                | TokenKind::TypeUChar
                 | TokenKind::TypeBool
-                | TokenKind::TypeStr
                 | TokenKind::TypeVoid
                 | TokenKind::TypeType => {
                     let next_kind = self.peek_ahead(1).map(|t| &t.kind);
@@ -623,7 +585,14 @@ impl Parser {
 
     pub(crate) fn parse_define_stmt(&mut self, is_public: bool) -> Result<Decl, String> {
         self.consume(TokenKind::Define, "Expected 'define'")?;
-        let name = self.get_identifier("Expected identifier after 'define'")?;
+        let name = match &self.peek().kind {
+            TokenKind::Identifier(id) => {
+                let s = id.clone();
+                self.advance();
+                s
+            }
+            _ => return Err("Expected identifier after 'define'".to_string()),
+        };
         if self.peek().kind == TokenKind::Assign || self.peek().kind == TokenKind::Arrow {
             self.advance();
         } else {
@@ -637,14 +606,24 @@ impl Parser {
             | TokenKind::TypeISize
             | TokenKind::TypeFloat(_)
             | TokenKind::TypeChar
+            | TokenKind::TypeUChar
             | TokenKind::TypeBool
             | TokenKind::TypeVoid
-            | TokenKind::TypeName
-            | TokenKind::TypeCopy
-            | TokenKind::TypeModify
             | TokenKind::TypeStruct
             | TokenKind::TypeClass
-            | TokenKind::TypeEnum => true,
+            | TokenKind::TypeBluePrint
+            | TokenKind::TypeEnum
+            | TokenKind::TypeMethod
+            | TokenKind::TypeFn
+            | TokenKind::TypeMicro
+            | TokenKind::TypeLambda
+            | TokenKind::TypeBlock => true,
+            TokenKind::Identifier(id) => {
+                self.peek_ahead(1)
+                    .map(|t| t.kind == TokenKind::Less || t.kind == TokenKind::LBracket)
+                    .unwrap_or(false)
+                    || self.metadata.contains_key(id)
+            }
             _ => false,
         };
 
@@ -656,6 +635,7 @@ impl Parser {
 
         if is_type {
             let t = self.parse_type()?;
+            self.type_aliases.insert(name.clone(), t.clone());
             self.consume(TokenKind::SemiColon, "Expected ';' after define type alias")?;
             Ok(Decl::DefineDecl {
                 visibility,
@@ -685,15 +665,10 @@ impl Parser {
             | TokenKind::TypeISize
             | TokenKind::TypeFloat(_)
             | TokenKind::TypeChar
+            | TokenKind::TypeUChar
             | TokenKind::TypeBool
             | TokenKind::TypeType
-            | TokenKind::TypeName
-            | TokenKind::TypeCopy
             | TokenKind::Identifier(_) => self.parse_var_decl(scope)?,
-
-            TokenKind::TypeModify => {
-                return Err("Syntax Error: Modify is not allowed in const declaration".to_string());
-            }
             _ => {
                 return Err("Syntax Error: Expected variable declaration".to_string());
             }
@@ -899,13 +874,10 @@ impl Parser {
             | TokenKind::TypeISize
             | TokenKind::TypeFloat(_)
             | TokenKind::TypeChar
-            | TokenKind::TypeStr
+            | TokenKind::TypeUChar
             | TokenKind::TypeBool
             | TokenKind::Flag
             //| TokenKind::Scope
-            | TokenKind::TypeName
-            | TokenKind::TypeModify
-            | TokenKind::TypeCopy
             | TokenKind::TypeType
             | TokenKind::TypeMethod => {
                 if let Some(next) = self.tokens.get(self.current + 1) {
@@ -956,6 +928,17 @@ impl Parser {
             idx += 1;
         }
         if idx >= self.tokens.len() {
+            return false;
+        }
+        if matches!(&self.tokens[idx].kind, TokenKind::Ampersand | TokenKind::Multiply) {
+            while idx < self.tokens.len()
+                && matches!(&self.tokens[idx].kind, TokenKind::Ampersand | TokenKind::Multiply)
+            {
+                idx += 1;
+            }
+            if idx < self.tokens.len() && matches!(&self.tokens[idx].kind, TokenKind::Identifier(_)) {
+                return true;
+            }
             return false;
         }
 
@@ -1940,7 +1923,10 @@ impl Parser {
                     body: def_body,
                 });
             } else {
-                let val = self.parse_expression()?;
+                self.in_match_pattern = true;
+                let val_res = self.parse_expression();
+                self.in_match_pattern = false;
+                let val = val_res?;
                 self.consume(TokenKind::FatArrow, "Expected '=>' after match pattern")?;
 
                 let case_body = if self.peek().kind == TokenKind::LBrace {
@@ -2305,9 +2291,9 @@ impl Parser {
                 self.advance();
                 Ok("throw".to_string())
             }
-            TokenKind::TypeCopy => {
+            TokenKind::Share => {
                 self.advance();
-                Ok("copy".to_string())
+                Ok("share".to_string())
             }
             _ => Err(err_msg.to_string()),
         }

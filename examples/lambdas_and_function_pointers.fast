@@ -9,13 +9,13 @@ fn multiply(x: int32, y: int32) -> int32 {
 }
 
 // Higher-Order Function that accepts a function pointer
-fn compute(a: int32, b: int32, operation: name<Fn<(int32, int32), int32>>) -> int32 {
+fn compute(a: int32, b: int32, operation: Fn<(int32, int32), int32>) -> int32 {
     return operation(a, b);
 }
 
 fn main() -> int32 {
     // 1. Storing named functions in smart function pointers
-    name<Fn<(int32, int32), int32>> my_op = add;
+    Fn<(int32, int32), int32> my_op = add;
     println("Add via pointer: ", my_op(10, 20));
 
     // 2. Reassignment using 'set'
@@ -23,7 +23,7 @@ fn main() -> int32 {
     println("Multiply via pointer: ", my_op(10, 20));
 
     // 3. Anonymous Lambda functions
-    name<Fn<(int32, int32), int32>> subtract = fn _(a: int32, b: int32) -> int32 {
+    Fn<(int32, int32), int32> subtract = fn _(a: int32, b: int32) -> int32 {
         return a - b;
     };
     println("Lambda subtract: ", subtract(50, 15));

@@ -105,6 +105,7 @@ impl Parser {
             constructor: None,
             methods: std::collections::HashMap::new(),
             handles: Vec::new(),
+            handle_signatures: std::collections::HashMap::new(),
             vars: std::collections::HashMap::new(),
             variants: Some(variants.clone()),
         };

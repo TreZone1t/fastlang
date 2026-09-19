@@ -53,7 +53,7 @@ micro double_val = (val: int32) -> int32 {
     return val * 2;
 };
 
-micro decrement_val = (i: modify<int32>) -> {
+micro decrement_val = (i: mutRef<int32>) -> {
     i -= 1;
 };
 

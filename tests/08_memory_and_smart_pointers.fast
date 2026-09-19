@@ -27,16 +27,16 @@ struct StackResource -> {
     }
 }
 
-fn increment_val(m: modify<int32>) -> void {
+fn increment_val(m: mutRef<int32>) -> void {
     m += 10;
 }
 
 fn test_smart_pointers() -> void {
     int32 num = 50;
-    name<int32> read_ptr = &num;
+    ref<int32> read_ptr = &num;
     println("val via deref: ", *read_ptr); // EXPECT: val via deref: 50
-
-    modify<int32> mod_ptr = &num;
+    println("val via no deref: ", read_ptr); // EXPECT: val via no deref: 50
+    mutRef<int32> mod_ptr = &num;
     increment_val(mod_ptr);
     println("val after modify: ", num); // EXPECT: val after modify: 60
 
@@ -89,7 +89,7 @@ impl Point  {
 fn test_copy_semantics() -> void {
     // 1. Primitive copy
     int32 orig = 100;
-    copy<int32> copied_int = orig;
+    int32 copied_int = orig-.copy();
     copied_int += 50;
     println("orig: ", orig, ", copied: ", copied_int); // EXPECT: orig: 100, copied: 150
     // 2. Blueprint copy via handle
@@ -97,7 +97,7 @@ fn test_copy_semantics() -> void {
       x = 10;
       y = 20;
     };
-    copy<Point> pt2 = pt1;
+    Point pt2 = pt1-.copy();
     pt2.x = 99;
     println("pt1.x: ", pt1.x, ", pt2.x: ", pt2.x); // EXPECT: pt1.x: 10, pt2.x: 99
     // 3. using deepCopy method
@@ -109,11 +109,89 @@ fn test_copy_semantics() -> void {
     println("pt1.x: ", pt1.x, ", pt_copy.x: ", pt_copy.x); // EXPECT: pt1.x: 10, pt_copy.x: 99
 }
 
+fn test_raw_ptr() -> void {
+    raw_ptr<int32> r = new int32(888);
+    println("raw_ptr val: ", *r); // EXPECT: raw_ptr val: 888
+    del r;
+}
+
+fn test_ref_and_mutref() -> void {
+    int32 val = 123;
+    ref<int32> r = &val;
+    println("ref val: ", *r); // EXPECT: ref val: 123
+
+    mutRef<int32> mr = &val;
+    mr += 77;
+    println("val after mutRef: ", val); // EXPECT: val after mutRef: 200
+
+    int32* heap_item = new int32(777);
+    mutRef<int32> mr_heap = heap_item;
+    println("mr_heap val: ", *mr_heap); // EXPECT: mr_heap val: 777
+    mr_heap.claim();
+    del mr_heap;
+}
+
+fn get_address_val(val: int32&) -> int32 {
+    return val;
+}
+
+fn test_address_and_reference() -> void {
+    int32 num = 42;
+    int32& addr_sugar = &num;
+    println("addr via deref: ", *addr_sugar); // EXPECT: addr via deref: 42
+    println("addr via direct pass: ", get_address_val(addr_sugar)); // EXPECT: addr via direct pass: 42
+
+    address<int32> addr_full = &num;
+    println("addr_full via deref: ", *addr_full); // EXPECT: addr_full via deref: 42
+
+    Point pt = Point {
+        x: 10;
+        y: 20;
+    };
+    Point& pt_ref = &pt;
+    println("pt_ref direct dot access x: ", pt_ref.x); // EXPECT: pt_ref direct dot access x: 10
+    println("pt_ref direct dot access y: ", pt_ref.y); // EXPECT: pt_ref direct dot access y: 20
+}
+
+fn test_property_access_forwarding() -> void {
+    Point pt = Point {
+        x: 100;
+        y: 200;
+    };
+
+    // 1. Testing property_access via ref<Point>
+    ref<Point> r_pt = &pt;
+    println("ref dot access x: ", r_pt.x); // EXPECT: ref dot access x: 100
+    println("ref dot access y: ", r_pt.y); // EXPECT: ref dot access y: 200
+
+    // 2. Testing property_access via mutRef<Point>
+    mutRef<Point> mr_pt = &pt;
+    println("mutRef dot access x before: ", mr_pt.x); // EXPECT: mutRef dot access x before: 100
+    mr_pt.x = 350;
+    println("mutRef dot access x after: ", mr_pt.x); // EXPECT: mutRef dot access x after: 350
+    println("pt.x directly: ", pt.x); // EXPECT: pt.x directly: 350
+
+    // 3. Testing property_access via pointer<Point>
+    Point pt_init = Point {
+        x = 77;
+        y = 88;
+    };
+    Point* heap_pt = new Point(pt_init);
+    pointer<Point> ptr_pt = heap_pt;
+    println("pointer dot access x: ", ptr_pt.x); // EXPECT: pointer dot access x: 77
+    println("pointer dot access y: ", ptr_pt.y); // EXPECT: pointer dot access y: 88
+    del heap_pt;
+}
+
 fn main() -> int32 {
     test_smart_pointers();
     test_del_and_drop();
     test_dynamic_heap_allocations();
     test_copy_semantics();
+    test_raw_ptr();
+    test_ref_and_mutref();
+    test_address_and_reference();
+    test_property_access_forwarding();
 
     println("ALL 08_MEMORY TESTS PASSED"); // EXPECT: ALL 08_MEMORY TESTS PASSED
     return 0;

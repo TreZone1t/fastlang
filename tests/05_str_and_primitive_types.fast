@@ -1,5 +1,5 @@
 // Comprehensive Suite 05: Native 'str' Primitive Type, Char Methods, and Escape Sequences
-
+import std::string;
 fn test_str_operations() -> void {
     str greeting = "Hello";
     str target = "FastLang";
@@ -90,13 +90,27 @@ fn test_casting() -> void {
     int32 c2 = @compile::cast<int32>(12.34);
     println("compile cast: ", c2); // EXPECT: compile cast: 12
 }
+fn test_string() -> void {
+    string s1 = new string("Hello");
+    string s2 = new string("World");
+    println("s1: ", s1.as_str(), ", s2: ", s2.as_str()); // EXPECT: s1: Hello, s2: World
+}
+fn test_uchar() -> void {
+    uchar u1 = '🔥';
+    uchar u2 = 'ع';
+    println("uchar fire: ", u1, ", ain: ", u2); // EXPECT: uchar fire: 🔥, ain: ع
+    bool eq1 = (u1 == '🔥');
+    bool eq2 = (u1 == u2);
+    println("uchar eq: ", eq1, " ", eq2); // EXPECT: uchar eq: true false
+}
 
 fn main() -> int32 {
     test_str_operations();
     test_char_methods();
     test_numeric_literals();
     test_casting();
-
+    test_string();
+    test_uchar();
     println("ALL 05_STR_AND_PRIMITIVES TESTS PASSED"); // EXPECT: ALL 05_STR_AND_PRIMITIVES TESTS PASSED
     return 0;
 }

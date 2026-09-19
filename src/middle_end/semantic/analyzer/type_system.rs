@@ -1,6 +1,29 @@
 use super::*;
 
 impl SemanticAnalyzer {
+    pub(crate) fn resolve_type(&self, ty: &BaseType) -> BaseType {
+        match ty {
+            BaseType::Blueprint { name, .. }
+            | BaseType::Struct { name, .. }
+            | BaseType::Class { name, .. }
+            | BaseType::Enum { name, .. } => {
+                if let Some(aliased) = self.current_env.borrow().resolve_type_alias(name) {
+                    self.resolve_type(&aliased)
+                } else {
+                    ty.clone()
+                }
+            }
+            BaseType::Array { base_type, size } => BaseType::Array {
+                base_type: Box::new(self.resolve_type(base_type)),
+                size: size.clone(),
+            },
+            BaseType::Generic(vec) => {
+                BaseType::Generic(vec.iter().map(|t| self.resolve_type(t)).collect())
+            }
+            _ => ty.clone(),
+        }
+    }
+
     pub(crate) fn is_primitive_stack_type(&self, type_name: &str) -> bool {
         matches!(
             type_name,
@@ -24,7 +47,6 @@ impl SemanticAnalyzer {
                 | "float128"
                 | "char"
                 | "bool"
-                | "str"
                 | "void"
                 | "type"
                 | "any"
@@ -33,15 +55,26 @@ impl SemanticAnalyzer {
     }
 
     pub(crate) fn type_has_drop_handle(&self, type_name: &str) -> bool {
-        let clean_name =
+        let extracted =
             extract_blueprint_name_from_type(type_name).unwrap_or_else(|| type_name.to_string());
+        let clean_name = if let Some(idx) = extracted.find('<') {
+            extracted[..idx].trim().to_string()
+        } else {
+            extracted
+        };
         if let Some(bp) = self.current_env.borrow().lookup_blueprint(&clean_name) {
-            if bp.handles.contains(&HandleMethods::Drop) || bp.methods.contains_key("drop") {
+            if bp.handles.contains(&HandleMethods::Drop)
+                || bp.handle_signatures.contains_key("drop")
+                || bp.methods.contains_key("drop")
+            {
                 return true;
             }
         }
         if let Some(meta) = self.global_metadata.get(&clean_name) {
-            if meta.handles.contains(&HandleMethods::Drop) || meta.methods.contains_key("drop") {
+            if meta.handles.contains(&HandleMethods::Drop)
+                || meta.handle_signatures.contains_key("drop")
+                || meta.methods.contains_key("drop")
+            {
                 return true;
             }
         }
@@ -80,37 +113,6 @@ impl SemanticAnalyzer {
         }
         false
     }
-
-    pub(crate) fn is_valid_pointer_rhs(&self, value: &Expr, expr_type: &str) -> bool {
-        if matches!(value, Expr::Default(_)) || expr_type == "default" || expr_type == "unknown" {
-            return true;
-        }
-        if let Expr::UnaryOp { operator, .. } = value {
-            if operator == "&" {
-                return true;
-            }
-        }
-        if matches!(value, Expr::New { .. }) {
-            return true;
-        }
-
-        if expr_type.starts_with("name<")
-            || expr_type.starts_with("modify<")
-            || expr_type.starts_with("copy<")
-            || expr_type.starts_with("pointer<")
-            || expr_type.starts_with("scope")
-            || expr_type.starts_with("Fn<")
-            || expr_type.to_lowercase().starts_with("fn")
-            || expr_type.to_lowercase().starts_with("lambda")
-            || expr_type.starts_with("method")
-            || expr_type == "fn"
-        {
-            return true;
-        }
-
-        false
-    }
-
     pub(crate) fn types_are_compatible(&self, expected: &str, actual: &str) -> bool {
         if expected == actual
             || expected == "any"
@@ -130,22 +132,71 @@ impl SemanticAnalyzer {
         if (expected == "flag" && actual == "bool") || (expected == "bool" && actual == "flag") {
             return true;
         }
+        if expected == "object" || actual == "object" {
+            let other = if expected == "object" {
+                actual
+            } else {
+                expected
+            };
+            if other == "object"
+                || self.is_class_type(other)
+                || self.is_struct_or_blueprint_type(other)
+                || other.starts_with("class::")
+                || other.starts_with("struct::")
+                || other.starts_with("blueprint::")
+                || other.starts_with("class<")
+                || other.starts_with("struct<")
+                || other.starts_with("blueprint<")
+            {
+                return true;
+            }
+        }
+        if expected == "function"
+            || expected.starts_with("function<")
+            || actual == "function"
+            || actual.starts_with("function<")
+        {
+            let other = if expected == "function" || expected.starts_with("function<") {
+                actual
+            } else {
+                expected
+            };
+            let other_lower = other.to_lowercase();
+            if other == "function"
+                || other_lower.starts_with("fn")
+                || other_lower.starts_with("lambda")
+                || other_lower.starts_with("macro")
+                || other_lower.starts_with("method")
+                || other_lower.starts_with("micro")
+                || other_lower.starts_with("machine")
+            {
+                return true;
+            }
+        }
         if (expected.to_lowercase().starts_with("lambda")
             || expected.to_lowercase().starts_with("fn")
-            || expected.starts_with("name<Fn")
-            || expected.starts_with("name<lambda")
             || expected.to_lowercase().starts_with("method"))
             && (actual.to_lowercase().starts_with("lambda")
                 || actual.to_lowercase().starts_with("fn")
-                || actual.starts_with("name<Fn")
-                || actual.starts_with("name<lambda")
                 || actual.to_lowercase().starts_with("method"))
         {
             return true;
         }
-        if (expected == "str" || expected == "array<char>" || expected == "char[]")
-            && (actual == "str" || actual == "array<char>" || actual == "char[]")
-        {
+        let norm_exp = if expected == "char[]" {
+            "array<char>".to_string()
+        } else if expected.ends_with("[]") {
+            format!("array<{}>", &expected[..expected.len() - 2])
+        } else {
+            expected.to_string()
+        };
+        let norm_act = if actual == "char[]" {
+            "array<char>".to_string()
+        } else if actual.ends_with("[]") {
+            format!("array<{}>", &actual[..actual.len() - 2])
+        } else {
+            actual.to_string()
+        };
+        if norm_exp == norm_act {
             return true;
         }
         if (expected == "type" || expected.starts_with("type<"))
@@ -153,7 +204,6 @@ impl SemanticAnalyzer {
                 || actual.starts_with("type<")
                 || actual.starts_with("int")
                 || actual.starts_with("uint")
-                || actual == "str"
                 || actual == "bool"
                 || actual.starts_with("float"))
         {
@@ -163,6 +213,13 @@ impl SemanticAnalyzer {
             extract_blueprint_name_from_type(expected).unwrap_or_else(|| expected.to_string());
         let act_clean =
             extract_blueprint_name_from_type(actual).unwrap_or_else(|| actual.to_string());
+        if let Some(bp) = self.current_env.borrow().lookup_blueprint(&exp_clean) {
+            if bp.handle_accepts_type(HandleMethods::Equal, actual)
+                || bp.handle_accepts_type(HandleMethods::EqualAssign, actual)
+            {
+                return true;
+            }
+        }
         if let Some(sym) = self.current_env.borrow().lookup(&exp_clean) {
             if let SymbolKind::Variable {
                 type_node: BaseType::Type(inner),
@@ -240,13 +297,13 @@ impl SemanticAnalyzer {
         }
         // blueprint/struct/class/enum/machine/block wrappers
         for prefix in &[
-            "blueprint<",
-            "struct<",
-            "class<",
-            "enum<",
-            "machine<",
-            "block<",
-            "object<",
+            "blueprint::",
+            "struct::",
+            "class::",
+            "enum::",
+            "machine::",
+            "block::",
+            "object::",
         ] {
             if expected.starts_with(prefix) {
                 let inner = strip_wrapper(expected, prefix);
@@ -294,126 +351,34 @@ impl SemanticAnalyzer {
                 }
             }
         }
-        // name pointer compatibility (holds T, array<T>, name<T>, pointer<T>)
-        if expected == "name"
-            || expected == "name<unknown>"
-            || actual == "name"
-            || actual == "name<unknown>"
+        // address compatibility (address<T> / T&)
+        if expected == "address"
+            || expected == "address<unknown>"
+            || actual == "address"
+            || actual == "address<unknown>"
         {
             return true;
         }
-        if expected.starts_with("name<") {
-            let inner = strip_wrapper(expected, "name<");
+        if expected.starts_with("address<") {
+            let inner = strip_wrapper(expected, "address<");
             if inner == "unknown" {
                 return true;
             }
-            let actual_inner = if actual.starts_with("array<") {
+            let actual_inner = if actual.starts_with("address<") {
+                strip_wrapper(actual, "address<")
+            } else if actual.starts_with("array<") {
                 strip_wrapper(actual, "array<")
-            } else if actual.starts_with("name<") {
-                strip_wrapper(actual, "name<")
-            } else if actual.starts_with("pointer<") {
-                strip_wrapper(actual, "pointer<")
+            } else if actual.starts_with("raw_ptr<") {
+                strip_wrapper(actual, "raw_ptr<")
             } else {
                 actual
             };
             return self.types_are_compatible(inner, actual_inner);
         }
-        if actual.starts_with("name<") {
-            let actual_inner = strip_wrapper(actual, "name<");
+        if actual.starts_with("address<") {
+            let actual_inner = strip_wrapper(actual, "address<");
             return self.types_are_compatible(expected, actual_inner);
         }
-
-        // raw pointer compatibility (points to T, array<T>, pointer<T>, name<T>)
-        if expected == "pointer"
-            || expected == "pointer<unknown>"
-            || actual == "pointer"
-            || actual == "pointer<unknown>"
-        {
-            return true;
-        }
-        if expected.starts_with("pointer<") {
-            let inner = strip_wrapper(expected, "pointer<");
-            if inner == "unknown" {
-                return true;
-            }
-            let actual_inner = if actual.starts_with("array<") {
-                strip_wrapper(actual, "array<")
-            } else if actual.starts_with("pointer<") {
-                strip_wrapper(actual, "pointer<")
-            } else if actual.starts_with("name<") {
-                strip_wrapper(actual, "name<")
-            } else {
-                actual
-            };
-            return self.types_are_compatible(inner, actual_inner);
-        }
-        if actual.starts_with("pointer<") {
-            let actual_inner = strip_wrapper(actual, "pointer<");
-            return self.types_are_compatible(expected, actual_inner);
-        }
-
-        // modify pointer compatibility (holds T, array<T>, pointer<T>, name<T>, modify<T>)
-        if expected == "modify"
-            || expected == "modify<unknown>"
-            || actual == "modify"
-            || actual == "modify<unknown>"
-        {
-            return true;
-        }
-        if expected.starts_with("modify<") {
-            let inner = strip_wrapper(expected, "modify<");
-            if inner == "unknown" {
-                return true;
-            }
-            let actual_inner = if actual.starts_with("array<") {
-                strip_wrapper(actual, "array<")
-            } else if actual.starts_with("pointer<") {
-                strip_wrapper(actual, "pointer<")
-            } else if actual.starts_with("modify<") {
-                strip_wrapper(actual, "modify<")
-            } else if actual.starts_with("name<") {
-                strip_wrapper(actual, "name<")
-            } else {
-                actual
-            };
-            if inner.contains(',') {
-                for part in inner.split(',') {
-                    let clean = part.trim();
-                    if self.types_are_compatible(clean, actual_inner) {
-                        return true;
-                    }
-                }
-            }
-            return self.types_are_compatible(inner, actual_inner);
-        }
-        if actual.starts_with("modify<") {
-            let actual_inner = strip_wrapper(actual, "modify<");
-            if actual_inner.contains(',') {
-                for part in actual_inner.split(',') {
-                    let clean = part.trim();
-                    if self.types_are_compatible(expected, clean) {
-                        return true;
-                    }
-                }
-            }
-            return self.types_are_compatible(expected, actual_inner);
-        }
-
-        // copy intermediate compatibility (copies from T, name<T>, modify<T>, pointer<T>)
-        if expected.starts_with("copy<") || actual.starts_with("copy<") {
-            let exp_inner = if expected.starts_with("copy<") {
-                strip_wrapper(expected, "copy<")
-            } else {
-                expected
-            };
-            let act_inner = if actual.starts_with("copy<") {
-                strip_wrapper(actual, "copy<")
-            } else {
-                actual
-            };
-            return self.types_are_compatible(exp_inner, act_inner);
-        }
-
         false
     }
 
@@ -452,50 +417,89 @@ impl SemanticAnalyzer {
         } else {
             inner_type
         };
-        let (has_display, has_copy, has_cast, has_throw, has_default) =
-            if let Some(meta) = self.global_metadata.get(base_name) {
-                (
-                    meta.handles.iter().any(|h| h.as_str() == "display"),
-                    meta.handles
-                        .iter()
-                        .any(|h| h.as_str() == "copy" || matches!(h, HandleMethods::Copy)),
-                    meta.handles
-                        .iter()
-                        .any(|h| h.as_str() == "cast" || matches!(h, HandleMethods::Cast)),
-                    meta.handles
-                        .iter()
-                        .any(|h| h.as_str() == "throw" || h.as_str() == "$throw" || matches!(h, HandleMethods::Throw)),
-                    meta.handles
-                        .iter()
-                        .any(|h| h.as_str() == "default" || matches!(h, HandleMethods::Default)),
-                )
-            } else if let Some(bp) = self.current_env.borrow().lookup_blueprint(base_name) {
-                (
-                    bp.handles.iter().any(|h| h.as_str() == "display"),
-                    bp.handles
-                        .iter()
-                        .any(|h| h.as_str() == "copy" || matches!(h, HandleMethods::Copy)),
-                    bp.handles
-                        .iter()
-                        .any(|h| h.as_str() == "cast" || matches!(h, HandleMethods::Cast)),
-                    bp.handles
-                        .iter()
-                        .any(|h| h.as_str() == "throw" || h.as_str() == "$throw" || matches!(h, HandleMethods::Throw)),
-                    bp.handles
-                        .iter()
-                        .any(|h| h.as_str() == "default" || matches!(h, HandleMethods::Default)),
-                )
-            } else {
-                (false, false, false, false, false)
-            };
+        let (
+            has_display,
+            has_copy,
+            has_cast,
+            has_throw,
+            has_default,
+            has_share,
+            handles,
+            methods,
+            fields,
+            field_types,
+            method_types,
+            handle_types,
+        ) = if let Some(bp) = self.current_env.borrow().lookup_blueprint(base_name) {
+            let mut ft_map = std::collections::HashMap::new();
+            for (k, v) in &bp.fields {
+                ft_map.insert(k.clone(), v.as_str().to_string());
+            }
+            let mut mt_map = std::collections::HashMap::new();
+            for (k, v) in &bp.methods {
+                mt_map.insert(k.clone(), v.return_type.as_str().to_string());
+            }
+            let mut ht_map = std::collections::HashMap::new();
+            for (k, v) in &bp.handle_signatures {
+                ht_map.insert(k.clone(), v.return_type.as_str().to_string());
+            }
+            (
+                bp.handles.iter().any(|h| h.as_str() == "display"),
+                bp.handles
+                    .iter()
+                    .any(|h| h.as_str() == "copy" || matches!(h, HandleMethods::Copy)),
+                bp.handles
+                    .iter()
+                    .any(|h| h.as_str() == "cast" || matches!(h, HandleMethods::Cast)),
+                bp.handles.iter().any(|h| {
+                    h.as_str() == "throw"
+                        || h.as_str() == "$throw"
+                        || matches!(h, HandleMethods::Throw)
+                }),
+                bp.handles
+                    .iter()
+                    .any(|h| h.as_str() == "default" || matches!(h, HandleMethods::Default)),
+                bp.handles
+                    .iter()
+                    .any(|h| h.as_str() == "share" || matches!(h, HandleMethods::Share)),
+                bp.handles.iter().map(|h| h.as_str().to_string()).collect(),
+                bp.methods.keys().cloned().collect(),
+                bp.fields.keys().cloned().collect(),
+                ft_map,
+                mt_map,
+                ht_map,
+            )
+        } else {
+            (
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                std::collections::HashMap::new(),
+                std::collections::HashMap::new(),
+                std::collections::HashMap::new(),
+            )
+        };
 
-        crate::middle_end::interpreter::FastType::with_all_handles(
+        crate::middle_end::interpreter::FastType::with_full_metadata(
             crate::frontend::parser::ast::BaseType::from_str(inner_type),
             has_display,
             has_copy,
             has_cast,
             has_throw,
             has_default,
+            has_share,
+            handles,
+            methods,
+            fields,
+            field_types,
+            method_types,
+            handle_types,
         )
     }
 
@@ -503,10 +507,6 @@ impl SemanticAnalyzer {
         let mut clean = type_str.trim().trim_start_matches("...");
         while (clean.starts_with("type<") && clean.ends_with('>'))
             || (clean.starts_with("array<") && clean.ends_with('>'))
-            || (clean.starts_with("modify<") && clean.ends_with('>'))
-            || (clean.starts_with("copy<") && clean.ends_with('>'))
-            || (clean.starts_with("pointer<") && clean.ends_with('>'))
-            || (clean.starts_with("name<") && clean.ends_with('>'))
             || clean.ends_with("[]")
         {
             if clean.ends_with("[]") {
@@ -561,14 +561,27 @@ impl SemanticAnalyzer {
             return None;
         }
         let ft = self.get_fast_type(inner_type);
+        if let Some(method_name) = prop.strip_prefix("has_") {
+            return Some(
+                ft.has_method(method_name)
+                    || ft.has_handle(method_name)
+                    || (method_name == "as_str"
+                        && (ft.printable() || ft.has_method("as_str") || ft.has_handle("display"))),
+            );
+        }
         match prop {
             "printable" | "is_printable" => Some(ft.printable()),
             "is_pointer" => Some(ft.is_pointer()),
             "is_array" => Some(ft.is_array()),
             "is_primitive" => Some(ft.is_primitive()),
             "throwable" | "is_throwable" => Some(ft.throwable()),
+            "shareable" | "is_shareable" => Some(ft.shareable()),
             "copyable" | "is_copyable" => Some(ft.copyable()),
             "castable" | "is_castable" => Some(ft.castable()),
+            "is_constant" | "is_const" => Some(ft.is_constant()),
+            "is_runtime" => Some(ft.is_runtime()),
+            "is_comptime" => Some(ft.is_comptime()),
+            "is_undefined" => Some(ft.is_undefined()),
             _ => None,
         }
     }
@@ -626,7 +639,9 @@ impl SemanticAnalyzer {
                             if let Some(target_expr) = args.first() {
                                 if let Ok(target_type_str) = self.visit_expression(target_expr) {
                                     let target_inner = strip_wrapper(&target_type_str, "type<");
-                                    if self.is_generic_type(&inner) || self.is_generic_type(target_inner) {
+                                    if self.is_generic_type(&inner)
+                                        || self.is_generic_type(target_inner)
+                                    {
                                         return None;
                                     }
                                     let target_ft = self.get_fast_type(target_inner);
@@ -638,6 +653,38 @@ impl SemanticAnalyzer {
                                     }
                                     return Some(ft.castable_to(&target_ft));
                                 }
+                            }
+                        }
+                        let extract_name_or_type = |e: &Expr| -> String {
+                            match e {
+                                Expr::LiteralString(s) => strip_wrapper(s, "type<").to_string(),
+                                Expr::Identifier(id) => strip_wrapper(id, "type<").to_string(),
+                                Expr::PropertyAccess { property, .. } => property.clone(),
+                                _ => format!("{:?}", e),
+                            }
+                        };
+                        if property == "has_handle" {
+                            if let Some(arg) = args.first() {
+                                let s1 = extract_name_or_type(arg);
+                                let s2 = args.get(1).map(extract_name_or_type);
+                                let ft = self.get_fast_type(&inner);
+                                return Some(ft.has_handle_query(&s1, s2.as_deref()));
+                            }
+                        }
+                        if property == "has_method" {
+                            if let Some(arg) = args.first() {
+                                let s1 = extract_name_or_type(arg);
+                                let s2 = args.get(1).map(extract_name_or_type);
+                                let ft = self.get_fast_type(&inner);
+                                return Some(ft.has_method_query(&s1, s2.as_deref()));
+                            }
+                        }
+                        if property == "has_field" {
+                            if let Some(arg) = args.first() {
+                                let s1 = extract_name_or_type(arg);
+                                let s2 = args.get(1).map(extract_name_or_type);
+                                let ft = self.get_fast_type(&inner);
+                                return Some(ft.has_field_query(&s1, s2.as_deref()));
                             }
                         }
                         return self.eval_type_reflection_bool(&inner, property);
@@ -698,13 +745,13 @@ pub(crate) fn strip_wrapper<'a>(s: &'a str, prefix: &str) -> &'a str {
 pub(crate) fn extract_type_args_from_str(s: &str) -> (String, Vec<BaseType>) {
     let mut trimmed = s.trim();
     for prefix in &[
-        "blueprint<",
-        "struct<",
-        "class<",
-        "enum<",
-        "machine<",
-        "block<",
-        "object<",
+        "blueprint::",
+        "struct::",
+        "class::",
+        "enum::",
+        "machine::",
+        "block::",
+        "object::",
     ] {
         if let Some(rest) = trimmed.strip_prefix(prefix) {
             if let Some(inner) = rest.strip_suffix('>') {
@@ -731,18 +778,12 @@ pub(crate) fn extract_type_args_from_str(s: &str) -> (String, Vec<BaseType>) {
     (trimmed.to_string(), Vec::new())
 }
 
+#[allow(dead_code)]
 pub(crate) fn extract_iter_payload_type(t: &BaseType) -> String {
     match t {
         BaseType::Enum { name, generics, .. } if name == "Option" && !generics.is_empty() => {
             extract_iter_payload_type(&generics[0])
         }
-        BaseType::Copy(inner) | BaseType::Name(inner) | BaseType::Modify(inner) => match &**inner {
-            BaseType::Enum { name, generics, .. } if name == "Option" && !generics.is_empty() => {
-                extract_iter_payload_type(&generics[0])
-            }
-            BaseType::Generic(vec) if !vec.is_empty() => extract_iter_payload_type(&vec[0]),
-            _ => inner.as_str(),
-        },
         BaseType::Generic(vec) if !vec.is_empty() => extract_iter_payload_type(&vec[0]),
         _ => t.as_str(),
     }

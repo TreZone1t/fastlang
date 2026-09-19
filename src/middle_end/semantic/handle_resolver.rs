@@ -8,31 +8,34 @@ use std::rc::Rc;
 // ─────────────────────────────────────────────────────────────────────────────
 pub fn op_to_handle(op: &str) -> HandleMethods {
     match op {
-        "->"  => HandleMethods::Arrow,
+        "->" => HandleMethods::Arrow,
         "arrow_assign" => HandleMethods::ArrowAssign,
-        "=>"  => HandleMethods::FatArrow,
-        "="   => HandleMethods::Equal,
-        "+="  => HandleMethods::Add,
-        "-="  => HandleMethods::Sub,
-        "*="  => HandleMethods::Mul,
-        "/="  => HandleMethods::Div,
-        "%="  => HandleMethods::Mod,
-        "+"   => HandleMethods::Add,
-        "-"   => HandleMethods::Sub,
-        "*"   => HandleMethods::Mul,
-        "/"   => HandleMethods::Div,
-        "%"   => HandleMethods::Mod,
-        "=="  => HandleMethods::PartialEqual,
-        "!="  => HandleMethods::NotEqual,
-        ">"   => HandleMethods::GreaterThan,
-        "<"   => HandleMethods::LessThan,
-        ">="  => HandleMethods::GreaterThanEqual,
-        "<="  => HandleMethods::LessThanEqual,
-        "&&"  => HandleMethods::And,
-        "||"  => HandleMethods::Or,
-        "++"  => HandleMethods::Increment,
-        "--"  => HandleMethods::Decrement,
-        _     => HandleMethods::NotFound,
+        "=>" => HandleMethods::FatArrow,
+        "=" => HandleMethods::Equal,
+        "+=" => HandleMethods::AddReassign,
+        "-=" => HandleMethods::SubReassign,
+        "*=" => HandleMethods::MulReassign,
+        "/=" => HandleMethods::DivReassign,
+        "%=" => HandleMethods::ModReassign,
+        "+" => HandleMethods::Add,
+        "-" => HandleMethods::Sub,
+        "*" => HandleMethods::Mul,
+        "/" => HandleMethods::Div,
+        "%" => HandleMethods::Mod,
+        "==" => HandleMethods::PartialEqual,
+        "!=" => HandleMethods::NotEqual,
+        ">" => HandleMethods::GreaterThan,
+        "<" => HandleMethods::LessThan,
+        ">=" => HandleMethods::GreaterThanEqual,
+        "<=" => HandleMethods::LessThanEqual,
+        "&&" => HandleMethods::And,
+        "||" => HandleMethods::Or,
+        "++" => HandleMethods::Increment,
+        "--" => HandleMethods::Decrement,
+        "." => HandleMethods::PropertyAccess,
+        "::" => HandleMethods::NamespaceAccess,
+        "-." => HandleMethods::HandleAccess,
+        _ => HandleMethods::NotFound,
     }
 }
 
@@ -58,6 +61,19 @@ pub fn resolve_handle_for_op(
             if data.has_handle(handle) {
                 HandleLookupResult::Found(data)
             } else {
+                let fallback = match handle {
+                    HandleMethods::AddReassign => Some(HandleMethods::Add),
+                    HandleMethods::SubReassign => Some(HandleMethods::Sub),
+                    HandleMethods::MulReassign => Some(HandleMethods::Mul),
+                    HandleMethods::DivReassign => Some(HandleMethods::Div),
+                    HandleMethods::ModReassign => Some(HandleMethods::Mod),
+                    _ => None,
+                };
+                if let Some(fb) = fallback {
+                    if data.has_handle(fb) {
+                        return HandleLookupResult::Found(data);
+                    }
+                }
                 HandleLookupResult::HandleMissing { handle }
             }
         }
@@ -88,10 +104,29 @@ pub enum HandleLookupResult {
 //   "int32"          -> None
 // ─────────────────────────────────────────────────────────────────────────────
 pub fn extract_blueprint_name_from_type(type_str: &str) -> Option<String> {
-    const PREFIXES: &[&str] = &["class<", "struct<", "enum<", "blueprint<", "machine<", "block<", "name<", "pointer<", "modify<", "copy<"];
+    const PREFIXES: &[&str] = &[
+        "class::",
+        "class<",
+        "struct::",
+        "struct<",
+        "enum::",
+        "enum<",
+        "blueprint::",
+        "blueprint<",
+        "machine::",
+        "machine<",
+        "block::",
+        "block<",
+    ];
     for prefix in PREFIXES {
         if let Some(rest) = type_str.strip_prefix(prefix) {
-            let base_name = rest.split('<').next().unwrap_or(rest).trim_end_matches('>').to_string();
+            let base_name = rest
+                .split('<')
+                .next()
+                .unwrap_or(rest)
+                .trim_end_matches('>')
+                .trim()
+                .to_string();
             return Some(base_name);
         }
     }
@@ -121,11 +156,34 @@ pub fn extract_all_type_names(type_str: &str) -> Vec<String> {
 fn is_primitive_type(s: &str) -> bool {
     matches!(
         s,
-        "int8" | "int16" | "int32" | "int64" | "int128" | "int"
-        | "uint8" | "uint16" | "uint32" | "uint64" | "uint128" | "uint"
-        | "float32" | "float64" | "float128" | "float"
-        | "char" | "bool" | "void" | "type" | "unknown" | "any"
-        | "name" | "modify" | "copy" | "pointer" | "array" | "class" | "struct" | "enum" | "blueprint" | "machine" | "block"
+        "int8"
+            | "int16"
+            | "int32"
+            | "int64"
+            | "int128"
+            | "int"
+            | "uint8"
+            | "uint16"
+            | "uint32"
+            | "uint64"
+            | "uint128"
+            | "uint"
+            | "float32"
+            | "float64"
+            | "float128"
+            | "float"
+            | "char"
+            | "bool"
+            | "void"
+            | "type"
+            | "unknown"
+            | "array"
+            | "class"
+            | "struct"
+            | "enum"
+            | "blueprint"
+            | "machine"
+            | "block"
     )
 }
 
@@ -133,12 +191,12 @@ fn is_primitive_type(s: &str) -> bool {
 // is_complex_type — checks if type is composite/user-defined (can define handles)
 // ─────────────────────────────────────────────────────────────────────────────
 pub fn is_complex_type(type_str: &str) -> bool {
-    type_str.starts_with("class<")
-        || type_str.starts_with("struct<")
-        || type_str.starts_with("enum<")
-        || type_str.starts_with("blueprint<")
-        || type_str.starts_with("machine<")
-        || type_str.starts_with("block<")
+    type_str.starts_with("class::")
+        || type_str.starts_with("struct::")
+        || type_str.starts_with("enum::")
+        || type_str.starts_with("blueprint::")
+        || type_str.starts_with("machine::")
+        || type_str.starts_with("block::")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -150,34 +208,43 @@ pub fn is_complex_type(type_str: &str) -> bool {
 pub fn build_blueprint_from_base_type(
     ty: &crate::frontend::parser::ast::BaseType,
 ) -> BlueprintData {
-    use crate::middle_end::semantic::environment::FnSignature;
     use crate::frontend::parser::ast::BaseType;
+    use crate::middle_end::semantic::environment::FnSignature;
 
     let name = ty.get_name();
     let mut bp = BlueprintData::new(name);
 
     match ty {
-        BaseType::Struct { fields, methods, generics, .. }
-        | BaseType::Blueprint { fields, methods, generics, .. } => {
+        BaseType::Struct {
+            fields,
+            methods,
+            generics,
+            ..
+        }
+        | BaseType::Blueprint {
+            fields,
+            methods,
+            generics,
+            ..
+        } => {
             for (f_name, f_type) in fields.as_ref() {
                 bp.fields.insert(f_name.clone(), f_type.clone());
             }
             for (m_name, fn_type) in methods.as_ref() {
                 let hk = HandleMethods::from_str(m_name.as_str());
+                let sig = FnSignature {
+                    name: fn_type.name.clone(),
+                    generics: fn_type.generics.clone(),
+                    params: fn_type.params.clone(),
+                    return_type: fn_type.return_type.clone(),
+                    is_virtual: false,
+                    is_abstract: false,
+                };
                 if hk != HandleMethods::NotFound {
-                    bp.handles.insert(hk);
+                    bp.define_handle(hk, sig);
+                } else {
+                    bp.methods.insert(m_name.clone(), sig);
                 }
-                bp.methods.insert(
-                    m_name.clone(),
-                    FnSignature {
-                        name: fn_type.name.clone(),
-                        generics: fn_type.generics.clone(),
-                        params: fn_type.params.clone(),
-                        return_type: fn_type.return_type.clone(),
-                        is_virtual: false,
-                        is_abstract: false,
-                    },
-                );
             }
             for g in generics {
                 if let BaseType::New(name) = g {
@@ -190,27 +257,31 @@ pub fn build_blueprint_from_base_type(
                 }
             }
         }
-        BaseType::Class { fields, methods, generics, .. } => {
+        BaseType::Class {
+            fields,
+            methods,
+            generics,
+            ..
+        } => {
             bp.is_class = true;
             for (f_name, f_type) in fields.as_ref() {
                 bp.fields.insert(f_name.clone(), f_type.clone());
             }
             for (m_name, fn_type) in methods.as_ref() {
                 let hk = HandleMethods::from_str(m_name.as_str());
+                let sig = FnSignature {
+                    name: fn_type.name.clone(),
+                    generics: fn_type.generics.clone(),
+                    params: fn_type.params.clone(),
+                    return_type: fn_type.return_type.clone(),
+                    is_virtual: true,
+                    is_abstract: false,
+                };
                 if hk != HandleMethods::NotFound {
-                    bp.handles.insert(hk);
+                    bp.define_handle(hk, sig);
+                } else {
+                    bp.methods.insert(m_name.clone(), sig);
                 }
-                bp.methods.insert(
-                    m_name.clone(),
-                    FnSignature {
-                        name: fn_type.name.clone(),
-                        generics: fn_type.generics.clone(),
-                        params: fn_type.params.clone(),
-                        return_type: fn_type.return_type.clone(),
-                        is_virtual: true,
-                        is_abstract: false,
-                    },
-                );
             }
             for g in generics {
                 if let BaseType::New(name) = g {
@@ -223,26 +294,31 @@ pub fn build_blueprint_from_base_type(
                 }
             }
         }
-        BaseType::Enum { variants, methods, generics, .. } => {
+        BaseType::Enum {
+            variants,
+            methods,
+            generics,
+            ..
+        } => {
             for v in variants {
-                bp.fields.insert(v.name.clone(), BaseType::from_str(&ty.get_name()));
+                bp.fields
+                    .insert(v.name.clone(), BaseType::from_str(&ty.get_name()));
             }
             for (m_name, fn_type) in methods.as_ref() {
                 let hk = HandleMethods::from_str(m_name.as_str());
+                let sig = FnSignature {
+                    name: fn_type.name.clone(),
+                    generics: fn_type.generics.clone(),
+                    params: fn_type.params.clone(),
+                    return_type: fn_type.return_type.clone(),
+                    is_virtual: false,
+                    is_abstract: false,
+                };
                 if hk != HandleMethods::NotFound {
-                    bp.handles.insert(hk);
+                    bp.define_handle(hk, sig);
+                } else {
+                    bp.methods.insert(m_name.clone(), sig);
                 }
-                bp.methods.insert(
-                    m_name.clone(),
-                    FnSignature {
-                        name: fn_type.name.clone(),
-                        generics: fn_type.generics.clone(),
-                        params: fn_type.params.clone(),
-                        return_type: fn_type.return_type.clone(),
-                        is_virtual: false,
-                        is_abstract: false,
-                    },
-                );
             }
             for g in generics {
                 if let BaseType::New(name) = g {
@@ -255,45 +331,45 @@ pub fn build_blueprint_from_base_type(
                 }
             }
         }
-        BaseType::Machine { fields, methods, .. } => {
+        BaseType::Machine {
+            fields, methods, ..
+        } => {
             for (f_name, f_type) in fields.as_ref() {
                 bp.fields.insert(f_name.clone(), f_type.clone());
             }
             for (m_name, fn_type) in methods.as_ref() {
                 let hk = HandleMethods::from_str(m_name.as_str());
+                let sig = FnSignature {
+                    name: fn_type.name.clone(),
+                    generics: fn_type.generics.clone(),
+                    params: fn_type.params.clone(),
+                    return_type: fn_type.return_type.clone(),
+                    is_virtual: false,
+                    is_abstract: false,
+                };
                 if hk != HandleMethods::NotFound {
-                    bp.handles.insert(hk);
+                    bp.define_handle(hk, sig);
+                } else {
+                    bp.methods.insert(m_name.clone(), sig);
                 }
-                bp.methods.insert(
-                    m_name.clone(),
-                    FnSignature {
-                        name: fn_type.name.clone(),
-                        generics: fn_type.generics.clone(),
-                        params: fn_type.params.clone(),
-                        return_type: fn_type.return_type.clone(),
-                        is_virtual: false,
-                        is_abstract: false,
-                    },
-                );
             }
         }
         BaseType::Block { methods, .. } => {
             for (m_name, fn_type) in methods.as_ref() {
                 let hk = HandleMethods::from_str(m_name.as_str());
+                let sig = FnSignature {
+                    name: fn_type.name.clone(),
+                    generics: fn_type.generics.clone(),
+                    params: fn_type.params.clone(),
+                    return_type: fn_type.return_type.clone(),
+                    is_virtual: false,
+                    is_abstract: false,
+                };
                 if hk != HandleMethods::NotFound {
-                    bp.handles.insert(hk);
+                    bp.define_handle(hk, sig);
+                } else {
+                    bp.methods.insert(m_name.clone(), sig);
                 }
-                bp.methods.insert(
-                    m_name.clone(),
-                    FnSignature {
-                        name: fn_type.name.clone(),
-                        generics: fn_type.generics.clone(),
-                        params: fn_type.params.clone(),
-                        return_type: fn_type.return_type.clone(),
-                        is_virtual: false,
-                        is_abstract: false,
-                    },
-                );
             }
         }
         _ => {}
@@ -310,22 +386,44 @@ pub fn build_blueprint_from_metadata(
         bp.handles.insert(*h);
     }
     for (f_name, f_type) in &meta.fields {
-        bp.fields.entry(f_name.clone()).or_insert_with(|| f_type.clone());
+        bp.fields
+            .entry(f_name.clone())
+            .or_insert_with(|| f_type.clone());
     }
     let is_class = bp.is_class;
     for (m_name, fn_type) in &meta.methods {
         let hk = HandleMethods::from_str(m_name.as_str());
-        if hk != HandleMethods::NotFound {
-            bp.handles.insert(hk);
-        }
-        bp.methods.entry(m_name.clone()).or_insert_with(|| FnSignature {
+        let sig = FnSignature {
             name: fn_type.name.clone(),
             generics: fn_type.generics.clone(),
             params: fn_type.params.clone(),
             return_type: fn_type.return_type.clone(),
             is_virtual: is_class,
             is_abstract: false,
-        });
+        };
+        if hk != HandleMethods::NotFound {
+            bp.define_handle(hk, sig);
+        } else {
+            bp.methods.entry(m_name.clone()).or_insert_with(|| sig);
+        }
+    }
+    for (h_name, fn_type) in &meta.handle_signatures {
+        let hk = HandleMethods::from_str(h_name.as_str());
+        let sig = FnSignature {
+            name: fn_type.name.clone(),
+            generics: fn_type.generics.clone(),
+            params: fn_type.params.clone(),
+            return_type: fn_type.return_type.clone(),
+            is_virtual: is_class,
+            is_abstract: false,
+        };
+        if hk != HandleMethods::NotFound {
+            bp.define_handle(hk, sig);
+        } else {
+            bp.handle_signatures
+                .entry(h_name.clone())
+                .or_insert_with(|| sig);
+        }
     }
     bp
 }

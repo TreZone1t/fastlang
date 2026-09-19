@@ -1,0 +1,6 @@
+// Test compile-time validation of array slice bounds
+fn main() -> int32 {
+    int32 arr[] = [1, 2, 3, 4, 5];
+    int32 sub[] = arr.slice(4, 2);
+    return 0;
+}

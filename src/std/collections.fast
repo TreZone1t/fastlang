@@ -1,0 +1,56 @@
+import std::list;
+public class HashSet<T> -> {
+    private {
+        list<T> items;
+    }
+    public {
+        fn add(item : T) -> void {
+            if (this.items.contains(item)) {
+                return;
+            }
+            this.items.push(item);
+        }
+        fn remove(item : T) -> void {
+            this.items.remove_first(item);
+        }
+        fn contains(item : T) -> bool {
+            return this.items.contains(item);
+        }
+        fn size() -> usize {
+            return this.items.size();
+        }
+        fn as_array() -> T[] {
+            return this.items.as_array();
+        }
+    }
+    constructor {
+        init() -> {
+        }
+        init(arr: T[]) -> {
+            for (usize i = 0; i < arr.len; i = i + 1) -> {
+                this.add(arr[i]);
+            }
+        }
+    }
+    handle {
+        fn drop() -> void {
+            del this.items;
+        }
+        fn index_access(index: usize) -> T {
+            return this.items[index];
+        }
+        fn arrow(arr: T[]) -> void {
+            for (usize i = 0; i < arr.len; i = i + 1) -> {
+                this.add(arr[i]);
+            }
+        }
+        fn arrow_assign(arr: T[]) -> void {
+            for (usize i = 0; i < arr.len; i = i + 1) -> {
+                this.add(arr[i]);
+            }
+        }
+        fn display() -> char[] {
+            return this.items-.display();
+        }
+    }
+}
