@@ -228,6 +228,12 @@ pub enum SymbolKind {
         return_type: BaseType,
         body: Vec<Stmt>,
     },
+    /// Micro (micro)
+    Micro {
+        generics: Vec<BaseType>,
+        params: Vec<Param>,
+        body: Vec<Stmt>,
+    },
     /// blueprint definition (class, struct, custom, enum)
     Blueprint,
     /// label
@@ -298,6 +304,13 @@ impl SymbolInfo {
                 let p_strs: Vec<String> = params.iter().map(|p| p.type_node.as_str()).collect();
                 format!("Macro<({}), {}>", p_strs.join(", "), return_type.as_str())
             }
+            SymbolKind::Micro {
+                params,
+                ..
+            } => {
+                let p_strs: Vec<String> = params.iter().map(|p| p.type_node.as_str()).collect();
+                format!("Micro<({})>", p_strs.join(", "))
+            }
             SymbolKind::Blueprint => "blueprint".to_string(),
             SymbolKind::Label => "label".to_string(),
         }
@@ -342,6 +355,8 @@ pub struct Environment {
     /// blueprints: full data for type checking (fields, methods, handles)
     /// Separate from symbols to distinguish between type definitions and instances
     pub blueprints: HashMap<String, BlueprintData>,
+    /// child namespaces: maps namespace name to child environment
+    pub namespaces: HashMap<String, Rc<RefCell<Environment>>>,
 }
 
 impl Environment {
@@ -350,6 +365,7 @@ impl Environment {
             parent: None,
             symbols: HashMap::new(),
             blueprints: HashMap::new(),
+            namespaces: HashMap::new(),
         }))
     }
 
@@ -358,16 +374,80 @@ impl Environment {
             parent: Some(parent),
             symbols: HashMap::new(),
             blueprints: HashMap::new(),
+            namespaces: HashMap::new(),
         }))
+    }
+
+    pub fn define_namespace(&mut self, name: String, env: Rc<RefCell<Environment>>) {
+        self.namespaces.insert(name, env);
+    }
+
+    pub fn lookup_namespace(&self, name: &str) -> Option<Rc<RefCell<Environment>>> {
+        if let Some(env) = self.namespaces.get(name) {
+            return Some(Rc::clone(env));
+        }
+        if let Some(ref parent) = self.parent {
+            return parent.borrow().lookup_namespace(name);
+        }
+        None
+    }
+
+    pub fn get_or_create_namespace(
+        &mut self,
+        name: &str,
+        parent_rc: Rc<RefCell<Environment>>,
+    ) -> Rc<RefCell<Environment>> {
+        if let Some(env) = self.namespaces.get(name) {
+            return Rc::clone(env);
+        }
+        let new_env = Environment::with_parent(parent_rc);
+        self.namespaces.insert(name.to_string(), Rc::clone(&new_env));
+        new_env
+    }
+
+    pub fn lookup_qualified(&self, namespace_path: &[&str], symbol_name: &str) -> Option<SymbolInfo> {
+        if namespace_path.is_empty() {
+            return self.lookup(symbol_name);
+        }
+        let first = namespace_path[0];
+        let mut cur = self.lookup_namespace(first)?;
+        for &segment in &namespace_path[1..] {
+            let next = {
+                let borrowed = cur.borrow();
+                borrowed.lookup_namespace(segment)?
+            };
+            cur = next;
+        }
+        let res = cur.borrow().lookup(symbol_name);
+        res
+    }
+
+    pub fn lookup_blueprint_qualified(&self, namespace_path: &[&str], bp_name: &str) -> Option<BlueprintData> {
+        if namespace_path.is_empty() {
+            return self.lookup_blueprint(bp_name);
+        }
+        let first = namespace_path[0];
+        let mut cur = self.lookup_namespace(first)?;
+        for &segment in &namespace_path[1..] {
+            let next = {
+                let borrowed = cur.borrow();
+                borrowed.lookup_namespace(segment)?
+            };
+            cur = next;
+        }
+        let res = cur.borrow().lookup_blueprint(bp_name);
+        res
     }
 
     // ── Symbol operations ─────────────────────────────────────────────────
 
     pub fn define(&mut self, name: String, info: SymbolInfo) -> Result<(), String> {
         if let Some(existing) = self.symbols.get(&name) {
-            // If both existing and incoming symbols are functions, allow function overloading
-            if matches!(existing.kind, SymbolKind::Function { .. })
-                && matches!(info.kind, SymbolKind::Function { .. })
+            // If both existing and incoming symbols are functions or micros, allow overloading/updating
+            if (matches!(existing.kind, SymbolKind::Function { .. })
+                && matches!(info.kind, SymbolKind::Function { .. }))
+                || (matches!(existing.kind, SymbolKind::Micro { .. })
+                && matches!(info.kind, SymbolKind::Micro { .. }))
             {
                 self.symbols.insert(name, info);
                 return Ok(());

@@ -1,6 +1,6 @@
 <div align="center">
   <h1>⚡ FastLang</h1>
-  <p>A modern, high-performance, statically typed systems programming language with fine-grained memory management and explicit scope engines.</p>
+  <p>A fun, experimental systems programming language written in Rust to explore compiler design, custom memory models, and compile-time execution.</p>
 
   <a href="https://ko-fi.com/W5V0236W86" target="_blank">
       <img src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" alt="Support me on Ko-fi" height="36" style="border:0px;height:36px;" />
@@ -9,177 +9,186 @@
 
 <br />
 
-## 🌟 What is FastLang?
-
-FastLang is a compiled, statically typed language designed with an emphasis on **explicit control**, **zero runtime ambiguity**, and **raw execution speed**. It eliminates unpredictable hidden overhead while providing powerful modern abstractions like Custom Scopes, Smart Pointer semantics (`ref<T>`, `mutRef<T>`, `copy<T>`), Pattern Matching, and Built-in Macros (`default()`).
-
-Source files use the official **`.fast`** file extension.
+> [!NOTE]
+> **Disclaimer:** FastLang is a personal, educational hobby project created for learning and experimenting with compiler construction. It is **not** intended for production use.
 
 ---
 
-## 🚀 Key Language Features
+## 💡 About the Project
 
-- **Direct Type Bitwidth Syntax**: `int32`, `int64`, `int16`, `int8`, `float32`, `float64`, or generic parameterized forms `int<32>`, `float<64>`.
-- **Zero-Arrow Scope Declarations**: Clean struct, class, enum, and custom scope definitions (`struct Point { ... }`, `class Node { ... }`, `enum Status { ... }`).
-- **Unified `using` System**: Instant namespace imports for enum variants (`using Status;`), static class methods, and zero-parameter usable micros.
-- **Explicit Memory Model**:
-  - `ref<T>`: Immutable tracked pointer reference / borrow.
-  - `mutRef<...T>`: Mutable pointer borrow with reference counting and capability tracking.
-  - `copy<T>`: Strict deep value snapshot.
-- **Algebraic Data Types & Pattern Matching**: Enums with tuple payloads and exhaustive `match` branches.
-- **Custom Scopes & Operator Overloading**: Extensible scopes with lifecycle handles (`add`, `sub`, `mul`, `display`, `default`, etc.).
-- **Built-in `default()` Macro**: Universal clean zero-initialization or user-overridden handle default values.
+FastLang is a statically typed language designed from scratch in Rust. The primary goal of the project is to experiment with:
+- Hand-written recursive descent parsing and lexical scanning.
+- Robust semantic analysis with multi-pass symbol tables and dependency resolution.
+- Scoped Enums, Algebraic Data Types with Struct & Tuple payloads, and Variant Proxies.
+- Standard Library `Result<T>` and `Option<T>` with implicit prelude exports via `std`.
+- Rust-style implicit returns in functions and block expressions.
+- Ergonomic `?` inline error handler operator with zero-overhead exception propagation.
+- Ternary conditional expressions (`cond ? then : else`) as first-class syntactic sugar.
+- Zero-overhead runtime panic safety shield with clean diagnostics.
+- Explicit memory semantics (`ref<T>`, `mutRef<T>`, `copy<T>`).
+- Compile-time reflection and validation blocks (`@compile { ... }`, `typeof`, `sizeof`).
+- Code generation targeting modern C++20 (with experimental Cranelift AOT support).
+
+Source files use the **`.fast`** extension.
 
 ---
 
-## 📖 Syntax & Examples
+## 🔍 Code Examples
 
-### 1. Functions & Variables
+### 1. Variables & Basic Functions
 ```rust
 fn add(a: int32, b: int32) -> int32 {
-    int32 result = a + b;
-    return result;
+    return a + b;
 }
 
 fn main() -> int32 {
     int32 x = 10;
     int32 y = 20;
-    int32 z = add(x, y);
-    log("Result: ", z);
+    int32 sum = add(x, y);
+    println("Sum: ", sum);
     return 0;
 }
 ```
 
-### 2. Enums, Using, and Pattern Matching
+### 2. Blueprints & Objects
 ```rust
-enum Status {
-    Idle,
-    Running(int32),
-    Success(string),
-}
+object Point = {
+    int32 x = 0;
+    int32 y = 0;
+};
 
-fn main() -> int32 {
-    using Status;
-
-    Status state = Running(75);
-
-    match (state) -> {
-        Idle => {
-            log("Waiting...");
-        }
-        Running(progress) => {
-            log("Progress: ", progress, "%");
-        }
-        Success(msg) => {
-            log("Done: ", msg);
-        }
-    }
-    return 0;
-}
-```
-
-### 3. Custom Scopes & Operator Overloading
-```rust
-custom Vector2D {
-    enable [public, handle, static];
-
-    public {
-        int32 x = 0;
-        int32 y = 0;
-    }
-
-    constructor {
-        init(x: int32, y: int32) -> {
-            this.x = x;
-            this.y = y;
-        }
-    }
-
-    handle -> {
-        fn add(other: Vector2D) -> Vector2D {
-            return new Vector2D(this.x + other.x, this.y + other.y);
-        }
-
-        fn display() -> void {
-            log("Vector2D(", this.x, ", ", this.y, ")");
-        }
+impl Point {
+    fn display() -> void {
+        println("Point(", this.x, ", ", this.y, ")");
     }
 }
 
 fn main() -> int32 {
-    Vector2D v1 = new Vector2D(10, 20);
-    Vector2D v2 = new Vector2D(5, 15);
-    Vector2D sum = v1 + v2;
-    sum.display();
+    auto pt = Point();
+    pt.x = 10;
+    pt.y = 20;
+    pt.display();
+    return 0;
+}
+```
+
+### 3. Super-Types & Inference
+```rust
+// Numbers with auto-inferred bitwidths
+number count = 42;       // Inferred as number::int32
+number pi = 3.14159;     // Inferred as number::float64
+
+// Functions as first-class citizens
+function greet() -> void {
+    println("Hello, FastLang!");
+}
+
+// Namespaces
+object MathUtils :: {
+    fn square(n: int32) -> int32 {
+        return n * n;
+    }
+}
+
+fn main() -> int32 {
+    greet();
+    println("Square of 5: ", MathUtils::square(5));
+    return 0;
+}
+```
+
+### 4. Compile-time Introspections & Return Types
+```rust
+object User = {
+    int32 id = 1;
+    array<char> name = "Hakim";
+};
+
+// Return type derived from member access at compile-time
+fn get_user_id(u: User) -> typeof(u).id {
+    return u.id;
+}
+
+fn main() -> int32 {
+    auto u = User();
+    println("User ID: ", get_user_id(u));
     return 0;
 }
 ```
 
 ---
 
-## 🛠️ The Compiler Architecture
+## 🚀 Building & Running
 
-The FastLang compiler is written in Rust:
+### Prerequisites
+- [Rust](https://rustup.rs/) (edition 2021)
+- C++20 compiler (`g++` or `clang++`)
 
-- **Frontend**: High-speed Lexer and Recursive-Descent Parser producing a strict AST.
-- **Middle-End**: Robust Semantic Analyzer, Spatial Control Flow Analyzer, Scope Environment Table, and Type Checker.
-- **Backend (C++20)**: High-performance code generation yielding native C++ binaries with zero memory leaks.
+### Build FastLang
+```bash
+cargo build --release
+```
+
+### Run Tests
+```bash
+# Run all integration test suites
+cargo test run_all_fs_tests
+
+# Test error accumulation diagnostics
+cargo test test_debug_error_accumulation
+```
+
+### Compile a FastLang Program
+```bash
+# Compile and run
+cargo run -- main.fast
+
+# Compile with a specific output binary
+cargo run -- main.fast -o build/app.exe
+
+# Diagnostics mode: collect all semantic errors without compiling
+cargo run -- main.fast --debug-error
+
+# Emit generated C++ code without invoking backend compiler
+cargo run -- main.fast --emit-cpp
+```
 
 ---
 
-## 🧪 Testing & Execution
+## 🛠️ CLI Options
 
-Run the complete test suite:
-```bash
-cargo test --test integration_test
-```
+```text
+FastLang Compiler (fast_lang) v0.1.5-stable
+High-performance compiled language with fine-grained memory management and explicit scopes.
 
-Run a specific `.fast` script:
-```bash
-cargo run -- tests/01_variables.fast
+USAGE:
+    fast_lang [OPTIONS] <SOURCE_FILE>
+
+ARGUMENTS:
+    <SOURCE_FILE>                  Path to the main entry source file (.fast or .fs)
+
+OPTIONS:
+    -h, --help, -help              Print help information and exit
+    -d, --debug                    Enable verbose debug and compilation trace output
+    --debug-error, --debug-errors  Accumulate and report all semantic errors without generating code
+    -o, --output <PATH>            Specify output binary or build directory path
+    -I, --include <DIR>            Add module search directory
+    -b, --backend <BACKEND>        Set code generator backend: 'cpp' (default) or 'cranelift'
+    --ast, --emit-ast [FILE]       Dump parsed AST as formatted JSON
+    --ast-file, --json-ast <FILE>  Export parsed AST directly to FILE
+    --emit-cpp, --cpp-only         Generate C++ source file without compiling binary
+    --emit-ir, --print-ir          Print intermediate representation (IR) output
+    --aot                          Enable Ahead-Of-Time (AOT) compilation
+    --clean                        Remove temporary build files
+
+SUBCOMMANDS:
+    clean [PATH]                   Delete build/ directory and cached artifacts
 ```
 
 ---
-
-## 🗺️ Roadmap & To-Do List
-
-### ✅ Phase 1: Core Engine & Type System (Completed)
-- [x] **Strict Type Bitwidth**: Direct `int32`, `int64`, `int16`, `int8`, `float32`, `float64` and generic parameterized forms `int<32>`.
-- [x] **Zero-Arrow Clean Declarations**: Removed mandatory `->` on `struct`, `class`, `blueprint`, `custom`, `enum`, and visibility blocks (`public`, `private`, `static`).
-- [x] **Standard `.fast` Extension**: Fully migrated all 47 tests and standard library modules to `.fast`.
-- [x] **Unified `using` System**: Instant namespace imports for enums (`using Status;`), static scope methods, and usable zero-param micros.
-- [x] **Eradication of `null`**: Universal zero-cost tag structs (`fastlang_tag_Enum_Variant`) for pure typed variants.
-- [x] **Universal `default()` Macro**: Zero-initialization & user-overridden `handle -> { fn default() -> T { ... } }`.
-- [x] **100% English Codebase**: Completely cleaned and translated all internal source code doc-comments to English.
-- [x] **Editor Ecosystem**: Built-in VS Code and Antigravity IDE TextMate syntax highlighter extension.
-
-### ✅ Phase 2: Function Pointers & Memory Unification (Completed)
-- [x] **Unified `name<T>` Pointer System**:
-  - Replaced legacy `scope<T>` wrappers with universal `name<Fn<(Args), Ret>>` and `name<method>`.
-  - Type-inferred function and method references.
-- [x] **First-Class Lambdas & Anonymous Functions**:
-  - Support inline anonymous functions: `fn _(x: int32, y: int32) -> int32 { return x + y; }`.
-  - Seamless passing to Higher-Order Functions and `set` reassignment.
-
-### ⏳ Phase 3: Error System & Control Flow Safety
-- [ ] **First-Class `Error` Class & `Result<T, E>` ADT**:
-  - Built-in typed errors with stack trace and error codes.
-  - Ergonomic `?` try operator or explicit matching.
-- [ ] **Total Analyzer Strictness**:
-  - Full eradication of `auto` / loose type inferences in the middle-end analyzer.
-  - Exhaustive control flow validation across all branch combinations.
-
-### ⏳ Phase 4: Standard Library & Tooling
-- [ ] Collections (`list<T>`, `map<K, V>`, `set<T>`, `string` methods).
-- [ ] Asynchronous Task & Coroutine runtime scheduler.
-- [ ] FastLang CLI Package Manager & Formatter.
-
-<br />
 
 <div align="center">
   <a href="https://ko-fi.com/W5V0236W86" target="_blank">
       <img src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" alt="Support me on Ko-fi" height="36" style="border:0px;height:36px;" />
   </a>
-  <br /><br />
-  <sub>Built with ❤️ by TreZone1t.</sub>
 </div>

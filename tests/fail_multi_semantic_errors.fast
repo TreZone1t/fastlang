@@ -1,0 +1,17 @@
+// Test fail_multi_semantic_errors: multiple semantic errors across different statements
+// Designed to verify error accumulation with --debug-error
+
+int32 bad_num = "not a number";
+
+fn get_bad_return() -> int32 {
+    return "string value";
+}
+
+fn generic_bad<T>(val: T) -> typeof(val) {
+    return val;
+}
+
+fn main() -> int32 {
+    int32 ghost = undeclared_variable_foo + 42;
+    return 0;
+}

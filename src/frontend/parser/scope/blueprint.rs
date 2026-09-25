@@ -4,7 +4,9 @@ use crate::frontend::parser::parser::Parser;
 
 impl Parser {
     pub(crate) fn parse_blueprint_decl(&mut self) -> Result<Decl, String> {
-        self.consume(TokenKind::TypeBluePrint, "Expected 'blueprint'")?; // Consume 'blueprint'
+        if self.peek().kind == TokenKind::TypeBluePrint {
+            self.advance();
+        }
         let name = self.get_identifier("Expected blueprint name")?;
 
         let mut generics = Vec::new();
@@ -139,53 +141,62 @@ impl Parser {
     }
 
     fn parse_impl_target_name(&mut self) -> Result<String, String> {
-        match &self.peek().kind {
+        let mut target = match &self.peek().kind {
             TokenKind::Identifier(name) => {
                 let s = name.clone();
                 self.advance();
-                Ok(s)
+                s
             }
             TokenKind::TypeChar => {
                 self.advance();
-                Ok("char".to_string())
+                "char".to_string()
             }
             TokenKind::TypeUChar => {
                 self.advance();
-                Ok("uchar".to_string())
+                "uchar".to_string()
             }
             TokenKind::TypeBool | TokenKind::Flag => {
                 self.advance();
-                Ok("bool".to_string())
+                "bool".to_string()
             }
             TokenKind::TypeUSize => {
                 self.advance();
-                Ok("usize".to_string())
+                "usize".to_string()
             }
             TokenKind::TypeISize => {
                 self.advance();
-                Ok("isize".to_string())
+                "isize".to_string()
             }
             TokenKind::TypeInt(sz) => {
                 let s = format!("int{}", sz);
                 self.advance();
-                Ok(s)
+                s
             }
             TokenKind::TypeUInt(sz) => {
                 let s = format!("uint{}", sz);
                 self.advance();
-                Ok(s)
+                s
             }
             TokenKind::TypeFloat(sz) => {
                 let s = format!("float{}", sz);
                 self.advance();
-                Ok(s)
+                s
             }
             TokenKind::TypeType => {
                 self.advance();
-                Ok("type".to_string())
+                "type".to_string()
             }
-            _ => self.get_identifier("Expected target name for impl block"),
+            _ => self.get_identifier("Expected target name for impl block")?,
+        };
+
+        while self.peek().kind == TokenKind::DoubleColon {
+            self.advance(); // consume '::'
+            let sub = self.get_identifier("Expected identifier after '::' in impl target")?;
+            target.push_str("::");
+            target.push_str(&sub);
         }
+
+        Ok(target)
     }
 
     pub(crate) fn parse_impl_decl(&mut self) -> Result<Decl, String> {

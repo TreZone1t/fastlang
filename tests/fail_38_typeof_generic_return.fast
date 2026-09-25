@@ -1,0 +1,8 @@
+// Should fail: 'typeof' on generic type in return position is forbidden
+fn test_generic<T>(val: T) -> typeof(val) {
+    return val;
+}
+
+fn main() -> int32 {
+    return 0;
+}

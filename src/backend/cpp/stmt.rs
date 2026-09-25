@@ -112,13 +112,60 @@ pub(crate) fn type_to_cpp(t: &BaseType) -> String {
             }
         }
         BaseType::Object => "auto&&".to_string(),
-        BaseType::Unknown => "auto".to_string(),
+        BaseType::Number => "auto".to_string(),
+        BaseType::TypeExpr(_) => "auto".to_string(),
+        BaseType::Unknown | BaseType::Auto => "auto".to_string(),
         _ => t.as_str(),
     }
 }
 
 pub(crate) fn is_raw_pointer(type_node: &BaseType, cpp_type: &str) -> bool {
     matches!(type_node, BaseType::RawPointer(_)) || cpp_type.ends_with('*')
+}
+
+pub(crate) fn extract_generic_type_args(type_str: &str) -> Vec<String> {
+    let start = match type_str.find('<') {
+        Some(idx) => idx + 1,
+        None => return Vec::new(),
+    };
+    let end = match type_str.rfind('>') {
+        Some(idx) => idx,
+        None => return Vec::new(),
+    };
+    if start >= end {
+        return Vec::new();
+    }
+    let inner = &type_str[start..end];
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0;
+    for ch in inner.chars() {
+        match ch {
+            '<' => {
+                depth += 1;
+                current.push(ch);
+            }
+            '>' => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+                current.push(ch);
+            }
+            ',' if depth == 0 => {
+                let trimmed = current.trim().to_string();
+                if !trimmed.is_empty() {
+                    args.push(trimmed);
+                }
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() {
+        args.push(trimmed);
+    }
+    args
 }
 fn expr_uses_flag(expr: &Expr, flag: &str) -> bool {
     match expr {
@@ -633,9 +680,20 @@ impl CodeGenerator {
                                                     }
                                                 })
                                                 .collect();
-                                            for vn in &var_names {
+                                            let cond_type_opt = self.extract_cpp_type_from_expr(condition);
+                                            let generic_args = cond_type_opt
+                                                .as_deref()
+                                                .map(extract_generic_type_args)
+                                                .unwrap_or_default();
+                                            for (i, vn) in var_names.iter().enumerate() {
                                                 if vn != "_" {
                                                     self.pointer_vars.insert(vn.clone());
+                                                    if let Some(arg_type) = generic_args.get(i) {
+                                                        self.vars.insert(vn.clone(), arg_type.clone());
+                                                        if arg_type.ends_with('*') || arg_type.starts_with("raw_ptr<") {
+                                                            self.raw_pointer_vars.insert(vn.clone());
+                                                        }
+                                                    }
                                                 }
                                             }
                                             self.emit(
@@ -702,8 +760,21 @@ impl CodeGenerator {
                                                 })
                                                 .collect();
                                             if !var_names.is_empty() {
-                                                for vn in &var_names {
-                                                    self.pointer_vars.insert(vn.clone());
+                                                let cond_type_opt = self.extract_cpp_type_from_expr(condition);
+                                                let generic_args = cond_type_opt
+                                                    .as_deref()
+                                                    .map(extract_generic_type_args)
+                                                    .unwrap_or_default();
+                                                for (i, vn) in var_names.iter().enumerate() {
+                                                    if vn != "_" {
+                                                        self.pointer_vars.insert(vn.clone());
+                                                        if let Some(arg_type) = generic_args.get(i) {
+                                                            self.vars.insert(vn.clone(), arg_type.clone());
+                                                            if arg_type.ends_with('*') || arg_type.starts_with("raw_ptr<") {
+                                                                self.raw_pointer_vars.insert(vn.clone());
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                                 self.emit(
                                                     &format!(
@@ -938,7 +1009,9 @@ impl CodeGenerator {
                     }
                 }
             }
-            Stmt::UsingStmt(_) => {}
+            Stmt::UsingStmt(name) => {
+                self.used_enums.insert(name.clone());
+            }
             Stmt::ForStmt {
                 init,
                 condition,
@@ -1158,11 +1231,14 @@ impl CodeGenerator {
                     self.indent_level -= 1;
                     self.emit("};");
 
-                    for variant in variants.iter() {
-                        self.emit(&format!(
-                            "inline constexpr auto {} = {}::{};",
-                            variant.name, name, variant.name
-                        ));
+                    let is_used = self.used_enums.contains(name);
+                    if is_used {
+                        for variant in variants.iter() {
+                            self.emit(&format!(
+                                "inline constexpr auto {} = {}::{};",
+                                variant.name, name, variant.name
+                            ));
+                        }
                     }
 
                     self.emit(&format!(
@@ -1185,13 +1261,16 @@ impl CodeGenerator {
                     self.emit("}");
                 } else {
                     self.payload_enum_types.insert(name.clone());
+                    let is_used = self.used_enums.contains(name);
                     for v in variants.iter() {
                         if matches!(v.payload, EnumVariantPayload::None) {
                             self.emit(&format!("struct fastlang_tag_{}_{} {{}};", name, v.name));
-                            self.emit(&format!(
-                                "inline constexpr fastlang_tag_{}_{} {};",
-                                name, v.name, v.name
-                            ));
+                            if is_used {
+                                self.emit(&format!(
+                                    "inline constexpr fastlang_tag_{}_{} {};",
+                                    name, v.name, v.name
+                                ));
+                            }
                         }
                     }
 
@@ -1218,38 +1297,80 @@ impl CodeGenerator {
                     self.emit("} tag;");
 
                     for v in variants.iter() {
+                        let var_qualified = format!("{}::{}", name, v.name);
+                        let var_methods = self.target_impl_methods.get(&var_qualified).cloned();
+                        let var_handles = self.target_handle_methods.get(&var_qualified).cloned();
+
                         match &v.payload {
-                            EnumVariantPayload::None => {}
+                            EnumVariantPayload::None => {
+                                if var_methods.is_some() || var_handles.is_some() {
+                                    self.emit(&format!("struct {}_Payload {{", v.name));
+                                    self.indent_level += 1;
+                                    if let Some(methods) = var_methods {
+                                        let old_in_class = self.in_class_or_scope;
+                                        self.in_class_or_scope = true;
+                                        for m in &methods {
+                                            self.visit_declaration(m);
+                                        }
+                                        self.in_class_or_scope = old_in_class;
+                                    }
+                                    if let Some(handles) = var_handles {
+                                        self.emit_operator_overloads(&Some(handles));
+                                    }
+                                    self.indent_level -= 1;
+                                    self.emit("};");
+                                }
+                            }
                             EnumVariantPayload::Tuple(types) => {
-                                let field_strs: Vec<String> = types
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(idx, t)| format!("{} _{};", type_to_cpp(t), idx))
-                                    .collect();
-                                self.emit(&format!(
-                                    "struct {}_Payload {{ {} }};",
-                                    v.name,
-                                    field_strs.join(" ")
-                                ));
+                                self.emit(&format!("struct {}_Payload {{", v.name));
+                                self.indent_level += 1;
+                                for (idx, t) in types.iter().enumerate() {
+                                    self.emit(&format!("{} _{};", type_to_cpp(t), idx));
+                                }
+                                if types.len() == 1 {
+                                    let t_str = type_to_cpp(&types[0]);
+                                    self.emit(&format!("operator {}&() {{ return _0; }}", t_str));
+                                    self.emit(&format!("operator const {}&() const {{ return _0; }}", t_str));
+                                }
+                                if let Some(methods) = var_methods {
+                                    let old_in_class = self.in_class_or_scope;
+                                    self.in_class_or_scope = true;
+                                    for m in &methods {
+                                        self.visit_declaration(m);
+                                    }
+                                    self.in_class_or_scope = old_in_class;
+                                }
+                                if let Some(handles) = var_handles {
+                                    self.emit_operator_overloads(&Some(handles));
+                                }
+                                self.indent_level -= 1;
+                                self.emit("};");
                             }
                             EnumVariantPayload::Struct(fields) => {
-                                let field_strs: Vec<String> = fields
-                                    .iter()
-                                    .map(|f| {
-                                        let type_str = type_to_cpp(&f.type_node);
-                                        if let Some(ref def_val) = f.default_value {
-                                            let def_code = self.visit_expression(def_val);
-                                            format!("{} {} = {};", type_str, f.name, def_code)
-                                        } else {
-                                            format!("{} {};", type_str, f.name)
-                                        }
-                                    })
-                                    .collect();
-                                self.emit(&format!(
-                                    "struct {}_Payload {{ {} }};",
-                                    v.name,
-                                    field_strs.join(" ")
-                                ));
+                                self.emit(&format!("struct {}_Payload {{", v.name));
+                                self.indent_level += 1;
+                                for f in fields {
+                                    let type_str = type_to_cpp(&f.type_node);
+                                    if let Some(ref def_val) = f.default_value {
+                                        let def_code = self.visit_expression(def_val);
+                                        self.emit(&format!("{} {} = {};", type_str, f.name, def_code));
+                                    } else {
+                                        self.emit(&format!("{} {};", type_str, f.name));
+                                    }
+                                }
+                                if let Some(methods) = var_methods {
+                                    let old_in_class = self.in_class_or_scope;
+                                    self.in_class_or_scope = true;
+                                    for m in &methods {
+                                        self.visit_declaration(m);
+                                    }
+                                    self.in_class_or_scope = old_in_class;
+                                }
+                                if let Some(handles) = var_handles {
+                                    self.emit_operator_overloads(&Some(handles));
+                                }
+                                self.indent_level -= 1;
+                                self.emit("};");
                             }
                         }
                     }
@@ -1400,27 +1521,78 @@ impl CodeGenerator {
                     self.indent_level -= 1;
                     self.emit("};");
 
-                    for v in variants.iter() {
-                        if let EnumVariantPayload::Tuple(types) = &v.payload {
+                    fn type_contains_generic_name(t: &BaseType, g_name: &str) -> bool {
+                        let clean_g = g_name.strip_prefix("...").unwrap_or(g_name);
+                        if t.as_str() == clean_g || t.get_name() == clean_g || type_to_cpp(t) == clean_g {
+                            return true;
+                        }
+                        match t {
+                            BaseType::GenericParam(name) | BaseType::New(name) => name == clean_g,
+                            BaseType::Blueprint { name, .. } | BaseType::Struct { name, .. } | BaseType::Class { name, .. } => {
+                                name == clean_g
+                            }
+                            BaseType::Array { base_type, .. } => type_contains_generic_name(base_type, clean_g),
+                            BaseType::RawPointer(inner) | BaseType::Address(inner) | BaseType::Type(inner) => {
+                                type_contains_generic_name(inner, clean_g)
+                            }
+                            BaseType::Generic(args) => args.iter().any(|a| type_contains_generic_name(a, clean_g)),
+                            _ => false,
+                        }
+                    }
+
+                    let is_used = self.used_enums.contains(name);
+                    if is_used {
+                        for v in variants.iter() {
+                            let mut param_strs = Vec::new();
+                            let mut arg_strs = Vec::new();
+                            let mut member_decls = Vec::new();
+
+                            match &v.payload {
+                                EnumVariantPayload::None => continue,
+                                EnumVariantPayload::Tuple(types) => {
+                                    for (idx, t) in types.iter().enumerate() {
+                                        param_strs.push(format!("{} _{}", type_to_cpp(t), idx));
+                                        arg_strs.push(format!("_{}", idx));
+                                        member_decls.push(format!("{} _{};", type_to_cpp(t), idx));
+                                    }
+                                }
+                                EnumVariantPayload::Struct(fields) => {
+                                    for f in fields {
+                                        param_strs.push(format!("{} {}", type_to_cpp(&f.type_node), f.name));
+                                        arg_strs.push(f.name.clone());
+                                        member_decls.push(format!("{} {};", type_to_cpp(&f.type_node), f.name));
+                                    }
+                                }
+                            }
+
                             if is_generic {
                                 let template_params: Vec<String> = generics
                                     .iter()
                                     .map(|g| format!("typename {}", g.as_str()))
                                     .collect();
-                                let param_strs: Vec<String> = types
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(idx, t)| format!("{} _{}", type_to_cpp(t), idx))
-                                    .collect();
-                                let arg_strs: Vec<String> = types
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(idx, _)| format!("_{}", idx))
-                                    .collect();
                                 let gen_args: Vec<String> =
                                     generics.iter().map(|g| g.as_str()).collect();
-                                self.emit(
-                                    &format!(
+
+                                let (used_generics, unused_generics): (Vec<&BaseType>, Vec<&BaseType>) = generics.iter().partition(|g| {
+                                    let g_name = if !g.get_name().is_empty() {
+                                        g.get_name()
+                                    } else {
+                                        g.as_str()
+                                    };
+                                    let clean_g = g_name.strip_prefix("...").unwrap_or(&g_name);
+                                    match &v.payload {
+                                        EnumVariantPayload::Tuple(types) => {
+                                            types.iter().any(|t| type_contains_generic_name(t, clean_g))
+                                        }
+                                        EnumVariantPayload::Struct(fields) => {
+                                            fields.iter().any(|f| type_contains_generic_name(&f.type_node, clean_g))
+                                        }
+                                        EnumVariantPayload::None => false,
+                                    }
+                                });
+
+                                if unused_generics.is_empty() {
+                                    self.emit(&format!(
                                         "template <{}> inline {}<{}> {}({}) {{ return {}<{}>::{}({}); }}",
                                         template_params.join(", "),
                                         name,
@@ -1431,19 +1603,88 @@ impl CodeGenerator {
                                         gen_args.join(", "),
                                         v.name,
                                         arg_strs.join(", ")
-                                    )
-                                );
+                                    ));
+                                } else {
+                                    let all_gen_args: Vec<String> = generics.iter().map(|g| g.as_str()).collect();
+                                    if used_generics.is_empty() {
+                                        let conv_template_params: Vec<String> = generics
+                                            .iter()
+                                            .map(|g| format!("typename {}", g.as_str()))
+                                            .collect();
+                                        self.emit(&format!("struct fastlang_helper_{}_{} {{", name, v.name));
+                                        self.indent_level += 1;
+                                        for decl in &member_decls {
+                                            self.emit(decl);
+                                        }
+                                        self.emit(&format!(
+                                            "template <{}>\noperator {}<{}>() const {{ return {}<{}>::{}({}); }}",
+                                            conv_template_params.join(", "),
+                                            name,
+                                            all_gen_args.join(", "),
+                                            name,
+                                            all_gen_args.join(", "),
+                                            v.name,
+                                            arg_strs.join(", ")
+                                        ));
+                                        self.indent_level -= 1;
+                                        self.emit("};");
+                                        self.emit(&format!(
+                                            "inline fastlang_helper_{}_{} {}({}) {{ return fastlang_helper_{}_{}{{{}}}; }}",
+                                            name,
+                                            v.name,
+                                            v.name,
+                                            param_strs.join(", "),
+                                            name,
+                                            v.name,
+                                            arg_strs.join(", ")
+                                        ));
+                                    } else {
+                                        let used_tmpl: Vec<String> = used_generics
+                                            .iter()
+                                            .map(|g| format!("typename {}", g.as_str()))
+                                            .collect();
+                                        let used_args: Vec<String> = used_generics
+                                            .iter()
+                                            .map(|g| g.as_str())
+                                            .collect();
+                                        let unused_tmpl: Vec<String> = unused_generics
+                                            .iter()
+                                            .map(|g| format!("typename {}", g.as_str()))
+                                            .collect();
+
+                                        self.emit(&format!("template <{}> struct fastlang_helper_{}_{} {{", used_tmpl.join(", "), name, v.name));
+                                        self.indent_level += 1;
+                                        for decl in &member_decls {
+                                            self.emit(decl);
+                                        }
+                                        self.emit(&format!(
+                                            "template <{}>\noperator {}<{}>() const {{ return {}<{}>::{}({}); }}",
+                                            unused_tmpl.join(", "),
+                                            name,
+                                            all_gen_args.join(", "),
+                                            name,
+                                            all_gen_args.join(", "),
+                                            v.name,
+                                            arg_strs.join(", ")
+                                        ));
+                                        self.indent_level -= 1;
+                                        self.emit("};");
+                                        self.emit(&format!(
+                                            "template <{}> inline fastlang_helper_{}_{}<{}> {}({}) {{ return fastlang_helper_{}_{}<{}>{{{}}}; }}",
+                                            used_tmpl.join(", "),
+                                            name,
+                                            v.name,
+                                            used_args.join(", "),
+                                            v.name,
+                                            param_strs.join(", "),
+                                            name,
+                                            v.name,
+                                            used_args.join(", "),
+                                            arg_strs.join(", ")
+                                        ));
+                                    }
+                                }
                             } else {
-                                let param_strs: Vec<String> = types
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(idx, t)| format!("{} _{}", type_to_cpp(t), idx))
-                                    .collect();
-                                let arg_strs: Vec<String> = types
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(idx, _)| format!("_{}", idx))
-                                    .collect();
                                 self.emit(&format!(
                                     "inline {} {}({}) {{ return {}::{}({}); }}",
                                     name,
@@ -2288,8 +2529,28 @@ impl CodeGenerator {
                     self.indent_level -= 1;
                     self.emit("}");
                 } else {
-                    for s in body {
-                        self.visit_statement(s);
+                    if safe_name == "main" {
+                        self.emit("try {");
+                        self.indent_level += 1;
+                        for s in body {
+                            self.visit_statement(s);
+                        }
+                        self.indent_level -= 1;
+                        self.emit("} catch (const fast_std::Error& __e) {");
+                        self.indent_level += 1;
+                        self.emit("std::fprintf(stderr, \"\\n[FastLang Runtime Panic] Uncaught Error: %s\\n\", fastlang_as_str(__e));");
+                        self.emit("return 1;");
+                        self.indent_level -= 1;
+                        self.emit("} catch (const std::exception& __e) {");
+                        self.indent_level += 1;
+                        self.emit("std::fprintf(stderr, \"\\n[FastLang Runtime Panic] Fatal Exception: %s\\n\", __e.what());");
+                        self.emit("return 1;");
+                        self.indent_level -= 1;
+                        self.emit("}");
+                    } else {
+                        for s in body {
+                            self.visit_statement(s);
+                        }
                     }
                 }
                 self.indent_level -= 1;
@@ -2396,42 +2657,8 @@ impl CodeGenerator {
                 self.indent_level -= 1;
                 self.emit(&format!("}} {};", name));
             }
-            Decl::MicroDecl {
-                name,
-                params,
-                return_type,
-                body,
-                ..
-            } => {
-                let is_break_micro = body.len() == 1 && matches!(body[0], Stmt::BreakStmt);
-                if is_break_micro && params.is_empty() {
-                    self.emit(&format!("#define {}() break", name));
-                    return;
-                }
-                let ret_cpp = match return_type {
-                    Some(t) => type_to_cpp(t),
-                    None => "void".to_string(),
-                };
-                let param_strs: Vec<String> = params
-                    .iter()
-                    .map(|p| {
-                        let t = type_to_cpp(&p.type_node);
-                        format!("{} {}", t, p.name)
-                    })
-                    .collect();
-
-                self.emit(&format!(
-                    "inline {} {}({}) {{",
-                    ret_cpp,
-                    name,
-                    param_strs.join(", ")
-                ));
-                self.indent_level += 1;
-                for s in body {
-                    self.visit_statement(s);
-                }
-                self.indent_level -= 1;
-                self.emit("}");
+            Decl::MicroDecl { .. } => {
+                // Micros are 100% compile-time pure AST replacements; zero C++ code is generated for their definitions.
             }
             Decl::ExternFnDecl { name, alias, .. } => {
                 if let Some(alias_name) = alias {
@@ -2926,6 +3153,15 @@ impl CodeGenerator {
             }
             Decl::CompileDecl { .. } => {
                 // Compile-time only constructs
+            }
+            Decl::NamespaceDecl { name, decls, .. } => {
+                self.emit(&format!("namespace {} {{", name));
+                self.indent_level += 1;
+                for d in decls {
+                    self.visit_declaration(d);
+                }
+                self.indent_level -= 1;
+                self.emit("}");
             }
             Decl::MacroDecl {
                 name, params, body, ..

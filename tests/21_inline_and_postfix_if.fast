@@ -1,0 +1,87 @@
+// Test 21: Inline If Expressions, Postfix If Statements, and Variant Blueprints
+
+fn test_inline_if() -> void {
+    auto a = if (10 > 5) 100 else 200;
+    println("a: ", a); // EXPECT: a: 100
+
+     b := if (false) 100 else 200;
+    println("b: ", b); // EXPECT: b: 200
+
+    auto c = if (true) {
+        auto temp = 21;
+        temp * 2
+    } else {
+        0
+    };
+    println("c: ", c); // EXPECT: c: 42
+}
+
+fn check_postfix_return(val: int32) -> int32 {
+    return 999 if (val == 42);
+    return val;
+}
+
+fn test_postfix_if() -> void {
+     count := 0;
+    count = 10 if (true);
+    println("count true: ", count); // EXPECT: count true: 10
+
+    count = 20 if (false);
+    println("count false: ", count); // EXPECT: count false: 10
+
+    println("postfix print true") if (true); // EXPECT: postfix print true
+    println("postfix print false") if (false);
+
+    {
+        count = count + 5;
+    } if (true);
+    println("block count: ", count); // EXPECT: block count: 15
+
+    {
+        count = count + 100;
+    } if (false);
+    println("block count after false: ", count); // EXPECT: block count after false: 15
+
+    println("check_postfix_return(42): ", check_postfix_return(42)); // EXPECT: check_postfix_return(42): 999
+    println("check_postfix_return(7): ", check_postfix_return(7)); // EXPECT: check_postfix_return(7): 7
+
+    auto i = 0;
+    while (i < 10) {
+        i = i + 1;
+        break if (i == 3);
+    }
+    println("loop stopped at: ", i); // EXPECT: loop stopped at: 3
+}
+
+enum Operation {
+    Success(int32),
+    Fail {
+        int32 code;
+    },
+}
+
+impl Operation::Fail {
+    fn is_critical() -> bool {
+        return this.code > 500;
+    }
+}
+
+fn test_enum_variant_impl() -> void {
+    Operation op = Operation::Fail { code = 505 };
+    match (op) -> {
+        Operation::Fail { code } => {
+            println("matched fail with code: ", code); // EXPECT: matched fail with code: 505
+        }
+        _ => {
+            println("other");
+        }
+    }
+}
+
+fn main() -> int32 {
+    test_inline_if();
+    test_postfix_if();
+    test_enum_variant_impl();
+    println("TEST 21 PASSED");
+    return 0;
+}

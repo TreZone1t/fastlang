@@ -53,7 +53,7 @@ class ComplexNumber -> {
             return (this.r == other.r) && (this.i == other.i);
         }
 
-        fn cast() -> int32 {
+        fn cast<T>() -> T {
             return this.r;
         }
     }

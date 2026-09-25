@@ -8,6 +8,16 @@ pub fn make_sig_key(name: &str, params: &[Param]) -> String {
 impl SemanticAnalyzer {
     pub fn pre_register_decl(&mut self, decl: &Decl) -> Result<(), String> {
         match decl {
+            Decl::NamespaceDecl { name, decls, .. } => {
+                let parent_env = Rc::clone(&self.current_env);
+                let ns_env = self.current_env.borrow_mut().get_or_create_namespace(name, parent_env);
+                let prev_env = Rc::clone(&self.current_env);
+                self.current_env = Rc::clone(&ns_env);
+                for d in decls {
+                    self.pre_register_decl(d)?;
+                }
+                self.current_env = prev_env;
+            }
             Decl::CompileDecl { name, decls } => {
                 for d in decls {
                     let mut namespaced_d = d.clone();
@@ -87,6 +97,45 @@ impl SemanticAnalyzer {
                         self.current_env
                             .borrow_mut()
                             .define_or_update(f_name.clone(), fn_info);
+                    } else if let Decl::MicroDecl {
+                        name: ref m_name,
+                        params,
+                        body,
+                        visibility,
+                        generics,
+                        ..
+                    } = namespaced_d
+                    {
+                        let prefix = format!("{}::", name);
+                        let short_name = m_name.replace(&prefix, "");
+                        let aliases = vec![
+                            m_name.clone(),
+                            format!("{}::{}", name, short_name),
+                            short_name.clone(),
+                        ];
+                        let gen_types: Vec<BaseType> = generics
+                            .as_ref()
+                            .map(|v| v.iter().map(|s| BaseType::from_str(s)).collect())
+                            .unwrap_or_default();
+                        for alias in aliases {
+                            let alias_info = SymbolInfo {
+                                name: alias.clone(),
+                                kind: SymbolKind::Micro {
+                                    params: params.clone(),
+                                    generics: gen_types.clone(),
+                                    body: body.clone(),
+                                },
+                                visibility: visibility.clone(),
+                                dependencies: vec![],
+                                is_used: false,
+                                is_param: false,
+                                is_uninitialized: false,
+                                is_compilable: true,
+                            };
+                            self.current_env
+                                .borrow_mut()
+                                .define_or_update(alias, alias_info);
+                        }
                     } else if let Decl::ImplDecl {
                         target,
                         methods,
@@ -495,6 +544,13 @@ impl SemanticAnalyzer {
                 let info = self.make_blueprint_symbol(name, visibility.clone());
                 self.current_env.borrow_mut().define(name.clone(), info)?;
                 for v in variants {
+                    let var_qualified = format!("{}::{}", name, v.name);
+                    let bp_var_info = self.make_blueprint_symbol(&var_qualified, visibility.clone());
+                    let _ = self
+                        .current_env
+                        .borrow_mut()
+                        .define(var_qualified.clone(), bp_var_info);
+
                     self.dependency_graph
                         .entry(v.name.clone())
                         .or_default()
@@ -1110,7 +1166,24 @@ impl SemanticAnalyzer {
                         .borrow_mut()
                         .define(p.name.clone(), param_info)?;
                 }
-                for dep in extract_all_type_names(&return_type.as_str()) {
+                let mut resolved_fn_return = return_type.clone();
+                if let BaseType::TypeExpr(expr) = return_type {
+                    let ret_t = self.visit_expression(expr)?;
+                    let clean_t = if ret_t.starts_with("type<") && ret_t.ends_with('>') {
+                        strip_wrapper(&ret_t, "type<").to_string()
+                    } else {
+                        ret_t
+                    };
+                    if generics.iter().any(|g| g.as_str() == clean_t)
+                        || clean_t == "generic"
+                        || clean_t.starts_with("Generic")
+                    {
+                        return Err("Semantic Error: 'typeof' is currently not supported for generic or runtime types. This feature will be supported in future versions.".to_string());
+                    }
+                    resolved_fn_return = BaseType::from_str(&clean_t);
+                }
+                self.active_return_type = Some(resolved_fn_return.clone());
+                for dep in extract_all_type_names(&resolved_fn_return.as_str()) {
                     self.record_dependency(dep);
                 }
                 for s in body {
@@ -1119,7 +1192,7 @@ impl SemanticAnalyzer {
 
                 if !self.in_custom_scope
                     && !body.is_empty()
-                    && *return_type != BaseType::Void
+                    && resolved_fn_return != BaseType::Void
                     && !self.block_always_terminates(body)
                 {
                     return Err(
@@ -1149,32 +1222,40 @@ impl SemanticAnalyzer {
                 body,
                 generics,
             } => {
+                // Ensure no local variable declarations exist inside micro body
+                for s in body {
+                    if matches!(s, Stmt::Declaration(Decl::VarDecl { .. } | Decl::DestructureDecl { .. } | Decl::ObjectDestructureDecl { .. } | Decl::ArrayDecl { .. })) {
+                        return Err(format!(
+                            "Semantic Error: Local variable declarations are forbidden inside micro '{}'.",
+                            name
+                        ));
+                    }
+                }
                 let prev_in_generic = self.in_generic_template;
                 if generics.as_ref().map(|g| !g.is_empty()).unwrap_or(false) {
                     self.in_generic_template = true;
                 }
-                let is_compilable_micro = name.starts_with("@compile::");
+                let gen_types: Vec<BaseType> = generics
+                    .as_ref()
+                    .map(|v| v.iter().map(|s| BaseType::from_str(s)).collect())
+                    .unwrap_or_default();
                 let micro_info = SymbolInfo {
                     name: name.clone(),
-                    kind: SymbolKind::Function {
+                    kind: SymbolKind::Micro {
                         params: params.clone(),
-                        return_type: return_type.clone().unwrap_or(BaseType::Void),
-                        generics: generics
-                            .as_ref()
-                            .map(|v| v.iter().map(|s| BaseType::from_str(s)).collect())
-                            .unwrap_or_default(),
-                        body: Some(body.clone()),
+                        generics: gen_types,
+                        body: body.clone(),
                     },
                     visibility: visibility.clone(),
                     dependencies: vec![],
                     is_used: false,
                     is_param: false,
                     is_uninitialized: false,
-                    is_compilable: is_compilable_micro,
+                    is_compilable: true, // All micros are 100% compile-time
                 };
                 self.current_env
                     .borrow_mut()
-                    .define(name.clone(), micro_info)?;
+                    .define_or_update(name.clone(), micro_info);
 
                 let prev_flags = self.active_flags.clone();
                 let prev_return = self.active_return_type.clone();
@@ -1186,8 +1267,6 @@ impl SemanticAnalyzer {
                 self.active_flags.push("+has_yield".to_string());
                 self.active_flags.push("+has_leave".to_string());
                 self.active_flags.push("+has_return".to_string());
-                self.active_return_type = return_type.clone();
-
                 self.enter_scope();
                 for p in params {
                     let param_info = SymbolInfo {
@@ -1208,6 +1287,25 @@ impl SemanticAnalyzer {
                         .borrow_mut()
                         .define(p.name.clone(), param_info)?;
                 }
+
+                let mut resolved_method_return = return_type.clone();
+                if let Some(BaseType::TypeExpr(expr)) = return_type {
+                    let ret_t = self.visit_expression(expr)?;
+                    let clean_t = if ret_t.starts_with("type<") && ret_t.ends_with('>') {
+                        strip_wrapper(&ret_t, "type<").to_string()
+                    } else {
+                        ret_t
+                    };
+                    if generics.as_ref().map(|v| v.iter().any(|g| g == &clean_t)).unwrap_or(false)
+                        || clean_t == "generic"
+                        || clean_t.starts_with("Generic")
+                    {
+                        return Err("Semantic Error: 'typeof' is currently not supported for generic or runtime types. This feature will be supported in future versions.".to_string());
+                    }
+                    resolved_method_return = Some(BaseType::from_str(&clean_t));
+                }
+                self.active_return_type = resolved_method_return;
+
                 for s in body {
                     self.visit_statement(s)?;
                 }
@@ -1762,6 +1860,16 @@ impl SemanticAnalyzer {
                     self.current_env.borrow_mut().define(name.clone(), info)?;
                 }
             }
+            Decl::NamespaceDecl { name, decls, .. } => {
+                let parent_env = Rc::clone(&self.current_env);
+                let ns_env = self.current_env.borrow_mut().get_or_create_namespace(name, parent_env);
+                let prev_env = Rc::clone(&self.current_env);
+                self.current_env = Rc::clone(&ns_env);
+                for d in decls {
+                    self.visit_declaration(d)?;
+                }
+                self.current_env = prev_env;
+            }
             Decl::CompileDecl { name, decls } => {
                 for d in decls {
                     let mut namespaced_d = d.clone();
@@ -1882,6 +1990,12 @@ impl SemanticAnalyzer {
         if matches!(type_node, BaseType::Flag) {
             return Err(
                 format!("Semantic Error: 'flag' is a reserved state inspection type and cannot be declared as a user variable '{}'. Use 'bool' instead.", name)
+            );
+        }
+
+        if matches!(type_node, BaseType::Block { .. }) {
+            return Err(
+                "Semantic Error: Blocks cannot be stored in variables or assigned to values. Blocks are strictly execution scopes; use 'method' or 'fn' for first-class callable entities.".to_string(),
             );
         }
 
@@ -2110,9 +2224,21 @@ impl SemanticAnalyzer {
             .into_iter()
             .collect();
 
-        let final_type_node = if matches!(type_node, BaseType::Unknown) {
-            if expr_type == "undefined" || expr_type == "unknown" {
-                BaseType::Unknown
+        let final_type_node = if matches!(type_node, BaseType::Unknown | BaseType::Auto | BaseType::Number) {
+            if matches!(type_node, BaseType::Number) {
+                if expr_type.starts_with("float") || expr_type == "float" {
+                    BaseType::Float(Size::S64)
+                } else if expr_type.starts_with("uint") {
+                    BaseType::from_str(&expr_type)
+                } else {
+                    BaseType::Int(Size::S32)
+                }
+            } else if expr_type == "undefined" || expr_type == "unknown" {
+                if matches!(type_node, BaseType::Auto) {
+                    BaseType::Auto
+                } else {
+                    BaseType::Unknown
+                }
             } else if expr_type == "int" {
                 BaseType::Int(Size::S32)
             } else if expr_type == "float" {

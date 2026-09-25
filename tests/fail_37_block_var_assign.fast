@@ -1,0 +1,5 @@
+// Test 37: Storing a block in a variable is forbidden (blocks are strictly execution scopes)
+
+fn main() -> void {
+    block<MyBlock> b = undefined;
+}

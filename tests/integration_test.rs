@@ -12,7 +12,6 @@ fn run_all_fs_tests() {
 fn run_all_examples() {
     run_directory_tests(Path::new("examples"), "cpp");
 }
-
 #[test]
 #[ignore] // Run explicitly with: cargo test run_cranelift_aot_tests -- --ignored
 fn run_cranelift_aot_tests() {
@@ -63,7 +62,10 @@ fn run_directory_tests(test_dir: &Path, backend: &str) {
 
                 let parent = path.parent().unwrap_or(Path::new(""));
                 let build_dir = parent.join("build");
-                let base_name = filename.strip_suffix(".fast").or_else(|| filename.strip_suffix(".fs")).unwrap_or(&filename);
+                let base_name = filename
+                    .strip_suffix(".fast")
+                    .or_else(|| filename.strip_suffix(".fs"))
+                    .unwrap_or(&filename);
                 let build_exe = build_dir.join(if cfg!(windows) {
                     format!("{}.exe", base_name)
                 } else {
@@ -168,7 +170,9 @@ Stderr:
                                     let _ = stdin.write_all(input_data.as_bytes());
                                 }
 
-                                child.wait_with_output().expect("failed to wait on compiled app")
+                                child
+                                    .wait_with_output()
+                                    .expect("failed to wait on compiled app")
                             } else {
                                 Command::new(&build_exe)
                                     .output()
@@ -257,7 +261,9 @@ Actual Output:
     let passed = *passed_tests.lock().unwrap();
     let failed = *failed_tests.lock().unwrap();
 
-    let debug_mode = std::env::var("FASTLANG_TEST_DEBUG").map(|v| v == "1").unwrap_or(false);
+    let debug_mode = std::env::var("FASTLANG_TEST_DEBUG")
+        .map(|v| v == "1")
+        .unwrap_or(false);
     if !debug_mode && failed == 0 {
         let build_dir = test_dir.join("build");
         if build_dir.exists() {

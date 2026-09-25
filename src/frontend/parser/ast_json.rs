@@ -268,6 +268,13 @@ pub fn decl_to_json(decl: &Decl) -> Value {
             "abi": abi,
             "alias": alias
         }),
+        Decl::NamespaceDecl { visibility, name, decls } =>
+            json!({
+            "type": "NamespaceDecl",
+            "name": name,
+            "visibility": format!("{:?}", visibility),
+            "decls": decls.iter().map(decl_to_json).collect::<Vec<_>>()
+        }),
         _ => json!({
             "type": "OtherDecl"
         }),
@@ -339,6 +346,10 @@ pub fn expr_to_json(expr: &Expr) -> Value {
             "type": "Cast",
             "expr": expr_to_json(expr),
             "target_type": target_type.as_str()
+        }),
+        Expr::QuestionMark(inner) => json!({
+            "type": "QuestionMark",
+            "operand": expr_to_json(inner)
         }),
         _ => json!({ "type": "OtherExpr" }),
     }

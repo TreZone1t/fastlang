@@ -27,9 +27,9 @@ public @compile -> {
         set is_array() -> bool;
         set is_const() -> bool;
         set is_constant() -> bool;
+        set is_undefined() -> bool;
         set is_runtime() -> bool;
         set is_comptime() -> bool;
-        set is_undefined() -> bool;
         set has_handle(char[]) -> bool;
         set has_handle(type) -> bool;
         set has_handle(char[], type) -> bool;
@@ -119,3 +119,5 @@ public method deepCopy<T>(val: T) -> T {
     return temp;
 }
 
+using Option;
+using Result;

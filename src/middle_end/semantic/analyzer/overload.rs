@@ -90,6 +90,12 @@ fn has_compile_directive_expr(expr: &Expr) -> bool {
             }
             has_compile_directive_expr(property)
         }
+        Expr::IfExpr { condition, then_branch, else_branch } => {
+            has_compile_directive_expr(condition) || has_compile_directive_expr(then_branch) || has_compile_directive_expr(else_branch)
+        }
+        Expr::BlockExpr { statements, final_expr } => {
+            has_compile_directive(statements) || final_expr.as_ref().map(|e| has_compile_directive_expr(e)).unwrap_or(false)
+        }
         _ => false,
     }
 }

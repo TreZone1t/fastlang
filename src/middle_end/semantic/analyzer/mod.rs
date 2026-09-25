@@ -43,6 +43,8 @@ pub struct SemanticAnalyzer {
     pub machine_labels: HashMap<String, HashMap<String, HashMap<String, BaseType>>>,
     pub in_generic_template: bool,
     pub class_hierarchy: HashMap<String, String>,
+    pub debug_errors: bool,
+    pub accumulated_errors: Vec<String>,
 }
 
 
@@ -69,6 +71,8 @@ impl SemanticAnalyzer {
             machine_labels: HashMap::new(),
             in_generic_template: false,
             class_hierarchy: HashMap::new(),
+            debug_errors: false,
+            accumulated_errors: Vec::new(),
         };
         analyzer.import_metadata();
         analyzer
@@ -168,12 +172,28 @@ impl SemanticAnalyzer {
         // Pass 0: Pre-register @compile members, macros, and impl metadata so declaration order in file does not matter
         for stmt in ast {
             if let Stmt::Declaration(decl) = stmt {
-                self.pre_register_decl(decl)?;
+                if let Err(e) = self.pre_register_decl(decl) {
+                    if self.debug_errors {
+                        self.accumulated_errors.push(e);
+                    } else {
+                        return Err(e);
+                    }
+                }
             }
         }
 
         for stmt in ast {
-            self.visit_statement(stmt)?;
+            if let Err(e) = self.visit_statement(stmt) {
+                if self.debug_errors {
+                    self.accumulated_errors.push(e);
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+
+        if self.debug_errors && !self.accumulated_errors.is_empty() {
+            return Err(self.accumulated_errors.join("\n"));
         }
         Ok(())
     }

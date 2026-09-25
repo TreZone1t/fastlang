@@ -1,0 +1,6 @@
+// Negative test: Postfix if with else must fail
+
+fn main() -> int32 {
+    println("hello") if (true) else println("world");
+    return 0;
+}

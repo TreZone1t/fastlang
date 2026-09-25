@@ -67,6 +67,7 @@ impl SemanticAnalyzer {
                                         }
                                     }
                                     Stmt::ExpressionStmt(Expr::Identifier(n)) => Some(n.clone()),
+                                    Stmt::ReturnStmt(Some(Expr::Identifier(n))) => Some(n.clone()),
                                     _ => None,
                                 };
                                 if let Some(name) = var_name {

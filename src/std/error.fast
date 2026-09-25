@@ -4,6 +4,17 @@ public class Error -> {
     public -> {
         str message = "";
         int32 code = 0;
+
+
+
+
+
+
+
+
+        fn as_str() -> char[] {
+            return "{ message: " + this.message + ", code: " + this.code + " }";
+        }
     }
 
     constructor -> {
@@ -24,10 +35,13 @@ public class Error -> {
             this.code = code;
         }
     }
-
+    
     handle -> {
         fn $throw() -> Error {
             return this;
+        }
+        fn display() -> char[] {
+            return this.as_str();
         }
     }
 }

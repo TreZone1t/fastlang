@@ -1,0 +1,57 @@
+// Test 22: Inline Try Operator '?' (Error Propagation and Handling)
+
+fn compute_ok() -> Result<int32> {
+    return Ok(100);
+}
+
+fn compute_err() -> Result<int32> {
+    return Err("operation failed");
+}
+
+fn test_question_mark_success() -> void {
+    auto res = compute_ok();
+    // Use ? operator on .get()
+    auto val = res.get()?;
+    println("val: ", val); // EXPECT: val: 100
+
+    // Use ? in an expression
+    auto doubled = res.get()? * 2;
+    println("doubled: ", doubled); // EXPECT: doubled: 200
+}
+
+fn test_question_mark_catch() -> void {
+    auto res_err = compute_err();
+    try {
+        auto val = res_err.get()?;
+        println("should not reach here: ", val);
+    } catch (e) -> {
+        println("caught error via ?: ", e.message); // EXPECT: caught error via ?: operation failed
+    }
+}
+
+fn test_chained_call() -> void {
+    auto res = compute_ok();
+    auto answer = (res.get()? + 50) * 2;
+    println("chained computation: ", answer); // EXPECT: chained computation: 300
+}
+
+fn test_ternary_operator() -> void {
+    auto a = true ? 100 : 200;
+    println("ternary a: ", a); // EXPECT: ternary a: 100
+
+    auto b = false ? 100 : 200;
+    println("ternary b: ", b); // EXPECT: ternary b: 200
+
+    auto res = compute_ok();
+    auto c = true ? res.get()? : 0;
+    println("ternary with ?: ", c); // EXPECT: ternary with ?: 100
+}
+
+fn main() -> int32 {
+    test_question_mark_success();
+    test_question_mark_catch();
+    test_chained_call();
+    test_ternary_operator();
+    println("TEST 22 PASSED"); // EXPECT: TEST 22 PASSED
+    return 0;
+}

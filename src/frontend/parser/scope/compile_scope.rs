@@ -13,7 +13,9 @@ impl Parser {
             self.advance();
         }
 
-        if self.peek().kind == TokenKind::Arrow {
+        if self.peek().kind == TokenKind::DoubleColon {
+            self.advance(); // consume '::'
+        } else if self.peek().kind == TokenKind::Arrow {
             self.advance(); // consume '->'
         }
 

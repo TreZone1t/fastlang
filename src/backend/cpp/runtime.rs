@@ -203,14 +203,13 @@ inline auto fastlang_add(A&& a, B&& b) {
 }
 
 template <typename A, typename B>
-inline auto& fastlang_add_assign(A& a, B&& b) {
+inline decltype(auto) fastlang_add_assign(A&& a, B&& b) {
     using DecA = std::decay_t<A>;
     if constexpr (std::is_pointer_v<DecA>) {
         a = fastlang_add(a, std::forward<B>(b));
         return a;
     } else {
-        a += std::forward<B>(b);
-        return a;
+        return (a += std::forward<B>(b));
     }
 }
 

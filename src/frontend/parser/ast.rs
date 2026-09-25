@@ -140,8 +140,11 @@ pub enum BaseType {
     Generic(Vec<BaseType>),
     GenericParam(String),
 
+    Auto,
     Unknown,
     Object,
+    Number,
+    TypeExpr(Box<Expr>),
     Function {
         name: Option<String>,
         params: Vec<BaseType>,
@@ -160,6 +163,8 @@ impl BaseType {
             BaseType::Machine { name, .. } => name.clone(),
             BaseType::Label { name, .. } => name.clone(),
             BaseType::Object => "object".to_string(),
+            BaseType::Number => "number".to_string(),
+            BaseType::TypeExpr(expr) => expr.as_str(),
             BaseType::Function { .. } => "function".to_string(),
             _ => self.as_str(),
         }
@@ -316,8 +321,11 @@ impl BaseType {
                 let strs: Vec<String> = inner_vec.iter().map(|t| t.as_str()).collect();
                 strs.join(", ")
             }
+            BaseType::Auto => "auto".to_string(),
             BaseType::Unknown => "unknown".to_string(),
             BaseType::Object => "object".to_string(),
+            BaseType::Number => "number".to_string(),
+            BaseType::TypeExpr(expr) => format!("typeof({})", expr.as_str()),
             BaseType::Function {
                 name,
                 params,
@@ -376,7 +384,9 @@ impl BaseType {
                 mode: ExecutionMode::Runtime,
             },
             "unknown" => BaseType::Unknown,
+            "auto" => BaseType::Auto,
             "object" => BaseType::Object,
+            "number" | "num" => BaseType::Number,
             "function" => BaseType::Function {
                 name: None,
                 params: vec![],
@@ -430,6 +440,47 @@ impl BaseType {
                     BaseType::Array {
                         base_type: Box::new(BaseType::from_str(&s[..s.len() - 2])),
                         size: Box::new(None),
+                    }
+                } else if s.starts_with("fn(") || s.starts_with("Fn<(") || s.starts_with("fn<(") {
+                    let (params_str, ret_str) = if s.starts_with("fn(") {
+                        let rp = s.rfind(')');
+                        let (p, r) = if let Some(idx) = rp {
+                            let p = &s[3..idx];
+                            let r = if let Some(arr) = s[idx..].find("->") {
+                                s[idx + arr + 2..].trim()
+                            } else {
+                                "void"
+                            };
+                            (p, r)
+                        } else {
+                            ("", "void")
+                        };
+                        (p, r)
+                    } else {
+                        let inner = if s.ends_with('>') {
+                            &s[s.find('<').unwrap() + 1..s.len() - 1]
+                        } else {
+                            &s[s.find('<').unwrap() + 1..]
+                        };
+                        if let Some(rp) = inner.find(')') {
+                            let p = &inner[1..rp];
+                            let rest = inner[rp + 1..].trim().trim_start_matches(',').trim();
+                            (p, rest)
+                        } else {
+                            ("", "void")
+                        }
+                    };
+                    let mut params = Vec::new();
+                    if !params_str.trim().is_empty() {
+                        for p in params_str.split(',') {
+                            params.push(BaseType::from_str(p.trim()));
+                        }
+                    }
+                    BaseType::Fn {
+                        name: None,
+                        params,
+                        return_type: Box::new(BaseType::from_str(ret_str)),
+                        mode: ExecutionMode::Runtime,
                     }
                 } else if s.contains('<') && s.ends_with('>') {
                     let open_idx = s.find('<').unwrap();
@@ -1081,6 +1132,7 @@ pub enum Expr {
         operator: String,
         operand: Box<Expr>,
     },
+    QuestionMark(Box<Expr>),
     Default(Option<BaseType>),
     Cast {
         expr: Box<Expr>,
@@ -1137,6 +1189,15 @@ pub enum Expr {
         params: Vec<Param>,
         return_type: Option<BaseType>,
         body: Vec<Stmt>,
+    },
+    IfExpr {
+        condition: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Box<Expr>,
+    },
+    BlockExpr {
+        statements: Vec<Stmt>,
+        final_expr: Option<Box<Expr>>,
     },
 }
 impl Expr {
@@ -1233,6 +1294,14 @@ impl Expr {
             Expr::Cast { expr, target_type } => {
                 format!("({} as {})", expr.as_str(), target_type.as_str())
             }
+            Expr::IfExpr { condition, then_branch, else_branch } => {
+                format!("if ({}) {} else {}", condition.as_str(), then_branch.as_str(), else_branch.as_str())
+            }
+            Expr::BlockExpr { final_expr, .. } => {
+                let f = final_expr.as_ref().map(|e| e.as_str()).unwrap_or_default();
+                format!("{{ ...; {} }}", f)
+            }
+            Expr::QuestionMark(inner) => format!("{}?", inner.as_str()),
             _ => unreachable!(),
         }
     }
@@ -1256,6 +1325,7 @@ pub fn type_from_expr(expr: &Expr) -> BaseType {
             size: Box::new(None),
         },
         Expr::Cast { target_type, .. } => target_type.clone(),
+        Expr::QuestionMark(inner) => type_from_expr(inner),
         _ => BaseType::Unknown,
     }
 }
@@ -1431,6 +1501,11 @@ pub enum Decl {
         body: Vec<Stmt>,
     },
     CompileDecl {
+        name: String,
+        decls: Vec<Decl>,
+    },
+    NamespaceDecl {
+        visibility: Visibility,
         name: String,
         decls: Vec<Decl>,
     },

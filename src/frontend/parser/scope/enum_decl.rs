@@ -5,11 +5,18 @@ use crate::frontend::parser::parser::Parser;
 impl Parser {
     pub(crate) fn parse_enum_decl(&mut self) -> Result<Decl, String> {
         let mut variants: Vec<EnumVariant> = Vec::new();
-        self.advance(); // consume 'enum'
+        if self.peek().kind == TokenKind::TypeEnum {
+            self.advance(); // consume 'enum'
+        }
         let name = self.get_identifier("Expected enum name")?;
         let mut generics = Vec::new();
         if self.peek().kind == TokenKind::Less {
             self.parse_generics(&mut generics)?;
+            for g in &generics {
+                if let BaseType::GenericParam(gen_name) = g {
+                    self.current_generics.insert(gen_name.clone());
+                }
+            }
         }
         if self.peek().kind == TokenKind::Arrow {
             self.advance();
@@ -88,6 +95,11 @@ impl Parser {
                     data_type,
                 });
             } else {
+                for g in &generics {
+                    if let BaseType::GenericParam(gen_name) = g {
+                        self.current_generics.remove(gen_name);
+                    }
+                }
                 return Err(
                     format!(
                         "Syntax Error: Unsupported token '{}' in enum at line {}, column {}",
@@ -111,12 +123,54 @@ impl Parser {
         };
         for variant in &variants {
             meta.fields.insert(variant.name.clone(), BaseType::from_str(&name));
+
+            let variant_full_name = format!("{}::{}", name, variant.name);
+            let mut var_fields = std::collections::HashMap::new();
+            match &variant.payload {
+                EnumVariantPayload::None => {}
+                EnumVariantPayload::Tuple(types) => {
+                    if let Some(first_t) = types.first() {
+                        var_fields.insert("this".to_string(), first_t.clone());
+                    }
+                    for (i, t) in types.iter().enumerate() {
+                        var_fields.insert(format!("_{}", i), t.clone());
+                    }
+                }
+                EnumVariantPayload::Struct(fields) => {
+                    for f in fields {
+                        var_fields.insert(f.name.clone(), f.type_node.clone());
+                    }
+                }
+            }
+            let var_meta = TypeMetadata {
+                name: variant_full_name.clone(),
+                ty: BaseType::Blueprint {
+                    name: variant_full_name.clone(),
+                    fields: Box::new(var_fields.clone()),
+                    methods: Box::new(std::collections::HashMap::new()),
+                    generics: generics.clone(),
+                },
+                fields: var_fields,
+                constructor: None,
+                methods: std::collections::HashMap::new(),
+                handles: Vec::new(),
+                handle_signatures: std::collections::HashMap::new(),
+                vars: std::collections::HashMap::new(),
+                variants: None,
+            };
+            self.metadata.insert(variant_full_name, var_meta);
         }
         self.metadata.insert(name.clone(), meta);
 
         self.consume(TokenKind::RBrace, "Expected '}' to close enum block")?;
         if self.peek().kind == TokenKind::SemiColon {
             self.advance();
+        }
+
+        for g in &generics {
+            if let BaseType::GenericParam(gen_name) = g {
+                self.current_generics.remove(gen_name);
+            }
         }
 
         Ok(Decl::EnumDecl {

@@ -271,6 +271,24 @@ impl Parser {
                 }
                 used_methods.push(handle_kind);
 
+                let mut generics: Vec<BaseType> = Vec::new();
+                if self.peek().kind == TokenKind::Less {
+                    if !matches!(handle_kind, HandleMethods::Call | HandleMethods::Cast) {
+                        return Err(format!(
+                            "Syntax Error: Handle method '{}' is not allowed to have generics at line {}, column {}",
+                            method_name,
+                            self.peek().line,
+                            self.peek().column
+                        ));
+                    }
+                    self.parse_generics(&mut generics)?;
+                    for g in &generics {
+                        if let BaseType::GenericParam(gen_name) = g {
+                            self.current_generics.insert(gen_name.clone());
+                        }
+                    }
+                }
+
                 let mut method_params: Vec<Param> = Vec::new();
                 if self.peek().kind == TokenKind::LParen {
                     self.advance();
@@ -336,12 +354,18 @@ impl Parser {
                 let body = self.parse_block(method_name.clone())?;
                 self.consume(TokenKind::RBrace, "Expected '}' to close handle method body")?;
 
+                for g in &generics {
+                    if let BaseType::GenericParam(gen_name) = g {
+                        self.current_generics.remove(gen_name);
+                    }
+                }
+
                 handle_fn.push(Decl::FnDecl {
                     visibility: Visibility::Private,
                     is_virtual: false,
                     is_abstract: false,
                     name: method_name,
-                    generics: vec![],
+                    generics,
                     params: method_params,
                     return_type,
                     body,
@@ -439,7 +463,28 @@ impl Parser {
         let mut stmts: Vec<Stmt> = Vec::new();
         while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
             match self.parse_statement(ScopeType::Block) {
-                Ok(Some(stmt)) => stmts.push(stmt),
+                Ok(Some(stmt)) => {
+                    if self.peek().kind == TokenKind::RBrace
+                        && !matches!(_scope.as_str(), "loop" | "while" | "do" | "for" | "for-in" | "object")
+                    {
+                        match &stmt {
+                            Stmt::ExpressionStmt(expr) => {
+                                if self.previous(None).kind != TokenKind::SemiColon {
+                                    stmts.push(Stmt::ReturnStmt(Some(expr.clone())));
+                                    continue;
+                                }
+                            }
+                            Stmt::CallStmt(expr) => {
+                                if self.previous(None).kind != TokenKind::SemiColon {
+                                    stmts.push(Stmt::ReturnStmt(Some(expr.clone())));
+                                    continue;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    stmts.push(stmt);
+                }
                 Ok(None) => {
                     if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
                         self.advance();

@@ -51,8 +51,69 @@ impl Parser {
             }
             | TokenKind::TypeFn
             | TokenKind::TypeLambda
-            /*//todo | TokenKind::TypeObject */
-            | TokenKind::TypeType => self.parse_var_decl(scope).map(Stmt::Declaration),
+            | TokenKind::TypeNumber
+            | TokenKind::TypeType
+            | TokenKind::TypeAuto => self.parse_var_decl(scope).map(Stmt::Declaration),
+
+            TokenKind::TypeFunction => {
+                if let Some(next) = self.tokens.get(self.current + 1) {
+                    if next.kind == TokenKind::DoubleColon {
+                        if let Some(sub) = self.tokens.get(self.current + 2) {
+                            if matches!(sub.kind, TokenKind::Fn | TokenKind::TypeFn | TokenKind::TypeMethod) {
+                                self.advance(); // consume 'function'
+                                self.advance(); // consume '::'
+                                return self.parse_fn_decl().map(Stmt::Declaration).map(Some);
+                            }
+                        }
+                    } else if let TokenKind::Identifier(_) = next.kind {
+                        if let Some(after) = self.tokens.get(self.current + 2) {
+                            if after.kind == TokenKind::LParen || after.kind == TokenKind::Less {
+                                self.advance(); // consume 'function', identifier is function name
+                                return self.parse_fn_decl().map(Stmt::Declaration).map(Some);
+                            }
+                        }
+                    }
+                }
+                self.parse_var_decl(scope).map(Stmt::Declaration)
+            }
+
+            TokenKind::TypeObject => {
+                if let Some(next) = self.tokens.get(self.current + 1) {
+                    if next.kind == TokenKind::DoubleColon {
+                        self.advance(); // consume 'object'
+                        self.advance(); // consume '::'
+                        match self.peek().kind {
+                            TokenKind::TypeStruct => return self.parse_struct_decl().map(Stmt::Declaration).map(Some),
+                            TokenKind::TypeClass => return self.parse_class_decl().map(Stmt::Declaration).map(Some),
+                            TokenKind::TypeBluePrint => return self.parse_blueprint_decl().map(Stmt::Declaration).map(Some),
+                            TokenKind::TypeEnum => return self.parse_enum_decl().map(Stmt::Declaration).map(Some),
+                            TokenKind::Identifier(ref id) if id == "namespace" => {
+                                self.advance(); // consume 'namespace'
+                                return self.parse_namespace_decl().map(Stmt::Declaration).map(Some);
+                            }
+                            _ => {}
+                        }
+                    } else if let TokenKind::Identifier(_) = next.kind {
+                        if let Some(after) = self.tokens.get(self.current + 2) {
+                            if after.kind == TokenKind::DoubleColon {
+                                self.advance(); // consume 'object'
+                                return self.parse_namespace_decl().map(Stmt::Declaration).map(Some);
+                            } else if after.kind == TokenKind::Assign {
+                                if let Some(after_assign) = self.tokens.get(self.current + 3) {
+                                    if after_assign.kind == TokenKind::LBrace {
+                                        self.advance(); // consume 'object'
+                                        return self.parse_blueprint_decl().map(Stmt::Declaration).map(Some);
+                                    }
+                                }
+                            } else if after.kind == TokenKind::LBrace {
+                                self.advance(); // consume 'object'
+                                return self.parse_enum_decl().map(Stmt::Declaration).map(Some);
+                            }
+                        }
+                    }
+                }
+                self.parse_var_decl(scope).map(Stmt::Declaration)
+            }
 
             TokenKind::Using => self.parse_using_stmt(),
             TokenKind::Set => self.parse_reassign_stmt(),
@@ -148,6 +209,16 @@ impl Parser {
 
             TokenKind::Leave => {
                 self.advance();
+                if self.peek().kind == TokenKind::If {
+                    self.advance();
+                    let cond = self.parse_postfix_condition()?;
+                    self.consume(TokenKind::SemiColon, "Expected ';' after postfix if")?;
+                    return Ok(Some(Stmt::IfStmt {
+                        condition: cond,
+                        then_block: vec![Stmt::LeaveStmt],
+                        else_block: None,
+                    }));
+                }
                 self.consume(TokenKind::SemiColon, "Expected ';' after leave")?;
                 Ok(Stmt::LeaveStmt)
             }
@@ -156,33 +227,48 @@ impl Parser {
             TokenKind::Break | TokenKind::Continue => {
                 let kind = self.peek().kind.clone();
                 self.advance();
+                let base_stmt = if kind == TokenKind::Break {
+                    Stmt::BreakStmt
+                } else {
+                    Stmt::ContinueStmt
+                };
+                if self.peek().kind == TokenKind::If {
+                    self.advance();
+                    let cond = self.parse_postfix_condition()?;
+                    self.consume(TokenKind::SemiColon, "Expected ';' after postfix if")?;
+                    return Ok(Some(Stmt::IfStmt {
+                        condition: cond,
+                        then_block: vec![base_stmt],
+                        else_block: None,
+                    }));
+                }
                 self.consume(
                     TokenKind::SemiColon,
                     format!("Expected ';' after {:?}", kind).as_str()
                 )?;
-                if kind == TokenKind::Break {
-                    Ok(Stmt::BreakStmt)
-                } else {
-                    Ok(Stmt::ContinueStmt)
-                }
+                Ok(base_stmt)
             }
 
             TokenKind::Return => {
                 self.advance();
+                let mut ret_val = None;
+                if self.peek().kind != TokenKind::SemiColon && self.peek().kind != TokenKind::If {
+                    ret_val = Some(self.parse_expression()?);
+                }
+                if self.peek().kind == TokenKind::If {
+                    self.advance();
+                    let cond = self.parse_postfix_condition()?;
+                    self.consume(TokenKind::SemiColon, "Expected ';' after postfix if")?;
+                    return Ok(Some(Stmt::IfStmt {
+                        condition: cond,
+                        then_block: vec![Stmt::ReturnStmt(ret_val)],
+                        else_block: None,
+                    }));
+                }
                 if self.peek().kind == TokenKind::SemiColon {
                     self.advance();
-                    Ok(Stmt::ReturnStmt(None))
-                } else {
-                    match self.parse_expression() {
-                        Ok(val) => {
-                            if self.peek().kind == TokenKind::SemiColon {
-                                self.advance();
-                            }
-                            Ok(Stmt::ReturnStmt(Some(val)))
-                        }
-                        Err(e) => Err(e),
-                    }
                 }
+                Ok(Stmt::ReturnStmt(ret_val))
             }
 
             TokenKind::Throw => self.parse_throw_stmt(),
@@ -218,11 +304,17 @@ impl Parser {
                     Ok(Stmt::CompileValidation { body, args })
                 } else if self.peek_ahead(1).map(|t| &t.kind) == Some(&TokenKind::Arrow)
                     || self.peek_ahead(1).map(|t| &t.kind) == Some(&TokenKind::LBrace)
+                    || (self.peek_ahead(1).map(|t| &t.kind) == Some(&TokenKind::DoubleColon)
+                        && self.peek_ahead(2).map(|t| &t.kind) == Some(&TokenKind::LBrace))
                 {
                     self.parse_compile_decl().map(Stmt::Declaration)
                 } else {
                     self.parse_expression_or_reassignment()
                 }
+            }
+
+            TokenKind::Identifier(_) if self.is_namespace_decl_start() => {
+                self.parse_namespace_decl().map(Stmt::Declaration)
             }
 
             TokenKind::Identifier(_) if self.is_named_destructure_start() => {
@@ -288,6 +380,28 @@ impl Parser {
             }
             TokenKind::LBrace if self.is_object_destructure_start() => {
                 self.parse_object_destructure_decl(Editability::Editable, scope)
+            }
+            TokenKind::LBrace => {
+                self.advance(); // consume '{'
+                let blk = self.parse_block("block".to_string())?;
+                self.consume(TokenKind::RBrace, "Expected '}' to close block")?;
+                if self.peek().kind == TokenKind::If {
+                    self.advance(); // consume 'if'
+                    let cond = self.parse_postfix_condition()?;
+                    if self.peek().kind == TokenKind::SemiColon {
+                        self.advance();
+                    }
+                    Ok(Stmt::IfStmt {
+                        condition: cond,
+                        then_block: blk,
+                        else_block: None,
+                    })
+                } else {
+                    if self.peek().kind == TokenKind::SemiColon {
+                        self.advance();
+                    }
+                    Ok(Stmt::Block(blk))
+                }
             }
             _ => self.parse_expression_stmt(),
         };
@@ -617,6 +731,7 @@ impl Parser {
             | TokenKind::TypeFn
             | TokenKind::TypeMicro
             | TokenKind::TypeLambda
+            | TokenKind::TypeAuto
             | TokenKind::TypeBlock => true,
             TokenKind::Identifier(id) => {
                 self.peek_ahead(1)
@@ -719,6 +834,9 @@ impl Parser {
             TokenKind::LabelName(lbl) if lbl.eq_ignore_ascii_case("@compile") => {
                 self.parse_compile_decl()?
             }
+            TokenKind::Identifier(_) if self.is_namespace_decl_start() => {
+                self.parse_namespace_decl()?
+            }
             TokenKind::Identifier(_) if self.is_block_decl_start() => {
                 self.parse_bare_block_decl()?
             }
@@ -771,6 +889,11 @@ impl Parser {
                 *visibility = Visibility::Public;
             }
             Decl::MacroDecl {
+                ref mut visibility, ..
+            } => {
+                *visibility = Visibility::Public;
+            }
+            Decl::NamespaceDecl {
                 ref mut visibility, ..
             } => {
                 *visibility = Visibility::Public;
@@ -892,7 +1015,8 @@ impl Parser {
                 true
             }
             | TokenKind::TypeFn
-            | TokenKind::TypeLambda => true,
+            | TokenKind::TypeLambda
+            | TokenKind::TypeAuto => true,
             TokenKind::Identifier(_) => {
                 if let Some(next) = self.tokens.get(self.current + 1) {
                     if next.kind == TokenKind::Walrus {
@@ -1064,6 +1188,51 @@ impl Parser {
 
     pub(crate) fn is_named_destructure_start(&self) -> bool {
         self.is_named_destructure_start_at(self.current)
+    }
+
+    pub(crate) fn is_namespace_decl_start(&self) -> bool {
+        if let TokenKind::Identifier(_) = &self.peek().kind {
+            if let Some(next) = self.peek_ahead(1) {
+                if next.kind == TokenKind::DoubleColon {
+                    if let Some(after) = self.peek_ahead(2) {
+                        return after.kind == TokenKind::LBrace;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    pub(crate) fn parse_namespace_decl(&mut self) -> Result<Decl, String> {
+        let name = self.get_identifier("Expected namespace name")?;
+        self.consume(TokenKind::DoubleColon, "Expected '::' after namespace name")?;
+        self.consume(TokenKind::LBrace, "Expected '{' to open namespace body")?;
+        let mut decls = Vec::new();
+        while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+            let start_pos = self.current;
+            match self.parse_statement(ScopeType::Global)? {
+                Some(Stmt::Declaration(d)) => decls.push(d),
+                Some(_) => {
+                    return Err(
+                        "Syntax Error: Only declarations (functions, types, namespaces, micros, variables) are allowed directly inside a namespace".to_string(),
+                    );
+                }
+                None => {
+                    if self.current == start_pos && !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                        self.advance();
+                    }
+                }
+            }
+        }
+        self.consume(TokenKind::RBrace, "Expected '}' to close namespace body")?;
+        if self.peek().kind == TokenKind::SemiColon {
+            self.advance();
+        }
+        Ok(Decl::NamespaceDecl {
+            visibility: Visibility::Private,
+            name,
+            decls,
+        })
     }
 
     pub(crate) fn is_block_decl_start(&self) -> bool {
@@ -2121,6 +2290,23 @@ impl Parser {
             } else {
                 op.as_str().to_string()
             };
+            let reassign_stmt = Stmt::ReassignStmt {
+                target: expr,
+                value,
+                op: op_str,
+            };
+            if self.peek().kind == TokenKind::If {
+                self.advance();
+                let cond = self.parse_postfix_condition()?;
+                if self.peek().kind == TokenKind::SemiColon || self.peek().kind == TokenKind::Comma {
+                    self.advance();
+                }
+                return Ok(Stmt::IfStmt {
+                    condition: cond,
+                    then_block: vec![reassign_stmt],
+                    else_block: None,
+                });
+            }
             if self.peek().kind == TokenKind::Comma {
                 self.advance();
             } else if self.peek().kind == TokenKind::SemiColon {
@@ -2131,11 +2317,7 @@ impl Parser {
                     "Expected ';' or ',' after reassignment",
                 )?;
             }
-            return Ok(Stmt::ReassignStmt {
-                target: expr,
-                value,
-                op: op_str,
-            });
+            return Ok(reassign_stmt);
         }
 
         // Command-style macro / function invocation: `callee arg1, arg2;`
@@ -2164,10 +2346,38 @@ impl Parser {
             }
         }
 
+        let base_stmt = Stmt::ExpressionStmt(expr);
+        if self.peek().kind == TokenKind::If {
+            self.advance();
+            let cond = self.parse_postfix_condition()?;
+            if self.peek().kind == TokenKind::SemiColon || self.peek().kind == TokenKind::Comma {
+                self.advance();
+            }
+            return Ok(Stmt::IfStmt {
+                condition: cond,
+                then_block: vec![base_stmt],
+                else_block: None,
+            });
+        }
         if self.peek().kind == TokenKind::SemiColon || self.peek().kind == TokenKind::Comma {
             self.advance();
         }
-        Ok(Stmt::ExpressionStmt(expr))
+        Ok(base_stmt)
+    }
+
+    pub(crate) fn parse_postfix_condition(&mut self) -> Result<Expr, String> {
+        let cond = if self.peek().kind == TokenKind::LParen {
+            self.advance();
+            let c = self.parse_expression()?;
+            self.consume(TokenKind::RParen, "Expected ')' after postfix if condition")?;
+            c
+        } else {
+            self.parse_expression()?
+        };
+        if self.peek().kind == TokenKind::Else {
+            return Err("Syntax Error: 'else' is not allowed in postfix if statements".to_string());
+        }
+        Ok(cond)
     }
 
     pub(crate) fn parse_expression_stmt(&mut self) -> Result<Stmt, String> {
@@ -2184,14 +2394,42 @@ impl Parser {
             self.advance(); // consume '=' or '->' or '+=' etc
             let value = self.parse_expression()?;
             let op_str = op.as_str().to_string();
+            let base_stmt = Stmt::ReassignStmt {
+                target: expr,
+                value,
+                op: op_str,
+            };
+            if self.peek().kind == TokenKind::If {
+                self.advance();
+                let cond = self.parse_postfix_condition()?;
+                self.consume(
+                    TokenKind::SemiColon,
+                    "Expected ';' after postfix if",
+                )?;
+                return Ok(Stmt::IfStmt {
+                    condition: cond,
+                    then_block: vec![base_stmt],
+                    else_block: None,
+                });
+            }
             self.consume(
                 TokenKind::SemiColon,
                 "Expected ';' after assignment statement",
             )?;
-            return Ok(Stmt::ReassignStmt {
-                target: expr,
-                value,
-                op: op_str,
+            return Ok(base_stmt);
+        }
+        let base_stmt = Stmt::ExpressionStmt(expr);
+        if self.peek().kind == TokenKind::If {
+            self.advance();
+            let cond = self.parse_postfix_condition()?;
+            self.consume(
+                TokenKind::SemiColon,
+                "Expected ';' after postfix if",
+            )?;
+            return Ok(Stmt::IfStmt {
+                condition: cond,
+                then_block: vec![base_stmt],
+                else_block: None,
             });
         }
         if self.peek().kind == TokenKind::SemiColon {
@@ -2200,7 +2438,7 @@ impl Parser {
                 "Expected ';' after expression statement",
             )?;
         }
-        Ok(Stmt::ExpressionStmt(expr))
+        Ok(base_stmt)
     }
 
     pub(crate) fn parse_try_catch_stmt(&mut self) -> Result<Stmt, String> {

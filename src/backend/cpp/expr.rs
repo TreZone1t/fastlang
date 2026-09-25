@@ -63,10 +63,7 @@ impl CodeGenerator {
                         match f {
                             Expr::Spread(inner) => {
                                 let c = self.visit_expression(inner);
-                                format!(
-                                    "using __elem_t = std::decay_t<decltype(*({}))>;",
-                                    c
-                                )
+                                format!("using __elem_t = std::decay_t<decltype(*({}))>;", c)
                             }
                             _ => {
                                 let c = self.visit_expression(f);
@@ -356,11 +353,11 @@ impl CodeGenerator {
                             format!("this->{}", safe_prop)
                         } else if self.raw_pointer_vars.contains(&obj_code) {
                             format!("{}->{}", obj_code, safe_prop)
-                        } else if self.is_property_access_forwarded(object, property) {
-                            if obj_code == "this" {
-                                format!("this->ptr->{}", safe_prop)
+                        } else if let Some(t) = self.extract_cpp_type_from_expr(object) {
+                            if t.ends_with('*') {
+                                format!("{}->{}", obj_code, safe_prop)
                             } else {
-                                format!("{}.ptr->{}", obj_code, safe_prop)
+                                format!("{}.{}", obj_code, safe_prop)
                             }
                         } else {
                             format!("{}.{}", obj_code, safe_prop)
@@ -393,12 +390,17 @@ impl CodeGenerator {
                     "".to_string()
                 };
 
-                if self.custom_scope_types.contains(&callee_code) {
-                    format!("{}{}()({})", callee_code, gen_code, args_code.join(", "))
-                } else if self.pointer_vars.contains(&callee_code) {
-                    format!("(*{}){}({})", callee_code, gen_code, args_code.join(", "))
+                let safe_callee = match &**callee {
+                    Expr::UnaryOp { .. } => format!("({})", callee_code),
+                    _ => callee_code,
+                };
+
+                if self.custom_scope_types.contains(&safe_callee) {
+                    format!("{}{}()({})", safe_callee, gen_code, args_code.join(", "))
+                } else if self.pointer_vars.contains(&safe_callee) {
+                    format!("(*{}){}({})", safe_callee, gen_code, args_code.join(", "))
                 } else {
-                    format!("{}{}({})", callee_code, gen_code, args_code.join(", "))
+                    format!("{}{}({})", safe_callee, gen_code, args_code.join(", "))
                 }
             }
             Expr::Instantiate { target, args } => {
@@ -522,11 +524,11 @@ impl CodeGenerator {
                     format!("this->{}", safe_prop)
                 } else if self.raw_pointer_vars.contains(&obj_code) {
                     format!("{}->{}", obj_code, safe_prop)
-                } else if self.is_property_access_forwarded(object, property) {
-                    if obj_code == "this" {
-                        format!("this->ptr->{}", safe_prop)
+                } else if let Some(t) = self.extract_cpp_type_from_expr(object) {
+                    if t.ends_with('*') {
+                        format!("{}->{}", obj_code, safe_prop)
                     } else {
-                        format!("{}.ptr->{}", obj_code, safe_prop)
+                        format!("{}.{}", obj_code, safe_prop)
                     }
                 } else {
                     format!("{}.{}", obj_code, safe_prop)
@@ -542,7 +544,8 @@ impl CodeGenerator {
                 } else if self.payload_enum_types.contains(namespace) {
                     format!("{}::{}()", namespace, prop_code)
                 } else {
-                    format!("{}::{}", namespace, prop_code)
+                    let clean_prop = prop_code.trim_end_matches("()");
+                    format!("{}::{}", namespace, clean_prop)
                 }
             }
             Expr::ArrayAllocate {
@@ -556,7 +559,10 @@ impl CodeGenerator {
                     format!("fastlang_array_create<{}>({})", cpp_type, init_code)
                 } else {
                     let size_code = self.visit_expression(size);
-                    format!("fastlang_array_alloc<{}>((size_t)({}))", cpp_type, size_code)
+                    format!(
+                        "fastlang_array_alloc<{}>((size_t)({}))",
+                        cpp_type, size_code
+                    )
                 }
             }
             Expr::New { type_node, target } => {
@@ -704,6 +710,115 @@ impl CodeGenerator {
                     format!("{}.{}({})", obj_code, safe_handle, args_code.join(", "))
                 }
             }
+            Expr::IfExpr {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let has_block = matches!(**then_branch, Expr::BlockExpr { .. })
+                    || matches!(**else_branch, Expr::BlockExpr { .. });
+                if !has_block {
+                    let cond_code = self.visit_expression(condition);
+                    let then_code = self.visit_expression(then_branch);
+                    let else_code = self.visit_expression(else_branch);
+                    format!("(({}) ? ({}) : ({}))", cond_code, then_code, else_code)
+                } else {
+                    let cond_code = self.visit_expression(condition);
+                    let old_out = std::mem::take(&mut self.output);
+                    let old_indent = self.indent_level;
+                    self.indent_level += 2;
+
+                    let then_code = match &**then_branch {
+                        Expr::BlockExpr {
+                            statements,
+                            final_expr,
+                        } => {
+                            for s in statements {
+                                self.visit_statement(s);
+                            }
+                            if let Some(f) = final_expr {
+                                let fc = self.visit_expression(f);
+                                self.emit(&format!("return {};", fc));
+                            }
+                            std::mem::take(&mut self.output)
+                        }
+                        _ => {
+                            let tc = self.visit_expression(then_branch);
+                            self.emit(&format!("return {};", tc));
+                            std::mem::take(&mut self.output)
+                        }
+                    };
+
+                    let else_code = match &**else_branch {
+                        Expr::BlockExpr {
+                            statements,
+                            final_expr,
+                        } => {
+                            for s in statements {
+                                self.visit_statement(s);
+                            }
+                            if let Some(f) = final_expr {
+                                let fc = self.visit_expression(f);
+                                self.emit(&format!("return {};", fc));
+                            }
+                            std::mem::take(&mut self.output)
+                        }
+                        _ => {
+                            let ec = self.visit_expression(else_branch);
+                            self.emit(&format!("return {};", ec));
+                            std::mem::take(&mut self.output)
+                        }
+                    };
+
+                    self.indent_level = old_indent;
+                    self.output = old_out;
+
+                    let base_indent = "    ".repeat(self.indent_level);
+                    let branch_indent = "    ".repeat(self.indent_level + 1);
+
+                    format!(
+                        "([&]() {{\n{}if ({}) {{\n{}{}}} else {{\n{}{}}}\n{}}}())",
+                        branch_indent,
+                        cond_code,
+                        then_code,
+                        branch_indent,
+                        else_code,
+                        branch_indent,
+                        base_indent
+                    )
+                }
+            }
+            Expr::BlockExpr {
+                statements,
+                final_expr,
+            } => {
+                let old_out = std::mem::take(&mut self.output);
+                let old_indent = self.indent_level;
+                self.indent_level += 1;
+
+                for s in statements {
+                    self.visit_statement(s);
+                }
+                if let Some(f) = final_expr {
+                    let fc = self.visit_expression(f);
+                    self.emit(&format!("return {};", fc));
+                }
+
+                let body_code = std::mem::take(&mut self.output);
+                self.indent_level = old_indent;
+                self.output = old_out;
+
+                let base_indent = "    ".repeat(self.indent_level);
+                format!("([&]() {{\n{}{}}}())", body_code, base_indent)
+            }
+            Expr::QuestionMark(inner) => {
+                let inner_code = self.visit_expression(inner);
+                let base_indent = "    ".repeat(self.indent_level);
+                format!(
+                    "([&]() {{\n{}    try {{\n{}        return ({});\n{}    }} catch (const fast_std::Error& __e) {{\n{}        throw __e;\n{}    }}\n{}}}())",
+                    base_indent, base_indent, inner_code, base_indent, base_indent, base_indent, base_indent
+                )
+            }
         }
     }
 
@@ -771,6 +886,7 @@ impl CodeGenerator {
                 } else if let Some(parent_type) = self.extract_cpp_type_from_expr(object) {
                     let clean_target = parent_type
                         .trim_start_matches("fast_std::")
+                        .trim_end_matches('*')
                         .split('<')
                         .next()
                         .unwrap_or(&parent_type);
@@ -788,33 +904,15 @@ impl CodeGenerator {
             Expr::LiteralBool(_) => Some("bool".to_string()),
             Expr::LiteralInt(_) => Some("int32_t".to_string()),
             Expr::LiteralFloat(_) => Some("double".to_string()),
+            Expr::IfExpr { then_branch, else_branch, .. } => {
+                self.extract_cpp_type_from_expr(then_branch)
+                    .or_else(|| self.extract_cpp_type_from_expr(else_branch))
+            }
+            Expr::BlockExpr { final_expr, .. } => {
+                final_expr.as_ref().and_then(|f| self.extract_cpp_type_from_expr(f))
+            }
+            Expr::QuestionMark(inner) => self.extract_cpp_type_from_expr(inner),
             _ => None,
         }
-    }
-
-    pub(crate) fn is_property_access_forwarded(&mut self, object: &Expr, property: &str) -> bool {
-        let safe_prop = crate::backend::cpp::stmt::cpp_safe_name(property);
-        if let Expr::Identifier(name) = object {
-            if self.pointer_vars.contains(name) {
-                return true;
-            }
-        }
-        if let Some(cpp_type) = self.extract_cpp_type_from_expr(object) {
-            let clean_type = cpp_type
-                .trim_start_matches("fast_std::")
-                .split('<')
-                .next()
-                .unwrap_or(&cpp_type)
-                .trim();
-            if self.property_access_types.contains(clean_type) {
-                if let Some(own_members) = self.type_own_members.get(clean_type) {
-                    if own_members.contains(&safe_prop) || own_members.contains(property) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-        }
-        false
     }
 }

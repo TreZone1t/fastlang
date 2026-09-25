@@ -175,7 +175,9 @@ impl Scanner {
             "extern" => Some(TokenKind::Extern),
             "undefined" => Some(TokenKind::Undefined),
             "unknown" => Some(TokenKind::TypeUnknown),
+            "auto" => Some(TokenKind::TypeAuto),
             "function" => Some(TokenKind::TypeFunction),
+            "number" => Some(TokenKind::TypeNumber),
 
             "_" => Some(TokenKind::Underscore),
             _ => None,
@@ -520,6 +522,7 @@ impl Scanner {
                 }
             }
             ';' => TokenKind::SemiColon,
+            '?' => TokenKind::Question,
             ',' => TokenKind::Comma,
             '.' => {
                 if let Some('.') = self.peek() {

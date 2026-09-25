@@ -95,7 +95,9 @@ pub enum TokenKind {
     TypeFn,     // Fn
     TypeLambda, // lambda
     TypeFunction, // function
+    TypeNumber,   // number, num
     TypeUnknown,  // unknown
+    TypeAuto,     // auto
     //scopes fields
     Init,      // init for getting constructor   //* with  oop scopes and custom
     Flag,      // flag      //* with  scope and fn and looped and block and custom
@@ -162,6 +164,7 @@ pub enum TokenKind {
     Walrus,      // :=
     Comma,       // ,
     SemiColon,   // ;
+    Question,    // ?
 
     EOF,
     Error(String), // lexical error with a human-readable message; scanning continues
@@ -264,6 +267,8 @@ impl TokenKind {
             TokenKind::Undefined => "undefined",
             TokenKind::Comma => ",",
             TokenKind::SemiColon => ";",
+            TokenKind::Question => "?",
+            TokenKind::TypeAuto => "auto",
             TokenKind::Error(v) => v,
             _ => "error",
         }
@@ -273,6 +278,7 @@ impl TokenKind {
     /// `as_str` falls through to the `_ => "error"` arm.
     pub fn type_keyword(&self) -> Option<&str> {
         match self {
+            TokenKind::TypeAuto => Some("auto"),
             TokenKind::TypeInt(_) => Some("int"),
             TokenKind::TypeUInt(_) => Some("uint"),
             TokenKind::TypeUSize => Some("usize"),
@@ -285,6 +291,9 @@ impl TokenKind {
             TokenKind::TypeVoid => Some("void"),
             TokenKind::TypeMethod => Some("method"),
             TokenKind::TypeFn => Some("Fn"),
+            TokenKind::TypeFunction => Some("function"),
+            TokenKind::TypeObject => Some("object"),
+            TokenKind::TypeNumber => Some("number"),
             TokenKind::Flag => Some("flag"),
             TokenKind::Using => Some("using"),
             _ => None,

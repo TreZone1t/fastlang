@@ -1,0 +1,6 @@
+// Negative test: Inline if expression without else must fail
+
+fn main() -> int32 {
+    auto x = if (true) 10;
+    return 0;
+}

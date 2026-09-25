@@ -1,0 +1,49 @@
+// Test 20: Super-types (number, function, object) and return type expressions
+
+number::int32 a = 10;
+number::float64 b = 20.5;
+number c = 30;
+number d = 40.5;
+num e = 50;
+
+function::fn say_hello() -> void {
+    println("hello from function::fn");  // EXPECT: hello from function::fn
+}
+
+function say_greet() -> void {
+    println("hello from function"); // EXPECT: hello from function
+}
+
+object Point = {
+    int32 x = 10;
+    int32 y = 20;
+};
+
+object MathNS :: {
+    fn square(val: int32) -> int32 {
+        return val * val;
+    }
+}
+
+fn get_x(p: Point) -> typeof(p).x {
+    return p.x;
+}
+
+fn echo_num(n: int32) -> typeof(n) {
+    return n;
+}
+
+fn main() -> int32 {
+    say_hello();
+    say_greet();
+     pt := Point();
+     px := get_x(pt);
+     en := echo_num(42);
+     sq := MathNS::square(5);
+    println(a);
+    println(px);
+    println(en);
+    println(sq);
+    println("SUPER TYPES AND RETURN EXPRESSIONS PASSED"); // EXPECT: SUPER TYPES AND RETURN EXPRESSIONS PASSED
+    return 0;
+}

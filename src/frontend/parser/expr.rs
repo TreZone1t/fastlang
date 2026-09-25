@@ -285,9 +285,29 @@ impl Parser {
                 self.advance();
                 Ok(BaseType::Unknown)
             }
+            TokenKind::TypeAuto => {
+                self.advance();
+                Ok(BaseType::Auto)
+            }
+            TokenKind::TypeNumber => {
+                self.advance();
+                if self.peek().kind == TokenKind::DoubleColon {
+                    self.advance(); // '::'
+                    let inner = self.parse_type()?;
+                    Ok(inner)
+                } else {
+                    Ok(BaseType::Number)
+                }
+            }
             TokenKind::TypeObject => {
                 self.advance();
-                Ok(BaseType::Object)
+                if self.peek().kind == TokenKind::DoubleColon {
+                    self.advance(); // '::'
+                    let inner = self.parse_type()?;
+                    Ok(inner)
+                } else {
+                    Ok(BaseType::Object)
+                }
             }
             TokenKind::Flag => {
                 self.advance();
@@ -314,14 +334,28 @@ impl Parser {
                     if let TokenKind::Identifier(id) = &self.peek().kind {
                         name = Some(id.clone());
                         self.advance();
+                    } else if matches!(self.peek().kind, TokenKind::Fn | TokenKind::TypeFn | TokenKind::TypeMethod | TokenKind::TypeLambda) {
+                        let sub_kind = match self.peek().kind {
+                            TokenKind::TypeMethod => "method",
+                            TokenKind::TypeLambda => "lambda",
+                            _ => "fn",
+                        };
+                        self.advance();
+                        name = Some(sub_kind.to_string());
                     }
                 }
 
                 let mut params = Vec::new();
                 let mut return_type = Box::new(BaseType::Unknown);
 
-                if self.peek().kind == TokenKind::Less {
+                let has_less = if self.peek().kind == TokenKind::Less {
                     self.advance(); // consume '<'
+                    true
+                } else {
+                    false
+                };
+
+                if has_less || self.peek().kind == TokenKind::LParen {
                     if self.peek().kind == TokenKind::LParen {
                         self.advance(); // consume '('
                         while !self.is_at_end() && self.peek().kind != TokenKind::RParen {
@@ -347,17 +381,20 @@ impl Parser {
                             || self.peek().kind == TokenKind::Arrow
                         {
                             self.advance(); // consume ',' or '->'
-                            if self.peek().kind != TokenKind::Greater {
+                            if !has_less || self.peek().kind != TokenKind::Greater {
                                 return_type = Box::new(self.parse_type()?);
                             }
                         }
                     } else if self.peek().kind != TokenKind::Greater {
                         return_type = Box::new(self.parse_type()?);
                     }
-                    self.consume(
-                        TokenKind::Greater,
-                        &format!("Expected '>' after {} type", kind_str),
-                    )?;
+
+                    if has_less {
+                        self.consume(
+                            TokenKind::Greater,
+                            &format!("Expected '>' after {} type", kind_str),
+                        )?;
+                    }
                 }
 
                 match kind_str {
@@ -464,9 +501,22 @@ impl Parser {
                 }
             }
             TokenKind::Identifier(n) => {
+                if n == "typeof" && self.peek_ahead(1).map(|t| &t.kind) == Some(&TokenKind::LParen) {
+                    let expr = self.parse_expression()?;
+                    return Ok(BaseType::TypeExpr(Box::new(expr)));
+                }
                 self.advance();
                 if self.current_generics.contains(&n) {
                     return Ok(BaseType::GenericParam(n));
+                }
+                if n == "num" {
+                    if self.peek().kind == TokenKind::DoubleColon {
+                        self.advance(); // '::'
+                        let inner = self.parse_type()?;
+                        return Ok(inner);
+                    } else {
+                        return Ok(BaseType::Number);
+                    }
                 }
                 let mut generics = Vec::new();
                 if self.peek().kind == TokenKind::Less {
@@ -561,6 +611,10 @@ impl Parser {
                     })
                 }
             }
+            TokenKind::LabelName(ref lbl) if lbl == "@compile" => {
+                let expr = self.parse_expression()?;
+                Ok(BaseType::TypeExpr(Box::new(expr)))
+            }
             _ => Err(format!(
                 "Syntax Error: Expected a type, found '{}'. at line {}, column {}",
                 self.peek().kind.as_str(),
@@ -605,6 +659,26 @@ impl Parser {
                 lhs = Expr::Cast {
                     expr: Box::new(lhs),
                     target_type,
+                };
+                continue;
+            }
+
+            if self.peek().kind == TokenKind::Question && self.is_ternary_ahead() {
+                let ternary_bp = 1;
+                if ternary_bp < min_bp {
+                    break;
+                }
+                self.advance(); // consume '?'
+                let then_branch = self.parse_expr(0)?;
+                self.consume(
+                    TokenKind::Colon,
+                    "Expected ':' in ternary conditional operator '?:'",
+                )?;
+                let else_branch = self.parse_expr(ternary_bp)?;
+                lhs = Expr::IfExpr {
+                    condition: Box::new(lhs),
+                    then_branch: Box::new(then_branch),
+                    else_branch: Box::new(else_branch),
                 };
                 continue;
             }
@@ -770,6 +844,38 @@ impl Parser {
                     params,
                     return_type,
                     body,
+                })
+            }
+
+            TokenKind::If => {
+                self.advance(); // consume 'if'
+                let condition = if self.peek().kind == TokenKind::LParen {
+                    self.advance();
+                    let c = self.parse_expression()?;
+                    self.consume(TokenKind::RParen, "Expected ')' after condition in if expression")?;
+                    c
+                } else {
+                    self.parse_expression()?
+                };
+
+                let then_branch = if self.peek().kind == TokenKind::LBrace {
+                    self.parse_expression_block()?
+                } else {
+                    self.parse_expression()?
+                };
+
+                self.consume(TokenKind::Else, "Syntax Error: 'else' is mandatory in if expression")?;
+
+                let else_branch = if self.peek().kind == TokenKind::LBrace {
+                    self.parse_expression_block()?
+                } else {
+                    self.parse_expression()?
+                };
+
+                Ok(Expr::IfExpr {
+                    condition: Box::new(condition),
+                    then_branch: Box::new(then_branch),
+                    else_branch: Box::new(else_branch),
                 })
             }
 
@@ -1178,6 +1284,59 @@ impl Parser {
         false
     }
 
+    pub(crate) fn is_ternary_ahead(&self) -> bool {
+        if self.peek().kind != TokenKind::Question {
+            return false;
+        }
+        let first_after = match self.peek_ahead(1) {
+            Some(t) => t,
+            None => return false,
+        };
+        match &first_after.kind {
+            TokenKind::Colon
+            | TokenKind::SemiColon
+            | TokenKind::Comma
+            | TokenKind::RParen
+            | TokenKind::RBracket
+            | TokenKind::RBrace
+            | TokenKind::Plus
+            | TokenKind::Minus
+            | TokenKind::Multiply
+            | TokenKind::Divide
+            | TokenKind::Mod
+            | TokenKind::Eq
+            | TokenKind::NotEq
+            | TokenKind::Less
+            | TokenKind::Greater
+            | TokenKind::LessEq
+            | TokenKind::GreaterEq
+            | TokenKind::And
+            | TokenKind::Or => return false,
+            _ => {}
+        }
+
+        let mut offset = 1;
+        let mut depth = 0;
+        while let Some(tok) = self.peek_ahead(offset) {
+            match &tok.kind {
+                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => depth += 1,
+                TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                    if depth > 0 {
+                        depth -= 1;
+                    } else {
+                        return false;
+                    }
+                }
+                TokenKind::Colon if depth == 0 => return true,
+                TokenKind::SemiColon if depth == 0 => return false,
+                TokenKind::EOF => return false,
+                _ => {}
+            }
+            offset += 1;
+        }
+        false
+    }
+
     pub(crate) fn postfix_binding_power(&self) -> Option<u8> {
         match &self.peek().kind {
             TokenKind::Dot => Some(20),         // property access: obj.field
@@ -1201,6 +1360,13 @@ impl Parser {
             }
             TokenKind::PlusPlus => Some(21),   // postfix ++
             TokenKind::MinusMinus => Some(21), // postfix --
+            TokenKind::Question => {
+                if !self.is_ternary_ahead() {
+                    Some(21) // postfix ?
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -1292,6 +1458,8 @@ impl Parser {
 
                 let namespace = if let Expr::Identifier(n) = lhs {
                     n
+                } else if let Expr::NamespaceAccess { namespace: prev_ns, property: prev_prop } = lhs {
+                    format!("{}::{}", prev_ns, prev_prop.as_str())
                 } else {
                     return Err(
                         "Syntax Error: Expected namespace identifier before '::'".to_string()
@@ -1398,6 +1566,11 @@ impl Parser {
                     target: Box::new(lhs),
                     args: vec![Expr::ObjectLiteral(stmts)],
                 })
+            }
+
+            TokenKind::Question => {
+                self.advance();
+                Ok(Expr::QuestionMark(Box::new(lhs)))
             }
 
             other => Err(format!(
@@ -1521,5 +1694,41 @@ impl Parser {
                 body: vec![Stmt::ExpressionStmt(expr)],
             })
         }
+    }
+
+    pub(crate) fn parse_expression_block(&mut self) -> Result<Expr, String> {
+        self.consume(TokenKind::LBrace, "Expected '{' to open expression block")?;
+        let mut stmts = Vec::new();
+        let mut final_expr = None;
+
+        while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+            match self.parse_statement(ScopeType::Block) {
+                Ok(Some(stmt)) => {
+                    if self.peek().kind == TokenKind::RBrace {
+                        if let Stmt::ExpressionStmt(expr) = stmt {
+                            if self.previous(None).kind != TokenKind::SemiColon {
+                                final_expr = Some(Box::new(expr));
+                                break;
+                            } else {
+                                stmts.push(Stmt::ExpressionStmt(expr));
+                            }
+                        } else {
+                            stmts.push(stmt);
+                        }
+                    } else {
+                        stmts.push(stmt);
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => return Err(e),
+            }
+        }
+
+        self.consume(TokenKind::RBrace, "Expected '}' to close expression block")?;
+
+        Ok(Expr::BlockExpr {
+            statements: stmts,
+            final_expr,
+        })
     }
 }

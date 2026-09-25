@@ -51,6 +51,8 @@ impl SemanticAnalyzer {
                 | "type"
                 | "any"
                 | "unknown"
+                | "number"
+                | "num"
         )
     }
 
@@ -118,6 +120,8 @@ impl SemanticAnalyzer {
             || expected == "any"
             || expected == "unknown"
             || actual == "unknown"
+            || expected == "auto"
+            || actual == "auto"
             || actual == "undefined"
         {
             return true;
@@ -138,15 +142,53 @@ impl SemanticAnalyzer {
             } else {
                 expected
             };
-            if other == "object"
-                || self.is_class_type(other)
-                || self.is_struct_or_blueprint_type(other)
-                || other.starts_with("class::")
-                || other.starts_with("struct::")
-                || other.starts_with("blueprint::")
-                || other.starts_with("class<")
-                || other.starts_with("struct<")
-                || other.starts_with("blueprint<")
+            let other_clean = if let Some(stripped) = other.strip_prefix("object::") {
+                stripped
+            } else {
+                other
+            };
+            if other_clean == "object"
+                || self.is_class_type(other_clean)
+                || self.is_struct_or_blueprint_type(other_clean)
+                || other_clean.starts_with("class::")
+                || other_clean.starts_with("struct::")
+                || other_clean.starts_with("blueprint::")
+                || other_clean.starts_with("class<")
+                || other_clean.starts_with("struct<")
+                || other_clean.starts_with("blueprint<")
+                || other_clean.starts_with("enum<")
+                || other_clean.starts_with("enum::")
+            {
+                return true;
+            }
+        }
+        if expected == "number"
+            || expected == "num"
+            || expected.starts_with("number<")
+            || actual == "number"
+            || actual == "num"
+            || actual.starts_with("number<")
+        {
+            let other = if expected == "number" || expected == "num" || expected.starts_with("number<") {
+                actual
+            } else {
+                expected
+            };
+            let other_clean = if let Some(stripped) = other.strip_prefix("number::") {
+                stripped
+            } else if let Some(stripped) = other.strip_prefix("num::") {
+                stripped
+            } else {
+                other
+            };
+            let other_lower = other_clean.to_lowercase();
+            if other_lower == "number"
+                || other_lower == "num"
+                || other_lower.starts_with("int")
+                || other_lower.starts_with("uint")
+                || other_lower.starts_with("float")
+                || other_lower == "usize"
+                || other_lower == "isize"
             {
                 return true;
             }
@@ -161,14 +203,16 @@ impl SemanticAnalyzer {
             } else {
                 expected
             };
-            let other_lower = other.to_lowercase();
-            if other == "function"
+            let other_clean = if let Some(stripped) = other.strip_prefix("function::") {
+                stripped
+            } else {
+                other
+            };
+            let other_lower = other_clean.to_lowercase();
+            if other_lower == "function"
                 || other_lower.starts_with("fn")
                 || other_lower.starts_with("lambda")
-                || other_lower.starts_with("macro")
                 || other_lower.starts_with("method")
-                || other_lower.starts_with("micro")
-                || other_lower.starts_with("machine")
             {
                 return true;
             }

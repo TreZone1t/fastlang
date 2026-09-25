@@ -21,7 +21,7 @@ impl Parser {
 
         if self.peek().kind == TokenKind::Fn || self.peek().kind == TokenKind::TypeMethod {
             self.advance();
-        } else {
+        } else if !matches!(self.peek().kind, TokenKind::Identifier(_)) {
             return Err("Expected 'fn' or 'method'".to_string());
         }
         let name = self.get_identifier("Expected function name")?;
@@ -61,6 +61,9 @@ impl Parser {
         self.consume(TokenKind::Arrow, "Expected '->' after function parameters")?;
         if !(self.peek().kind == TokenKind::LBrace || self.peek().kind == TokenKind::SemiColon) {
             return_type = self.parse_type()?;
+            if self.peek().kind == TokenKind::Pipe || self.peek().kind == TokenKind::Or {
+                return Err("Syntax Error: Union types are not supported in return type".to_string());
+            }
         }
 
         if is_abstract {
@@ -73,7 +76,26 @@ impl Parser {
             self.consume(TokenKind::LBrace, "Expected '{' to open function body")?;
             while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
                 match self.parse_statement(ScopeType::Fn) {
-                    Ok(Some(stmt)) => statement_block.push(stmt),
+                    Ok(Some(stmt)) => {
+                        if self.peek().kind == TokenKind::RBrace {
+                            match &stmt {
+                                Stmt::ExpressionStmt(expr) => {
+                                    if self.previous(None).kind != TokenKind::SemiColon {
+                                        statement_block.push(Stmt::ReturnStmt(Some(expr.clone())));
+                                        continue;
+                                    }
+                                }
+                                Stmt::CallStmt(expr) => {
+                                    if self.previous(None).kind != TokenKind::SemiColon {
+                                        statement_block.push(Stmt::ReturnStmt(Some(expr.clone())));
+                                        continue;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        statement_block.push(stmt);
+                    }
                     Ok(None) => {
                         if !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
                             self.advance();

@@ -1,0 +1,12 @@
+// Fail Test 35: Accessing non-existent member via @compile::access or property access must fail at compile time
+blueprint Point = {
+    int32 x;
+    int32 y;
+}
+
+fn main() -> int32 {
+    Point p = Point { x = 1, y = 2 };
+    // This must fail because 'z' is not a member of Point
+    raw_ptr<int32> ptr = @compile::access(p, "non_existent_z");
+    return 0;
+}

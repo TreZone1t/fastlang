@@ -120,6 +120,115 @@ fn test_assign_handles_dispatch() -> void {
     println("Reassign equal: ", b2.log, " val=", b2.val); // EXPECT: Reassign equal: equal:200 val=200
 }
 
+// ==============================================================================
+// Comprehensive Access Handles Test: property_access, handle_access, namespace_access, arrow, fat_arrow
+// ==============================================================================
+
+blueprint InnerPayload = {
+    int32 code;
+    str message;
+}
+
+impl InnerPayload {
+    fn get_code() -> int32 {
+        return this.code;
+    }
+}
+
+blueprint AccessOverload = {
+    raw_ptr<InnerPayload> ptr = undefined;
+}
+
+impl AccessOverload {
+    handle -> {
+        fn property_access(prop: MemberType) -> raw_ptr<unknown> {
+            return @compile::access(this.ptr, prop);
+        }
+        fn handle_access(prop: MemberType) -> raw_ptr<unknown> {
+            return @compile::access(this.ptr, prop);
+        }
+        fn namespace_access(prop: MemberType) -> raw_ptr<unknown> {
+            return @compile::access(this.ptr, prop);
+        }
+        fn arrow(prop: MemberType) -> raw_ptr<unknown> {
+            return @compile::access(this.ptr, prop);
+        }
+        fn fat_arrow(prop: MemberType) -> raw_ptr<unknown> {
+            return @compile::access(this.ptr, prop);
+        }
+    }
+}
+
+fn test_comprehensive_access_handles() -> void {
+    InnerPayload payload = InnerPayload { code = 200, message = "Success" };
+    AccessOverload proxy = AccessOverload { ptr = &payload };
+
+    // 1. Property Access via (.)
+    println("Property access (.) code: ", proxy.code); // EXPECT: Property access (.) code: 200
+    println("Property access (.) msg: ", proxy.message); // EXPECT: Property access (.) msg: Success
+
+    // 2. Handle Access via (-.)
+    println("Handle access (-.) code: ", proxy-.code); // EXPECT: Handle access (-.) code: 200
+
+    // 3. Namespace Access via (::)
+    println("Namespace access (::) code: ", proxy::code); // EXPECT: Namespace access (::) code: 200
+
+    // 4. Arrow Access via (->)
+    println("Arrow access (->) code: ", proxy->code); // EXPECT: Arrow access (->) code: 200
+
+    // 5. Fat Arrow Access via (=>)
+    println("Fat arrow access (=>) code: ", proxy=>code); // EXPECT: Fat arrow access (=>) code: 200
+
+    // Test writing through access handles:
+    proxy->code = 300;
+    println("After arrow write (->): ", proxy.code); // EXPECT: After arrow write (->): 300
+
+    proxy=>code = 400;
+    println("After fat_arrow write (=>): ", proxy.code); // EXPECT: After fat_arrow write (=>): 400
+
+    proxy-.code = 500;
+    println("After handle_access write (-.): ", proxy.code); // EXPECT: After handle_access write (-.): 500
+
+    proxy::code = 600;
+    println("After namespace_access write (::): ", proxy.code); // EXPECT: After namespace_access write (::): 600
+
+    proxy.code = 700;
+    println("After property_access write (.): ", proxy.code); // EXPECT: After property_access write (.): 700
+    @compile::access(proxy.ptr, MemberType {
+        name = "code",
+        ty = int32,
+    }) = 800;
+    println("After handle_access write (@compile::access): ", proxy.code); // EXPECT: After handle_access write (@compile::access): 800
+
+    // 6. Method Call via access handles:
+    println("Method call via (.) get_code: ", proxy.get_code()); // EXPECT: Method call via (.) get_code: 800
+    println("Method call via (->) get_code: ", proxy->get_code()); // EXPECT: Method call via (->) get_code: 800
+}
+
+fn add_nums(a: int32, b: int32) -> int32 {
+    return a + b;
+}
+
+fn log_val(x: int32) -> void {
+    println("log_val called with: ", x);
+}
+
+fn test_callable_ref_auto_return() -> void {
+    mutRef<fn(int32, int32) -> int32> r_add = &add_nums;
+    auto res1 = r_add(15, 25);
+    println("mutRef add result: ", res1); // EXPECT: mutRef add result: 40
+
+    auto res2 = r_add-.call(30, 70);
+    println("mutRef add via -.call: ", res2); // EXPECT: mutRef add via -.call: 100
+
+    ref<fn(int32, int32) -> int32> ref_add = &add_nums;
+    auto res3 = ref_add(100, 200);
+    println("ref add result: ", res3); // EXPECT: ref add result: 300
+
+    mutRef<fn(int32) -> void> r_log = &log_val;
+    r_log(999); // EXPECT: log_val called with: 999
+}
+
 fn main() -> int32 {
     test_direct_handle_access();
     test_custom_iter_handle();
@@ -127,6 +236,9 @@ fn main() -> int32 {
     test_for_in_with_handles();
     test_mut_ref_set_rebind();
     test_assign_handles_dispatch();
+    test_comprehensive_access_handles();
+    test_callable_ref_auto_return();
     return 0;
 }
+
 

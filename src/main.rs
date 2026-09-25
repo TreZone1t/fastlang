@@ -419,18 +419,19 @@ fn prune_decl_for_reachability(
 }
 
 fn print_help() {
-    println!(r#"FastLang Compiler (fast_lang) v0.1.0
-High-performance compiled language with zero-cost custom scopes and Coroutine State Machines.
+    println!(r#"FastLang Compiler (fast_lang) v0.1.5-stable
+High-performance compiled language with fine-grained memory management and explicit scopes.
 
 USAGE:
     fast_lang [OPTIONS] <SOURCE_FILE>
 
 ARGUMENTS:
-    <SOURCE_FILE>                  Path to the main entry source file (.fs)
+    <SOURCE_FILE>                  Path to the main entry source file (.fast or .fs)
 
 OPTIONS:
     -h, --help, -help              Print this help information and exit
     -d, --debug                    Enable verbose debug and compilation trace output
+    --debug-error, --debug-errors  Accumulate and report all semantic errors without generating code
     -o, --output <PATH>            Specify output binary or build directory path
     -I, --include <DIR>            Add module search directory
     -b, --backend <BACKEND>        Set code generator backend: 'cpp' (default) or 'cranelift'
@@ -446,11 +447,11 @@ SUBCOMMANDS:
     clean [PATH]                   Delete build/ directory and cached artifacts in PATH (or cwd)
 
 EXAMPLES:
-    fast_lang app.fs
-    fast_lang app.fs -o build/app.exe
-    fast_lang app.fs --ast-file app_ast.json
-    fast_lang app.fs --emit-cpp
-    fast_lang app.fs -I ./std/ -d
+    fast_lang main.fast
+    fast_lang main.fast -o build/main.exe
+    fast_lang main.fast --debug-error
+    fast_lang main.fast --emit-cpp
+    fast_lang main.fast -I ./std/ -d
     fast_lang clean
 "#);
 }
@@ -498,6 +499,7 @@ fn main() {
     let mut ast_output_file: Option<String> = None;
     let mut emit_ast = false;
     let mut clean_artifacts = false;
+    let mut debug_errors = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -548,6 +550,9 @@ fn main() {
             }
         } else if args[i] == "--debug" || args[i] == "-d" {
             debug = true;
+            i += 1;
+        } else if args[i] == "--debug-error" || args[i] == "--debug-errors" {
+            debug_errors = true;
             i += 1;
         } else if (args[i] == "-o" || args[i] == "--output") && i + 1 < args.len() {
             custom_output = Some(args[i + 1].clone());
@@ -658,6 +663,7 @@ fn main() {
     main_analyzer.current_file = path.clone();
     main_analyzer.source_code = std::fs::read_to_string(&path).ok();
     main_analyzer.current_context = Some("main".to_string());
+    main_analyzer.debug_errors = debug_errors;
     for (k, v) in all_module_dep_graphs {
         main_analyzer.dependency_graph.entry(k).or_default().extend(v);
     }
@@ -697,6 +703,11 @@ fn main() {
             eprintln!("{}", e);
             std::process::exit(1);
         }
+    }
+
+    if debug_errors {
+        println!("Debug Errors check finished. No critical errors found.");
+        return;
     }
 
     let mut combined_fn_overloads: HashMap<String, Vec<crate::middle_end::semantic::environment::FnSignature>> = HashMap::new();
@@ -892,6 +903,7 @@ fn main() {
     let mut accumulated_primitive_impl_methods = std::collections::HashMap::new();
     let mut accumulated_property_access_types = std::collections::HashSet::new();
     let mut accumulated_type_own_members = std::collections::HashMap::new();
+    let mut accumulated_struct_field_types = std::collections::HashMap::new();
 
     let base_std_names = ["std/types", "std/error", "std/io", "std/string", "std/range", "std"];
     let mut base_std_headers = Vec::new();
@@ -937,8 +949,10 @@ fn main() {
         codegen.primitive_impl_methods = accumulated_primitive_impl_methods.clone();
         codegen.property_access_types = accumulated_property_access_types.clone();
         codegen.type_own_members = accumulated_type_own_members.clone();
+        codegen.struct_field_types = accumulated_struct_field_types.clone();
         let module_cpp = codegen.generate(&filtered_ast, false, false);
         accumulated_custom_scopes.extend(codegen.custom_scope_types.clone());
+        accumulated_struct_field_types.extend(codegen.struct_field_types.clone());
         for (k, v) in codegen.primitive_impl_methods {
             let list = accumulated_primitive_impl_methods.entry(k).or_insert_with(Vec::new);
             for t in v {
@@ -1007,6 +1021,7 @@ fn main() {
     main_codegen.primitive_impl_methods = accumulated_primitive_impl_methods;
     main_codegen.property_access_types = accumulated_property_access_types;
     main_codegen.type_own_members = accumulated_type_own_members;
+    main_codegen.struct_field_types = accumulated_struct_field_types;
     let pruned_main_ast = prune_ast_for_reachability(&program.main_ast, &reachable_symbols, &combined_fn_overloads, true);
     let main_cpp = main_codegen.generate(&pruned_main_ast, false, true);
 

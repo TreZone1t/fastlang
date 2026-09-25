@@ -191,14 +191,48 @@ pub fn has_compile_operations(stmts: &[Stmt]) -> bool {
     stmts.iter().any(check_stmt)
 }
 
+fn substitute_this_in_expr(expr: &Expr, replacement: &Expr) -> Expr {
+    match expr {
+        Expr::This => replacement.clone(),
+        Expr::PropertyAccess { object, property } => Expr::PropertyAccess {
+            object: Box::new(substitute_this_in_expr(object, replacement)),
+            property: property.clone(),
+        },
+        Expr::UnaryOp { operator, operand } => Expr::UnaryOp {
+            operator: operator.clone(),
+            operand: Box::new(substitute_this_in_expr(operand, replacement)),
+        },
+        Expr::BinaryOp { left, operator, right } => Expr::BinaryOp {
+            left: Box::new(substitute_this_in_expr(left, replacement)),
+            operator: operator.clone(),
+            right: Box::new(substitute_this_in_expr(right, replacement)),
+        },
+        _ => expr.clone(),
+    }
+}
+
+fn expr_contains_this(expr: &Expr) -> bool {
+    match expr {
+        Expr::This => true,
+        Expr::PropertyAccess { object, .. } => expr_contains_this(object),
+        Expr::UnaryOp { operand, .. } => expr_contains_this(operand),
+        Expr::BinaryOp { left, right, .. } => expr_contains_this(left) || expr_contains_this(right),
+        Expr::Call { callee, args, .. } => expr_contains_this(callee) || args.iter().any(expr_contains_this),
+        _ => false,
+    }
+}
+
 pub struct Interpreter {
     pub env: InterpreterEnv,
     pub functions: HashMap<String, (Vec<BaseType>, Vec<Param>, Vec<Stmt>)>,
+    pub micros: HashMap<String, (Vec<Param>, Vec<Stmt>)>,
     pub var_types: HashMap<String, String>,
     pub current_env: Option<Rc<RefCell<Environment>>>,
     pub fn_overloads: HashMap<String, Vec<FnSignature>>,
     pub split_functions: HashMap<String, (Vec<Param>, Vec<(Option<Expr>, String)>)>,
     pub in_function_body: bool,
+    pub current_switch_type: Option<String>,
+    pub current_type: Option<String>,
 }
 
 impl Interpreter {
@@ -206,11 +240,14 @@ impl Interpreter {
         Self {
             env: InterpreterEnv::new(),
             functions: HashMap::new(),
+            micros: HashMap::new(),
             var_types: HashMap::new(),
             current_env: None,
             fn_overloads: HashMap::new(),
             split_functions: HashMap::new(),
             in_function_body: false,
+            current_switch_type: None,
+            current_type: None,
         }
     }
 
@@ -563,6 +600,39 @@ impl Interpreter {
                     _ => Ok(Expr::LiteralUndefined),
                 }
             }
+            Expr::IfExpr {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let cond_val = self.eval_expr(condition)?;
+                let is_true = match cond_val {
+                    Expr::LiteralBool(b) => b,
+                    Expr::LiteralInt(i) => i != 0,
+                    _ => false,
+                };
+                if is_true {
+                    self.eval_expr(then_branch)
+                } else {
+                    self.eval_expr(else_branch)
+                }
+            }
+            Expr::BlockExpr {
+                statements,
+                final_expr,
+            } => {
+                self.env.push_scope();
+                for stmt in statements {
+                    let _ = self.eval_stmt(stmt)?;
+                }
+                let res = if let Some(f) = final_expr {
+                    self.eval_expr(f)
+                } else {
+                    Ok(Expr::LiteralVoid)
+                };
+                self.env.pop_scope();
+                res
+            }
             Expr::PropertyAccess { object, property } => {
                 let obj_val = self.eval_expr(object).unwrap_or_else(|_| *object.clone());
                 let type_name = match &obj_val {
@@ -576,6 +646,11 @@ impl Interpreter {
                     }
                     _ => "".to_string(),
                 };
+                let is_type_reflection = matches!(obj_val, Expr::LiteralString(ref s) if s.starts_with("type<"))
+                    || (!type_name.is_empty() && is_known_type_name(&type_name));
+                if !is_type_reflection {
+                    return Err("PropertyAccess on non-type cannot be evaluated at compile time".to_string());
+                }
                 let ft = self.get_fast_type(&type_name);
                 match property.as_str() {
                     "is_primitive" => Ok(Expr::LiteralBool(ft.is_primitive())),
@@ -594,7 +669,7 @@ impl Interpreter {
                         if matches!(obj_val, Expr::LiteralString(ref s) if s.starts_with("type<")) {
                             Ok(Expr::LiteralString(ft.as_str()))
                         } else {
-                            Ok(Expr::LiteralString(self.format_expr_for_print(&obj_val)))
+                            Err("as_str only supported on type reflection in comptime eval".to_string())
                         }
                     }
                     "size" => Ok(Expr::LiteralInt(ft.size() as i128)),
@@ -827,8 +902,11 @@ impl Interpreter {
                         }
                         _ => "".to_string(),
                     };
-                    let ft = self.get_fast_type(&type_name);
-                    match property.as_str() {
+                    let is_type_reflection = matches!(obj_val, Expr::LiteralString(ref s) if s.starts_with("type<"))
+                        || (!type_name.is_empty() && is_known_type_name(&type_name));
+                    if is_type_reflection {
+                        let ft = self.get_fast_type(&type_name);
+                        match property.as_str() {
                         "is_primitive" => return Ok(Expr::LiteralBool(ft.is_primitive())),
                         "is_pointer" => return Ok(Expr::LiteralBool(ft.is_pointer())),
                         "is_array" => return Ok(Expr::LiteralBool(ft.is_array())),
@@ -888,11 +966,19 @@ impl Interpreter {
                         "as_str" => {
                             if matches!(obj_val, Expr::LiteralString(ref s) if s.starts_with("type<")) {
                                 return Ok(Expr::LiteralString(ft.as_str()));
-                            } else {
+                            } else if is_literal(&obj_val) {
                                 return Ok(Expr::LiteralString(self.format_expr_for_print(&obj_val)));
+                            } else {
+                                return Err("as_str only supported on literal or type in comptime eval".to_string());
                             }
                         }
-                        "size" => return Ok(Expr::LiteralInt(ft.size() as i128)),
+                        "size" => {
+                            if matches!(obj_val, Expr::LiteralString(ref s) if s.starts_with("type<")) {
+                                return Ok(Expr::LiteralInt(ft.size() as i128));
+                            } else {
+                                return Err("size method only supported on type reflection at compile time".to_string());
+                            }
+                        }
                         "default" => {
                             if let Some(def) = self.default_for_type(&type_name) {
                                 return Ok(def);
@@ -932,6 +1018,7 @@ impl Interpreter {
                                 ));
                             }
                         }
+                    }
                     }
                 }
 
@@ -1003,6 +1090,60 @@ impl Interpreter {
                     return self.fastlang_rand(&target_type, &evaled_args);
                 }
 
+                if target_fn_name == "@compile::access" || target_fn_name == "access" {
+                    if args.len() < 2 {
+                        return self.fastlang_throw("@compile::access requires at least 2 arguments: (target, prop)");
+                    }
+                    let target_expr = &args[0];
+                    let prop_expr = &args[1];
+
+                    if expr_contains_this(target_expr) {
+                        return Ok(expr.clone());
+                    }
+
+                    let (prop_name, expected_ty) = self.extract_prop_name_and_type(prop_expr);
+                    if prop_name.is_empty() {
+                        return self.fastlang_throw(
+                            "@compile::access requires a valid member name in member specification",
+                        );
+                    }
+
+                    let target_type = self.get_expr_type(target_expr);
+                    let clean_target = self.extract_clean_blueprint_name(&target_type);
+
+                    if let Some(ref env_rc) = self.current_env.clone() {
+                        let env = env_rc.borrow();
+                        if let Some(bp) = env.lookup_blueprint(&clean_target) {
+                            let has_field = bp.fields.get(&prop_name);
+                            let has_method = bp.methods.get(&prop_name);
+                            let has_handle = bp.handle_signatures.get(&prop_name);
+                            if has_field.is_none() && has_method.is_none() && has_handle.is_none() {
+                                return self.fastlang_throw(&format!(
+                                    "Member '{}' not found on type '{}'",
+                                    prop_name, clean_target
+                                ));
+                            }
+                            if let Some(ref expected) = expected_ty {
+                                if let Some(field_ty) = has_field {
+                                    let clean_actual = self.extract_clean_blueprint_name(&field_ty.as_str());
+                                    let clean_expected = self.extract_clean_blueprint_name(expected);
+                                    if clean_actual != clean_expected && field_ty.as_str() != *expected {
+                                        return self.fastlang_throw(&format!(
+                                            "Member '{}' on type '{}' has type '{}', but expected '{}'",
+                                            prop_name, clean_target, field_ty.as_str(), expected
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    return Ok(Expr::PropertyAccess {
+                        object: Box::new(target_expr.clone()),
+                        property: prop_name,
+                    });
+                }
+
                 if target_fn_name.starts_with("@compile::")
                     && !self.functions.contains_key(&target_fn_name)
                 {
@@ -1016,6 +1157,36 @@ impl Interpreter {
                             "Unknown compile intrinsic '{}'",
                             target_fn_name
                         ));
+                    }
+                }
+                if let Some((params, body)) = self.micros.get(&target_fn_name).cloned() {
+                    let mut eval_args = Vec::new();
+                    for a in args {
+                        eval_args.push(self.eval_expr(a).unwrap_or_else(|_| a.clone()));
+                    }
+                    let mut micro_interp = Interpreter {
+                        env: InterpreterEnv::with_parent(self.env.clone()),
+                        functions: self.functions.clone(),
+                        micros: self.micros.clone(),
+                        var_types: self.var_types.clone(),
+                        current_env: self.current_env.clone(),
+                        fn_overloads: self.fn_overloads.clone(),
+                        split_functions: self.split_functions.clone(),
+                        in_function_body: true,
+                        current_switch_type: None,
+                        current_type: self.current_type.clone(),
+                    };
+                    for (i, param) in params.iter().enumerate() {
+                        if let Some(arg_val) = eval_args.get(i) {
+                            micro_interp.env.define(param.name.clone(), arg_val.clone());
+                            let arg_t = self.get_expr_type(arg_val);
+                            micro_interp.var_types.insert(param.name.clone(), arg_t);
+                        }
+                    }
+                    if let Some(ret_val) = micro_interp.eval_method(&body, &params, &eval_args)? {
+                        return Ok(ret_val);
+                    } else {
+                        return Ok(Expr::LiteralVoid);
                     }
                 }
 
@@ -1049,11 +1220,14 @@ impl Interpreter {
                         let mut func_interp = Interpreter {
                             env: InterpreterEnv::with_parent(self.env.clone()),
                             functions: self.functions.clone(),
+                            micros: self.micros.clone(),
                             var_types: self.var_types.clone(),
                             current_env: self.current_env.clone(),
                             fn_overloads: self.fn_overloads.clone(),
                             split_functions: self.split_functions.clone(),
                             in_function_body: true,
+                            current_switch_type: None,
+                            current_type: self.current_type.clone(),
                         };
                         for (g_name, g_type) in &generic_map {
                             func_interp.env.define(
@@ -1308,6 +1482,142 @@ impl Interpreter {
         }
     }
 
+    pub fn extract_clean_blueprint_name(&self, type_str: &str) -> String {
+        let mut clean = type_str.trim();
+        loop {
+            let mut changed = false;
+            for prefix in &["blueprint::", "struct::", "class::", "enum::", "fast_std::"] {
+                if clean.starts_with(prefix) {
+                    clean = &clean[prefix.len()..];
+                    changed = true;
+                }
+            }
+            for prefix in &["raw_ptr<", "address<", "type<"] {
+                if clean.starts_with(prefix) && clean.ends_with('>') {
+                    clean = &clean[prefix.len()..clean.len() - 1];
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let base = clean.split('<').next().unwrap_or(clean);
+        base.trim_end_matches('*').trim_end_matches('&').trim().to_string()
+    }
+
+    pub fn substitute_generics_in_type_str(
+        &self,
+        type_str: &str,
+        generic_params: &[String],
+        concrete_type_str: &str,
+    ) -> String {
+        if generic_params.is_empty() || !concrete_type_str.contains('<') {
+            return type_str.to_string();
+        }
+        let start = match concrete_type_str.find('<') {
+            Some(i) => i,
+            None => return type_str.to_string(),
+        };
+        let end = match concrete_type_str.rfind('>') {
+            Some(i) => i,
+            None => return type_str.to_string(),
+        };
+        let args_slice = &concrete_type_str[start + 1..end];
+        let args: Vec<String> = args_slice
+            .split(',')
+            .map(|s| self.extract_clean_blueprint_name(s))
+            .collect();
+        let mut result = type_str.to_string();
+        for (i, p) in generic_params.iter().enumerate() {
+            let param_name = p.trim_start_matches("...");
+            if let Some(arg) = args.get(i) {
+                let patterns = [
+                    (format!("<{}>", param_name), format!("<{}>", arg)),
+                    (format!("<{},", param_name), format!("<{},", arg)),
+                    (format!(", {}>", param_name), format!(", {}>", arg)),
+                    (format!(", {},", param_name), format!(", {},", arg)),
+                ];
+                for (from, to) in &patterns {
+                    result = result.replace(from, to);
+                }
+                if result == param_name {
+                    result = arg.clone();
+                }
+            }
+        }
+        result
+    }
+
+    pub fn extract_prop_name(&mut self, expr: &Expr) -> String {
+        self.extract_prop_name_and_type(expr).0
+    }
+
+    pub fn extract_prop_name_and_type(&mut self, expr: &Expr) -> (String, Option<String>) {
+        match expr {
+            Expr::LiteralString(s) => (s.clone(), None),
+            Expr::Identifier(id) => {
+                if let Ok(val) = self.env.get(id) {
+                    match &val {
+                        Expr::LiteralString(s) => (s.clone(), None),
+                        Expr::ObjectLiteral(_) | Expr::Instantiate { .. } => {
+                            self.extract_prop_name_and_type(&val)
+                        }
+                        _ => (id.clone(), None),
+                    }
+                } else {
+                    (id.clone(), None)
+                }
+            }
+            Expr::ObjectLiteral(stmts) => {
+                let mut name_opt = None;
+                let mut type_opt = None;
+                for stmt in stmts {
+                    match stmt {
+                        Stmt::Declaration(Decl::VarDecl { name, value, .. }) => {
+                            if name == "name" {
+                                name_opt = Some(self.extract_string_from_expr(value));
+                            } else if name == "ty" || name == "type" {
+                                type_opt = Some(self.extract_type_or_name(value));
+                            }
+                        }
+                        Stmt::ReassignStmt { target, value, .. } => {
+                            if let Expr::Identifier(field_name) = target {
+                                if field_name == "name" {
+                                    name_opt = Some(self.extract_string_from_expr(value));
+                                } else if field_name == "ty" || field_name == "type" {
+                                    type_opt = Some(self.extract_type_or_name(value));
+                                }
+                            }
+                        }
+                        Stmt::ExpressionStmt(Expr::BinaryOp { left, operator, right }) if operator == "=" => {
+                            if let Expr::Identifier(field_name) = &**left {
+                                if field_name == "name" {
+                                    name_opt = Some(self.extract_string_from_expr(right));
+                                } else if field_name == "ty" || field_name == "type" {
+                                    type_opt = Some(self.extract_type_or_name(right));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                (name_opt.unwrap_or_default(), type_opt)
+            }
+            Expr::Instantiate { args, .. } => {
+                for arg in args {
+                    let (n, t) = self.extract_prop_name_and_type(arg);
+                    if !n.is_empty() {
+                        return (n, t);
+                    }
+                }
+                ("".to_string(), None)
+            }
+            Expr::PropertyAccess { property, .. } => (property.clone(), None),
+            _ => (self.extract_string_from_expr(expr), None),
+        }
+    }
+
     pub fn fastlang_cast(&mut self, val: &Expr, target_type: &BaseType) -> Result<Expr, String> {
         let resolved = match val {
             Expr::Identifier(id) => {
@@ -1426,11 +1736,21 @@ impl Interpreter {
                     } => {
                         self.functions.insert(name, (generics, params, body));
                     }
+                    Decl::MicroDecl {
+                        name,
+                        params,
+                        body,
+                        ..
+                    } => {
+                        self.micros.insert(name, (params, body));
+                    }
                     Decl::ImplDecl {
+                        target,
                         methods,
                         handle_block,
                         ..
                     } => {
+                        let clean_target = self.extract_clean_blueprint_name(&target);
                         for m in methods {
                             if let Decl::FnDecl {
                                 name,
@@ -1440,7 +1760,8 @@ impl Interpreter {
                                 ..
                             } = m
                             {
-                                self.functions.insert(name, (generics, params, body));
+                                self.functions.insert(name.clone(), (generics.clone(), params.clone(), body.clone()));
+                                self.functions.insert(format!("{}::{}", clean_target, name), (generics, params, body));
                             }
                         }
                         for h in handle_block {
@@ -1452,7 +1773,38 @@ impl Interpreter {
                                 ..
                             } = h
                             {
-                                self.functions.insert(name, (generics, params, body));
+                                self.functions.insert(name.clone(), (generics.clone(), params.clone(), body.clone()));
+                                self.functions.insert(format!("{}::{}", clean_target, name), (generics, params, body));
+                            }
+                        }
+                    }
+                    Decl::NamespaceDecl { name, decls, .. } => {
+                        for d in decls {
+                            match d {
+                                Decl::FnDecl {
+                                    name: fn_name,
+                                    generics,
+                                    params,
+                                    body,
+                                    ..
+                                } => {
+                                    self.functions.insert(
+                                        format!("{}::{}", name, fn_name),
+                                        (generics.clone(), params.clone(), body.clone()),
+                                    );
+                                }
+                                Decl::MicroDecl {
+                                    name: m_name,
+                                    params,
+                                    body,
+                                    ..
+                                } => {
+                                    self.micros.insert(
+                                        format!("{}::{}", name, m_name),
+                                        (params.clone(), body.clone()),
+                                    );
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -1499,19 +1851,15 @@ impl Interpreter {
                                     name: m_name,
                                     params,
                                     body,
-                                    generics,
+                                    generics: _,
                                     ..
                                 } => {
-                                    let gen_types: Vec<BaseType> = generics
-                                        .as_ref()
-                                        .map(|v| v.iter().map(|s| BaseType::from_str(s)).collect())
-                                        .unwrap_or_default();
-                                    self.functions.insert(
+                                    self.micros.insert(
                                         format!("{}::{}", name, m_name),
-                                        (gen_types.clone(), params.clone(), body.clone()),
+                                        (params.clone(), body.clone()),
                                     );
-                                    self.functions
-                                        .insert(m_name.clone(), (gen_types, params, body));
+                                    self.micros
+                                        .insert(m_name.clone(), (params, body));
                                 }
                                 _ => {}
                             }
@@ -1539,6 +1887,10 @@ impl Interpreter {
                 self.functions
                     .entry(name.clone())
                     .or_insert_with(|| (vec![], params.clone(), body.clone()));
+            } else if let SymbolKind::Micro { params, body, .. } = &info.kind {
+                self.micros
+                    .entry(name.clone())
+                    .or_insert_with(|| (params.clone(), body.clone()));
             }
         }
         if let Some(ref parent) = env.parent {
@@ -1623,6 +1975,13 @@ impl Interpreter {
             Expr::LiteralChar(_) => "char".to_string(),
             Expr::LiteralUChar(_) => "uchar".to_string(),
             Expr::LiteralVoid => "void".to_string(),
+            Expr::This => {
+                if let Some(ref t) = self.current_type {
+                    t.clone()
+                } else {
+                    "unknown".to_string()
+                }
+            }
             Expr::Identifier(id) => {
                 let ty = if is_known_type_name(id) {
                     id.clone()
@@ -1672,6 +2031,26 @@ impl Interpreter {
             }
             Expr::UnaryOp { operator, operand } if operator == "&" => {
                 format!("{}*", self.get_expr_type(operand))
+            }
+            Expr::PropertyAccess { object, property } => {
+                let obj_type = self.get_expr_type(object);
+                let clean_obj = self.extract_clean_blueprint_name(&obj_type);
+                if let Some(ref env_rc) = self.current_env.clone() {
+                    let env = env_rc.borrow();
+                    if let Some(bp) = env.lookup_blueprint(&clean_obj) {
+                        if let Some(ft) = bp.fields.get(property) {
+                            let ft_str = ft.as_str();
+                            let substituted = self.substitute_generics_in_type_str(&ft_str, &bp.generics, &obj_type);
+                            return self.resolve_type_str(&substituted);
+                        }
+                        if let Some(sig) = bp.methods.get(property).or_else(|| bp.handle_signatures.get(property)) {
+                            let ret_str = sig.return_type.as_str();
+                            let substituted = self.substitute_generics_in_type_str(&ret_str, &bp.generics, &obj_type);
+                            return self.resolve_type_str(&substituted);
+                        }
+                    }
+                }
+                "unknown".to_string()
             }
             Expr::ArrayLiteral(_) => "array".to_string(),
             _ => "unknown".to_string(),
@@ -1754,6 +2133,199 @@ pub fn is_compile_condition(expr: &Expr) -> bool {
             is_compile_condition(left) || is_compile_condition(right)
         }
         _ => false,
+    }
+}
+
+pub fn substitute_expr(expr: &Expr, param_map: &HashMap<String, Expr>) -> Expr {
+    match expr {
+        Expr::Identifier(id) => {
+            if let Some(replacement) = param_map.get(id) {
+                replacement.clone()
+            } else {
+                Expr::Identifier(id.clone())
+            }
+        }
+        Expr::LiteralInt(i) => Expr::LiteralInt(*i),
+        Expr::LiteralUInt(u) => Expr::LiteralUInt(*u),
+        Expr::LiteralFloat(f) => Expr::LiteralFloat(*f),
+        Expr::LiteralString(s) => Expr::LiteralString(s.clone()),
+        Expr::LiteralBool(b) => Expr::LiteralBool(*b),
+        Expr::LiteralChar(c) => Expr::LiteralChar(*c),
+        Expr::LiteralUChar(c) => Expr::LiteralUChar(*c),
+        Expr::LiteralVoid => Expr::LiteralVoid,
+        Expr::LiteralUndefined => Expr::LiteralUndefined,
+        Expr::Super => Expr::Super,
+        Expr::This => Expr::This,
+        Expr::Global => Expr::Global,
+        Expr::Default(d) => Expr::Default(d.clone()),
+        Expr::ArrayLiteral(elems) => Expr::ArrayLiteral(elems.iter().map(|e| substitute_expr(e, param_map)).collect()),
+        Expr::Spread(e) => Expr::Spread(Box::new(substitute_expr(e, param_map))),
+        Expr::ObjectLiteral(stmts) => Expr::ObjectLiteral(stmts.iter().map(|s| substitute_stmt(s, param_map)).collect()),
+        Expr::Instantiate { target, args } => Expr::Instantiate {
+            target: Box::new(substitute_expr(target, param_map)),
+            args: args.iter().map(|a| substitute_expr(a, param_map)).collect(),
+        },
+        Expr::ArrayAllocate { type_node, size, length } => Expr::ArrayAllocate {
+            type_node: type_node.clone(),
+            size: Box::new(substitute_expr(size, param_map)),
+            length: length.as_ref().map(|l| Box::new(substitute_expr(l, param_map))),
+        },
+        Expr::New { type_node, target } => Expr::New {
+            type_node: type_node.clone(),
+            target: Box::new(substitute_expr(target, param_map)),
+        },
+        Expr::UnaryOp { operator, operand } => Expr::UnaryOp {
+            operator: operator.clone(),
+            operand: Box::new(substitute_expr(operand, param_map)),
+        },
+        Expr::Cast { expr: inner, target_type } => Expr::Cast {
+            expr: Box::new(substitute_expr(inner, param_map)),
+            target_type: target_type.clone(),
+        },
+        Expr::IndexAccess { object, indices } => Expr::IndexAccess {
+            object: Box::new(substitute_expr(object, param_map)),
+            indices: indices.iter().map(|i| substitute_expr(i, param_map)).collect(),
+        },
+        Expr::Call { callee, generics, args } => Expr::Call {
+            callee: Box::new(substitute_expr(callee, param_map)),
+            generics: generics.clone(),
+            args: args.iter().map(|a| substitute_expr(a, param_map)).collect(),
+        },
+        Expr::MacroCall { callee, args } => Expr::MacroCall {
+            callee: Box::new(substitute_expr(callee, param_map)),
+            args: args.iter().map(|a| substitute_expr(a, param_map)).collect(),
+        },
+        Expr::PropertyAccess { object, property } => Expr::PropertyAccess {
+            object: Box::new(substitute_expr(object, param_map)),
+            property: property.clone(),
+        },
+        Expr::HandleCall { object, handle_name, args } => Expr::HandleCall {
+            object: Box::new(substitute_expr(object, param_map)),
+            handle_name: handle_name.clone(),
+            args: args.iter().map(|a| substitute_expr(a, param_map)).collect(),
+        },
+        Expr::NamespaceAccess { namespace, property } => Expr::NamespaceAccess {
+            namespace: namespace.clone(),
+            property: Box::new(substitute_expr(property, param_map)),
+        },
+        Expr::BinaryOp { left, operator, right } => Expr::BinaryOp {
+            left: Box::new(substitute_expr(left, param_map)),
+            operator: operator.clone(),
+            right: Box::new(substitute_expr(right, param_map)),
+        },
+        Expr::PrefixUpdate { operator, right } => Expr::PrefixUpdate {
+            operator: operator.clone(),
+            right: Box::new(substitute_expr(right, param_map)),
+        },
+        Expr::PostfixUpdate { left, operator } => Expr::PostfixUpdate {
+            left: Box::new(substitute_expr(left, param_map)),
+            operator: operator.clone(),
+        },
+        Expr::Lambda { params, return_type, body } => Expr::Lambda {
+            params: params.clone(),
+            return_type: return_type.clone(),
+            body: body.iter().map(|s| substitute_stmt(s, param_map)).collect(),
+        },
+        Expr::IfExpr { condition, then_branch, else_branch } => Expr::IfExpr {
+            condition: Box::new(substitute_expr(condition, param_map)),
+            then_branch: Box::new(substitute_expr(then_branch, param_map)),
+            else_branch: Box::new(substitute_expr(else_branch, param_map)),
+        },
+        Expr::BlockExpr { statements, final_expr } => Expr::BlockExpr {
+            statements: statements.iter().map(|s| substitute_stmt(s, param_map)).collect(),
+            final_expr: final_expr.as_ref().map(|f| Box::new(substitute_expr(f, param_map))),
+        },
+        Expr::QuestionMark(inner) => Expr::QuestionMark(Box::new(substitute_expr(inner, param_map))),
+    }
+}
+
+pub fn substitute_either_block(block: &EitherBlock, param_map: &HashMap<String, Expr>) -> EitherBlock {
+    match block {
+        EitherBlock::Inline(stmts) => EitherBlock::Inline(stmts.iter().map(|s| substitute_stmt(s, param_map)).collect()),
+        EitherBlock::External(e) => EitherBlock::External(substitute_expr(e, param_map)),
+    }
+}
+
+pub fn substitute_stmt(stmt: &Stmt, param_map: &HashMap<String, Expr>) -> Stmt {
+    match stmt {
+        Stmt::Declaration(decl) => Stmt::Declaration(decl.clone()),
+        Stmt::Block(stmts) => Stmt::Block(stmts.iter().map(|s| substitute_stmt(s, param_map)).collect()),
+        Stmt::ThisBlock(stmts) => Stmt::ThisBlock(stmts.iter().map(|s| substitute_stmt(s, param_map)).collect()),
+        Stmt::CompileValidation { body, args } => Stmt::CompileValidation {
+            body: body.iter().map(|s| substitute_stmt(s, param_map)).collect(),
+            args: args.iter().map(|a| substitute_expr(a, param_map)).collect(),
+        },
+        Stmt::CaseStmt { option, set, body } => Stmt::CaseStmt {
+            option: substitute_expr(option, param_map),
+            set: substitute_expr(set, param_map),
+            body: body.iter().map(|s| substitute_stmt(s, param_map)).collect(),
+        },
+        Stmt::SwitchStmt { name, condition, cases } => Stmt::SwitchStmt {
+            name: name.clone(),
+            condition: substitute_expr(condition, param_map),
+            cases: cases.iter().map(|s| substitute_stmt(s, param_map)).collect(),
+        },
+        Stmt::ReturnStmt(opt_expr) => Stmt::ReturnStmt(opt_expr.as_ref().map(|e| substitute_expr(e, param_map))),
+        Stmt::ForIn { item_decl, iterable, body } => Stmt::ForIn {
+            item_decl: Box::new(substitute_stmt(item_decl, param_map)),
+            iterable: substitute_expr(iterable, param_map),
+            body: body.iter().map(|s| substitute_stmt(s, param_map)).collect(),
+        },
+        Stmt::BreakStmt => Stmt::BreakStmt,
+        Stmt::ContinueStmt => Stmt::ContinueStmt,
+        Stmt::LeaveStmt => Stmt::LeaveStmt,
+        Stmt::YieldStmt(opt_expr) => Stmt::YieldStmt(opt_expr.as_ref().map(|e| substitute_expr(e, param_map))),
+        Stmt::CallStmt(e) => Stmt::CallStmt(substitute_expr(e, param_map)),
+        Stmt::ExpressionStmt(e) => Stmt::ExpressionStmt(substitute_expr(e, param_map)),
+        Stmt::ThrowStmt(e) => Stmt::ThrowStmt(substitute_expr(e, param_map)),
+        Stmt::TryCatchStmt { try_block, catch_param, catch_block } => Stmt::TryCatchStmt {
+            try_block: try_block.iter().map(|s| substitute_stmt(s, param_map)).collect(),
+            catch_param: catch_param.clone(),
+            catch_block: catch_block.iter().map(|s| substitute_stmt(s, param_map)).collect(),
+        },
+        Stmt::ReassignStmt { target, op, value } => Stmt::ReassignStmt {
+            target: substitute_expr(target, param_map),
+            op: op.clone(),
+            value: substitute_expr(value, param_map),
+        },
+        Stmt::AddPropertyStmt { kind_name, value } => Stmt::AddPropertyStmt {
+            kind_name: kind_name.clone(),
+            value: substitute_expr(value, param_map),
+        },
+        Stmt::GotoStmt(e) => Stmt::GotoStmt(substitute_expr(e, param_map)),
+        Stmt::IfStmt { condition, then_block, else_block } => Stmt::IfStmt {
+            condition: substitute_expr(condition, param_map),
+            then_block: then_block.iter().map(|s| substitute_stmt(s, param_map)).collect(),
+            else_block: else_block.as_ref().map(|eb| eb.iter().map(|s| substitute_stmt(s, param_map)).collect()),
+        },
+        Stmt::LoopStmt { count, body } => Stmt::LoopStmt {
+            count: count.as_ref().map(|c| substitute_expr(c, param_map)),
+            body: substitute_either_block(body, param_map),
+        },
+        Stmt::WhileStmt { condition, body } => Stmt::WhileStmt {
+            condition: substitute_expr(condition, param_map),
+            body: substitute_either_block(body, param_map),
+        },
+        Stmt::DoWhileStmt { body, condition } => Stmt::DoWhileStmt {
+            body: substitute_either_block(body, param_map),
+            condition: substitute_expr(condition, param_map),
+        },
+        Stmt::ForStmt { init, condition, increment, body } => Stmt::ForStmt {
+            init: init.as_ref().map(|i| Box::new(substitute_stmt(i, param_map))),
+            condition: condition.as_ref().map(|c| substitute_expr(c, param_map)),
+            increment: increment.as_ref().map(|inc| Box::new(substitute_stmt(inc, param_map))),
+            body: substitute_either_block(body, param_map),
+        },
+        Stmt::ForInStmt { item, iterable, body } => Stmt::ForInStmt {
+            item: Box::new(substitute_stmt(item, param_map)),
+            iterable: substitute_expr(iterable, param_map),
+            body: substitute_either_block(body, param_map),
+        },
+        Stmt::DelStmt { target, is_array } => Stmt::DelStmt {
+            target: substitute_expr(target, param_map),
+            is_array: *is_array,
+        },
+        Stmt::UsingStmt(s) => Stmt::UsingStmt(s.clone()),
     }
 }
 
@@ -1860,6 +2432,24 @@ impl Interpreter {
         None
     }
 
+    pub fn build_micro_param_map(&mut self, params: &[Param], args: &[Expr]) -> HashMap<String, Expr> {
+        let mut map = HashMap::new();
+        for (p, arg) in params.iter().zip(args.iter()) {
+            let param_ty = p.type_node.as_str();
+            let arg_ty = self.get_expr_type(arg);
+            let mapped = if param_ty != "unknown" && param_ty != "void" && arg_ty != "unknown" && param_ty != arg_ty {
+                Expr::Cast {
+                    expr: Box::new(arg.clone()),
+                    target_type: p.type_node.clone(),
+                }
+            } else {
+                arg.clone()
+            };
+            map.insert(p.name.clone(), mapped);
+        }
+        map
+    }
+
     pub fn evaluate_ast(&mut self, stmts: &mut Vec<Stmt>) -> Result<(), String> {
         let mut new_stmts = Vec::with_capacity(stmts.len());
         for mut stmt in stmts.drain(..) {
@@ -1893,6 +2483,12 @@ impl Interpreter {
                     continue;
                 }
                 Stmt::Declaration(decl) => {
+                    if let Decl::MicroDecl { name, params, body, .. } = decl {
+                        self.micros.insert(name.clone(), (params.clone(), body.clone()));
+                        // Micros are 100% compile-time pure AST replacements.
+                        // Strip their declaration from the AST so C++ codegen never generates code for them!
+                        continue;
+                    }
                     if let Some((orig_name, fn_params, branches)) =
                         self.try_split_mixed_branches(decl)
                     {
@@ -1912,6 +2508,7 @@ impl Interpreter {
                     }
                 }
                 Stmt::ReassignStmt { target, value, op } => {
+                    self.fold_expr(target)?;
                     self.fold_expr(value)?;
                     if let Expr::Identifier(id) = target {
                         let new_val = if op == "=" {
@@ -1992,6 +2589,62 @@ impl Interpreter {
                     self.evaluate_either_block(body)?;
                     new_stmts.push(stmt);
                 }
+                Stmt::ForIn { iterable, body, .. } => {
+                    self.fold_expr(iterable)?;
+                    self.evaluate_ast(body)?;
+                    new_stmts.push(stmt);
+                }
+                Stmt::CaseStmt { option, set, body } => {
+                    self.fold_expr(option)?;
+                    self.fold_expr(set)?;
+                    let mut inserted_vars = Vec::new();
+                    if let Some(ref switch_type) = self.current_switch_type.clone() {
+                        if let Expr::Call { callee, args, .. } = option {
+                            let variant_name = match &**callee {
+                                Expr::Identifier(id) => id.clone(),
+                                Expr::NamespaceAccess { property, .. } => {
+                                    if let Expr::Identifier(p) = &**property {
+                                        p.clone()
+                                    } else {
+                                        "".to_string()
+                                    }
+                                }
+                                _ => "".to_string(),
+                            };
+                            let clean_enum = self.extract_clean_blueprint_name(switch_type);
+                            if clean_enum == "Option" && variant_name == "Some" && args.len() == 1 {
+                                if let Expr::Identifier(var_name) = &args[0] {
+                                    if switch_type.contains('<') && switch_type.ends_with('>') {
+                                        let start = switch_type.find('<').unwrap() + 1;
+                                        let end = switch_type.rfind('>').unwrap();
+                                        let inner_t = switch_type[start..end].trim().to_string();
+                                        self.var_types.insert(var_name.clone(), inner_t);
+                                        inserted_vars.push(var_name.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    self.evaluate_ast(body)?;
+                    for v in inserted_vars {
+                        self.var_types.remove(&v);
+                    }
+                    new_stmts.push(stmt);
+                }
+                Stmt::SwitchStmt { condition, cases, .. } => {
+                    self.fold_expr(condition)?;
+                    let cond_type = self.get_expr_type(condition);
+                    let prev_switch_type = self.current_switch_type.take();
+                    self.current_switch_type = if cond_type != "unknown" { Some(cond_type) } else { None };
+                    self.evaluate_ast(cases)?;
+                    self.current_switch_type = prev_switch_type;
+                    new_stmts.push(stmt);
+                }
+                Stmt::TryCatchStmt { try_block, catch_block, .. } => {
+                    self.evaluate_ast(try_block)?;
+                    self.evaluate_ast(catch_block)?;
+                    new_stmts.push(stmt);
+                }
                 Stmt::Block(inner) | Stmt::ThisBlock(inner) => {
                     self.env.push_scope();
                     self.evaluate_ast(inner)?;
@@ -1999,7 +2652,58 @@ impl Interpreter {
                     new_stmts.push(stmt);
                 }
                 Stmt::CallStmt(e) | Stmt::ExpressionStmt(e) => {
+                    let micro_info = if let Expr::Call { callee, args, .. } = e {
+                        let m_name = match &**callee {
+                            Expr::Identifier(id) => Some(id.clone()),
+                            Expr::NamespaceAccess { namespace, property } => {
+                                if let Expr::Identifier(p) = &**property {
+                                    Some(format!("{}::{}", namespace, p))
+                                } else {
+                                    None
+                                }
+                            }
+                            _ => None,
+                        };
+                        if let Some(ref name) = m_name {
+                            self.micros.get(name).cloned().or_else(|| {
+                                if let Some(short) = name.split("::").last() {
+                                    self.micros.get(short).cloned()
+                                } else {
+                                    None
+                                }
+                            }).map(|(params, body)| (params, args.clone(), body))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    if let Some((params, mut call_args, body)) = micro_info {
+                        for a in call_args.iter_mut() {
+                            self.fold_expr(a)?;
+                        }
+                        let param_map = self.build_micro_param_map(&params, &call_args);
+                        let mut expanded = Vec::new();
+                        for s in &body {
+                            expanded.push(substitute_stmt(s, &param_map));
+                        }
+                        self.evaluate_ast(&mut expanded)?;
+                        new_stmts.extend(expanded);
+                        continue;
+                    }
+
                     self.fold_expr(e)?;
+                    new_stmts.push(stmt);
+                }
+                Stmt::DoWhileStmt { body, condition } => {
+                    self.fold_expr(condition)?;
+                    self.evaluate_either_block(body)?;
+                    new_stmts.push(stmt);
+                }
+                Stmt::ForInStmt { item: _, iterable, body } => {
+                    self.fold_expr(iterable)?;
+                    self.evaluate_either_block(body)?;
                     new_stmts.push(stmt);
                 }
                 _ => {
@@ -2066,11 +2770,63 @@ impl Interpreter {
                 }
                 self.in_function_body = prev_in_func;
             }
+            Decl::ClassDecl {
+                name,
+                public_block,
+                private_block,
+                handle_block,
+                static_block,
+                ..
+            } => {
+                let prev_t = self.current_type.take();
+                self.current_type = Some(name.clone());
+                for d in public_block {
+                    self.evaluate_decl(d)?;
+                }
+                for d in private_block {
+                    self.evaluate_decl(d)?;
+                }
+                for d in handle_block {
+                    self.evaluate_decl(d)?;
+                }
+                for d in static_block {
+                    self.evaluate_decl(d)?;
+                }
+                self.current_type = prev_t;
+            }
+            Decl::StructDecl {
+                name,
+                public_block,
+                private_block,
+                handle_block,
+                static_block,
+                ..
+            } => {
+                let prev_t = self.current_type.take();
+                self.current_type = Some(name.clone());
+                for d in public_block {
+                    self.evaluate_decl(d)?;
+                }
+                for d in private_block {
+                    self.evaluate_decl(d)?;
+                }
+                for d in handle_block {
+                    self.evaluate_decl(d)?;
+                }
+                for d in static_block {
+                    self.evaluate_decl(d)?;
+                }
+                self.current_type = prev_t;
+            }
             Decl::ImplDecl {
+                target,
                 methods,
                 handle_block,
                 ..
             } => {
+                let prev_t = self.current_type.take();
+                self.current_type = Some(target.clone());
+                let clean_target = self.extract_clean_blueprint_name(target);
                 for m in methods {
                     if let Decl::FnDecl {
                         name,
@@ -2078,13 +2834,18 @@ impl Interpreter {
                         params,
                         body,
                         ..
-                    } = m
+                    } = &*m
                     {
                         self.functions.insert(
                             name.clone(),
                             (generics.clone(), params.clone(), body.clone()),
                         );
+                        self.functions.insert(
+                            format!("{}::{}", clean_target, name),
+                            (generics.clone(), params.clone(), body.clone()),
+                        );
                     }
+                    self.evaluate_decl(m)?;
                 }
                 for h in handle_block {
                     if let Decl::FnDecl {
@@ -2093,12 +2854,49 @@ impl Interpreter {
                         params,
                         body,
                         ..
-                    } = h
+                    } = &*h
                     {
                         self.functions.insert(
                             name.clone(),
                             (generics.clone(), params.clone(), body.clone()),
                         );
+                        self.functions.insert(
+                            format!("{}::{}", clean_target, name),
+                            (generics.clone(), params.clone(), body.clone()),
+                        );
+                    }
+                    self.evaluate_decl(h)?;
+                }
+                self.current_type = prev_t;
+            }
+            Decl::NamespaceDecl { name, decls, .. } => {
+                for d in decls {
+                    self.evaluate_decl(d)?;
+                    match d {
+                        Decl::FnDecl {
+                            name: fn_name,
+                            generics,
+                            params,
+                            body,
+                            ..
+                        } => {
+                            self.functions.insert(
+                                format!("{}::{}", name, fn_name),
+                                (generics.clone(), params.clone(), body.clone()),
+                            );
+                        }
+                        Decl::MicroDecl {
+                            name: m_name,
+                            params,
+                            body,
+                            ..
+                        } => {
+                            self.micros.insert(
+                                format!("{}::{}", name, m_name),
+                                (params.clone(), body.clone()),
+                            );
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -2148,19 +2946,15 @@ impl Interpreter {
                             name: m_name,
                             params,
                             body,
-                            generics,
+                            generics: _,
                             ..
                         } => {
-                            let gen_types: Vec<BaseType> = generics
-                                .as_ref()
-                                .map(|v| v.iter().map(|s| BaseType::from_str(s)).collect())
-                                .unwrap_or_default();
-                            self.functions.insert(
+                            self.micros.insert(
                                 format!("{}::{}", name, m_name),
-                                (gen_types.clone(), params.clone(), body.clone()),
+                                (params.clone(), body.clone()),
                             );
-                            self.functions
-                                .insert(m_name.clone(), (gen_types, params.clone(), body.clone()));
+                            self.micros
+                                .insert(m_name.clone(), (params.clone(), body.clone()));
                         }
                         _ => {}
                     }
@@ -2176,6 +2970,116 @@ impl Interpreter {
             EitherBlock::Inline(stmts) => self.evaluate_ast(stmts),
             EitherBlock::External(expr) => self.fold_expr(expr),
         }
+    }
+
+    pub fn try_expand_access_handle(
+        &mut self,
+        object: &Expr,
+        prop_name: &str,
+        handle_name: &str,
+    ) -> Result<Option<Expr>, String> {
+        let obj_type = self.get_expr_type(object);
+        if obj_type == "unknown" {
+            return Ok(None);
+        }
+        let clean_obj = self.extract_clean_blueprint_name(&obj_type);
+        let env_rc = match self.current_env.clone() {
+            Some(e) => e,
+            None => return Ok(None),
+        };
+        let bp = match env_rc.borrow().lookup_blueprint(&clean_obj) {
+            Some(b) => b,
+            None => return Ok(None),
+        };
+        if handle_name == "property_access" {
+            if bp.fields.contains_key(prop_name)
+                || bp.methods.contains_key(prop_name)
+                || bp.handle_signatures.contains_key(prop_name)
+            {
+                return Ok(None);
+            }
+        } else if handle_name == "handle_access" {
+            if bp.handle_signatures.contains_key(prop_name) || bp.methods.contains_key(prop_name) {
+                return Ok(None);
+            }
+        }
+
+        let sig = match bp.handle_signatures.get(handle_name) {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+
+        let param_ty = self.extract_clean_blueprint_name(&sig.params[0].type_node.as_str());
+        let ret_ty = sig.return_type.as_str();
+        let is_access_sig = sig.params.len() == 1
+            && (param_ty == "MemberType" || param_ty == "unknown")
+            && (ret_ty.starts_with("raw_ptr") || ret_ty.starts_with("pointer"));
+
+        if !is_access_sig {
+            return Ok(None);
+        }
+
+        let fn_key = format!("{}::{}", clean_obj, handle_name);
+        let body = match self.functions.get(&fn_key) {
+            Some((_, _, b)) => b.clone(),
+            None => match self.functions.get(handle_name) {
+                Some((_, _, b)) => b.clone(),
+                None => return Ok(None),
+            },
+        };
+
+        for stmt in &body {
+            if let Stmt::ReturnStmt(Some(ret_expr)) = stmt {
+                let target_opt: Option<&Expr> = match ret_expr {
+                    Expr::Call { callee, args, .. } => {
+                        let is_compile_access = match &**callee {
+                            Expr::NamespaceAccess { namespace, property } => {
+                                namespace == "@compile"
+                                    && matches!(&**property, Expr::Identifier(p) if p == "access")
+                            }
+                            Expr::Identifier(id) => id == "@compile::access" || id == "access",
+                            _ => false,
+                        };
+                        if is_compile_access && args.len() >= 2 {
+                            Some(&args[0])
+                        } else {
+                            None
+                        }
+                    }
+                    Expr::UnaryOp { operator, operand } if operator == "&" => {
+                        if let Expr::PropertyAccess { object, .. } = &**operand {
+                            Some(&**object)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+
+                if let Some(target) = target_opt {
+                    let substituted_target = substitute_this_in_expr(target, object);
+                    let target_type = self.get_expr_type(&substituted_target);
+                    let clean_target = self.extract_clean_blueprint_name(&target_type);
+                    if let Some(target_bp) = env_rc.borrow().lookup_blueprint(&clean_target) {
+                        let has_member = target_bp.fields.contains_key(prop_name)
+                            || target_bp.methods.contains_key(prop_name)
+                            || target_bp.handle_signatures.contains_key(prop_name);
+                        if !has_member {
+                            return self.fastlang_throw(&format!(
+                                "Member '{}' not found on type '{}'",
+                                prop_name, clean_target
+                            )).map(|_| None);
+                        }
+                    }
+                    return Ok(Some(Expr::PropertyAccess {
+                        object: Box::new(substituted_target),
+                        property: prop_name.to_string(),
+                    }));
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn fold_expr(&mut self, expr: &mut Expr) -> Result<(), String> {
@@ -2196,6 +3100,27 @@ impl Interpreter {
             } => {
                 self.fold_expr(left)?;
                 self.fold_expr(right)?;
+
+                if operator == "->" || operator == "=>" {
+                    let handle_name = if operator == "->" { "arrow" } else { "fat_arrow" };
+                    if let Expr::Identifier(prop_name) = &**right {
+                        if let Some(expanded) = self.try_expand_access_handle(left, prop_name, handle_name)? {
+                            *expr = expanded;
+                            return self.fold_expr(expr);
+                        }
+                    } else if let Expr::Call { callee, generics, args } = &**right {
+                        if let Expr::Identifier(prop_name) = &**callee {
+                            if let Some(expanded) = self.try_expand_access_handle(left, prop_name, handle_name)? {
+                                *expr = Expr::Call {
+                                    callee: Box::new(expanded),
+                                    generics: generics.clone(),
+                                    args: args.clone(),
+                                };
+                                return self.fold_expr(expr);
+                            }
+                        }
+                    }
+                }
 
                 // Type comparisons, e.g. typeof(id) == int32 or t == int32
                 if operator == "==" || operator == "!=" {
@@ -2231,6 +3156,35 @@ impl Interpreter {
                     }
                 }
             }
+            Expr::HandleCall {
+                object,
+                handle_name,
+                args,
+            } => {
+                self.fold_expr(object)?;
+                for a in args.iter_mut() {
+                    self.fold_expr(a)?;
+                }
+                if args.is_empty() {
+                    if let Some(expanded) = self.try_expand_access_handle(object, handle_name, "handle_access")? {
+                        *expr = expanded;
+                        return self.fold_expr(expr);
+                    }
+                }
+            }
+            Expr::NamespaceAccess {
+                namespace,
+                property,
+            } => {
+                self.fold_expr(property)?;
+                if let Expr::Identifier(prop_name) = &**property {
+                    let obj_expr = Expr::Identifier(namespace.clone());
+                    if let Some(expanded) = self.try_expand_access_handle(&obj_expr, prop_name, "namespace_access")? {
+                        *expr = expanded;
+                        return self.fold_expr(expr);
+                    }
+                }
+            }
             Expr::Cast {
                 expr: inner,
                 target_type,
@@ -2249,6 +3203,10 @@ impl Interpreter {
             }
             Expr::PropertyAccess { object, property } => {
                 self.fold_expr(object)?;
+                if let Some(expanded) = self.try_expand_access_handle(object, property, "property_access")? {
+                    *expr = expanded;
+                    return self.fold_expr(expr);
+                }
                 let obj_type_name = self.extract_type_string(object);
                 if let Some(t_name) = obj_type_name {
                     let ft = self.get_fast_type(&t_name);
@@ -2300,6 +3258,50 @@ impl Interpreter {
             } => {
                 for a in args.iter_mut() {
                     self.fold_expr(a)?;
+                }
+
+                // Expand micro calls in expression contexts
+                let micro_info = {
+                    let m_name = match &**callee {
+                        Expr::Identifier(id) => Some(id.clone()),
+                        Expr::NamespaceAccess { namespace, property } => {
+                            if let Expr::Identifier(p) = &**property {
+                                Some(format!("{}::{}", namespace, p))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    if let Some(ref name) = m_name {
+                        self.micros.get(name).cloned().or_else(|| {
+                            if let Some(short) = name.split("::").last() {
+                                self.micros.get(short).cloned()
+                            } else {
+                                None
+                            }
+                        })
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some((params, body)) = micro_info {
+                    let ret_expr = body.iter().find_map(|s| match s {
+                        Stmt::ReturnStmt(Some(e)) => Some(e.clone()),
+                        Stmt::ExpressionStmt(e) | Stmt::CallStmt(e) => Some(e.clone()),
+                        _ => None,
+                    });
+                    if let Some(r_expr) = ret_expr {
+                        let param_map = self.build_micro_param_map(&params, args);
+                        let mut substituted = substitute_expr(&r_expr, &param_map);
+                        self.fold_expr(&mut substituted)?;
+                        *expr = substituted;
+                        return Ok(());
+                    } else {
+                        *expr = Expr::LiteralVoid;
+                        return Ok(());
+                    }
                 }
 
                 // Property method calls on types, e.g. typeof(id).printable(), typeof(id).castable_to(float64)
@@ -2443,6 +3445,7 @@ impl Interpreter {
                         }
                     }
                 }
+                self.fold_expr(callee)?;
 
                 let fn_name = match &**callee {
                     Expr::NamespaceAccess {
@@ -2603,11 +3606,14 @@ impl Interpreter {
                     let mut cond_interp = Interpreter {
                         env: InterpreterEnv::with_parent(self.env.clone()),
                         functions: self.functions.clone(),
+                        micros: self.micros.clone(),
                         var_types: self.var_types.clone(),
                         current_env: self.current_env.clone(),
                         fn_overloads: self.fn_overloads.clone(),
                         split_functions: self.split_functions.clone(),
                         in_function_body: true,
+                        current_switch_type: None,
+                        current_type: self.current_type.clone(),
                     };
                     for (i, p) in params.iter().enumerate() {
                         if let Some(arg_val) = eval_args.get(i) {
@@ -2646,19 +3652,30 @@ impl Interpreter {
                 }
 
                 // Check if called function has a compile-time validation block (@compile { ... }(args))
-                let fn_lookup_name = match &**callee {
-                    Expr::Identifier(id) => id.clone(),
+                let fn_candidates = match &**callee {
+                    Expr::Identifier(id) => vec![id.clone()],
                     Expr::NamespaceAccess { namespace, property } => {
                         if let Expr::Identifier(p) = &**property {
-                            format!("{}::{}", namespace, p)
+                            vec![format!("{}::{}", namespace, p), p.clone()]
                         } else {
-                            "".to_string()
+                            vec![]
                         }
                     }
-                    Expr::PropertyAccess { property, .. } => property.clone(),
-                    _ => "".to_string(),
+                    Expr::PropertyAccess { object, property } => {
+                        let obj_type = self.get_expr_type(object);
+                        let clean_obj = self.extract_clean_blueprint_name(&obj_type);
+                        vec![format!("{}::{}", clean_obj, property), property.clone()]
+                    }
+                    _ => vec![],
                 };
-                if let Some((fn_generics, params, body)) = self.functions.get(&fn_lookup_name).cloned() {
+                let mut found_fn = None;
+                for name in &fn_candidates {
+                    if let Some(info) = self.functions.get(name).cloned() {
+                        found_fn = Some(info);
+                        break;
+                    }
+                }
+                if let Some((fn_generics, params, body)) = found_fn {
                     for stmt in &body {
                         if let Stmt::CompileValidation { body: val_body, args: _ } = stmt {
                             let mut eval_args = Vec::new();
@@ -2677,11 +3694,14 @@ impl Interpreter {
                             let mut val_interp = Interpreter {
                                 env: InterpreterEnv::with_parent(self.env.clone()),
                                 functions: self.functions.clone(),
+                                micros: self.micros.clone(),
                                 var_types: self.var_types.clone(),
                                 current_env: self.current_env.clone(),
                                 fn_overloads: self.fn_overloads.clone(),
                                 split_functions: self.split_functions.clone(),
                                 in_function_body: true,
+                                current_switch_type: None,
+                                current_type: self.current_type.clone(),
                             };
                             for (g_name, g_type) in &generic_map {
                                 val_interp.env.define(
@@ -2722,7 +3742,12 @@ impl Interpreter {
                 if is_compilable {
                     match self.eval_expr(expr) {
                         Ok(res) => {
-                            if is_literal(&res) {
+                            if is_literal(&res)
+                                || matches!(
+                                    &res,
+                                    Expr::UnaryOp { .. } | Expr::PropertyAccess { .. }
+                                )
+                            {
                                 *expr = res;
                             }
                         }
@@ -2733,6 +3758,9 @@ impl Interpreter {
                         }
                     }
                 }
+            }
+            Expr::QuestionMark(inner) => {
+                self.fold_expr(inner)?;
             }
             _ => {}
         }

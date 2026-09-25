@@ -57,6 +57,15 @@ micro decrement_val = (i: mutRef<int32>) -> {
     i -= 1;
 };
 
+micro break_it = () -> {
+    break;
+};
+
+micro multi_stmt_micro = (count: mutRef<int32>) -> {
+    count += 10;
+    count += 5;
+};
+
 fn test_methods_and_micros() -> void {
     method<void> hello = () -> {
         println("hello from method");
@@ -75,6 +84,19 @@ fn test_methods_and_micros() -> void {
     int32 val = 10;
     decrement_val(&val);
     println("micro decrement: ", val); // EXPECT: micro decrement: 9
+
+    int32 iter = 0;
+    while (true) -> {
+        iter += 1;
+        if (iter >= 3) {
+            break_it();
+        }
+    }
+    println("micro break: ", iter); // EXPECT: micro break: 3
+
+    int32 counter = 0;
+    multi_stmt_micro(&counter);
+    println("micro multi: ", counter); // EXPECT: micro multi: 15
 }
 
 fn identity<T>(val: T) -> T {
@@ -128,13 +150,77 @@ fn test_generics() -> void {
     println("overload gen: ", d_gen); // EXPECT: overload gen: generic catchall
 }
 
+MathOps :: {
+    fn add(a: int32, b: int32) -> int32 {
+        return a + b;
+    }
+
+    NestedOps :: {
+        fn mul(a: int32, b: int32) -> int32 {
+            return a * b;
+        }
+    }
+}
+
+fn test_namespaces() -> void {
+    int32 added = MathOps::add(20, 30);
+    println("MathOps::add: ", added); // EXPECT: MathOps::add: 50
+
+    int32 multiplied = MathOps::NestedOps::mul(6, 7);
+    println("MathOps::NestedOps::mul: ", multiplied); // EXPECT: MathOps::NestedOps::mul: 42
+}
+fn try_send(b : bool) -> Result<int32> {
+    if (b) {
+        return Ok(10);
+    }
+    return Err("error");
+}
+fn test_result() -> void {
+    Result<int32> res = try_send(true);
+    println("result: ", res.get()); // EXPECT: result: 10
+
+    res = try_send(false);
+    println("result is_Err: ", res.is_Err()); // EXPECT: result is_Err: true
+    try {
+        println("result get: ", res.get()); 
+    }catch(e) -> {
+        println("result get: ", e.message); // EXPECT: result get: error
+    }
+    println("result get_or: ", res.get_or(100)); // EXPECT: result get_or: 100
+}
+fn add_implicit(a: int32, b: int32) -> int32 {
+    a + b
+}
+
+fn choose_implicit(cond: bool) -> Result<int32> {
+    if (cond) {
+        Ok(42)
+    } else {
+        Err("failed")
+    }
+}
+
+fn test_implicit_returns() -> void {
+    int32 sum = add_implicit(15, 27);
+    println("implicit sum: ", sum); // EXPECT: implicit sum: 42
+
+    Result<int32> ok_res = choose_implicit(true);
+    println("implicit ok: ", ok_res.get()); // EXPECT: implicit ok: 42
+
+    Result<int32> err_res = choose_implicit(false);
+    println("implicit err: ", err_res.is_Err()); // EXPECT: implicit err: true
+}
+
 fn main() -> int32 {
     test_overloading_and_defaults();
     test_recursion();
     test_iife_and_anon();
     test_methods_and_micros();
     test_generics();
-
+    test_namespaces();
+    test_result();
+    test_implicit_returns();
     println("ALL 03_FUNCTIONS TESTS PASSED"); // EXPECT: ALL 03_FUNCTIONS TESTS PASSED
     return 0;
 }
+

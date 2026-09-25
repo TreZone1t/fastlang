@@ -5,6 +5,10 @@ public enum Option<T> -> {
     Some(T),
     None,
 }
+public enum Result<T> -> {
+    Ok(T),
+    Err(char[]),
+}
 
 public blueprint shared -> {
     int32 owners = 0;
@@ -28,54 +32,9 @@ public blueprint pointer<T> -> {
     raw_ptr<shared> counter = undefined;
     share counter if (this.ptr == other.ptr);
 }
-public impl pointer<T> -> {
-    handle -> {
-        fn property_access(prop: MemberType) -> raw_ptr<unknown> {
-            return @compile::access(this.ptr, prop);
-        }
-        fn display() -> char[] {
-            if (!this.ptr) {
-                return "None";
-            }
-            return "" + *this.ptr;
-        }
-        fn drop() -> void {
-            if (!this.ptr) {
-                return;
-            }
-            if (!this.counter) {
-                return;
-            }
-            if (this.counter.owners <= 1) {
-                del this.counter;
-            } else {
-                this.counter.owners = this.counter.owners - 1;
-            }
-        }
-    }
-}
 public blueprint ref<...T> -> {
     raw_ptr<T> ptr = undefined;
     type inner = T;
-}
-public impl ref<...T> -> {
-    handle -> {
-        fn property_access(prop: MemberType) -> raw_ptr<unknown> {
-            return @compile::access(this.ptr, prop);
-        }
-        fn display() -> char[] {
-            if (!this.ptr) {
-                return "None";
-            }
-            return "" + *this.ptr;
-        }
-        /*
-        fn drop() -> void {
-            // TODO: that is a bug (that don't run at compile time)
-            @compile::throw new Error(" Attempting to delete a borrowed reference 'ref<T>'");
-        }
-        */
-    }
 }
 public blueprint mutRef<...T> -> {
     raw_ptr<T> ptr = undefined;
@@ -83,50 +42,6 @@ public blueprint mutRef<...T> -> {
     type inner = T;
     type expect[] = [...T];
     share counter if (this.ptr == other.ptr);
-}
-
-public impl mutRef<...T> -> {
-    fn claim() -> void {
-        if (this.counter) {
-            this.counter.owners = 1;
-        }
-    }
-    handle -> {
-        fn property_access(prop: MemberType) -> raw_ptr<unknown> {
-            return @compile::access(this.ptr, prop);
-        }
-        fn display() -> char[] {
-            if (!this.ptr) {
-                return "None";
-            }
-            return "" + *this.ptr;
-        }
-        fn add_reassign(val: T) -> void {
-            *this.ptr += val;
-        }
-        fn sub_reassign(val: T) -> void {
-            *this.ptr -= val;
-        }
-        fn mul_reassign(val: T) -> void {
-            *this.ptr *= val;
-        }
-        fn div_reassign(val: T) -> void {
-            *this.ptr /= val;
-        }
-        fn drop() -> void {
-            if (!this.ptr) {
-                return;
-            }
-            if (!this.counter) {
-                return;
-            }
-            if (this.counter.owners <= 1) {
-                del this.counter;
-            }else {
-                this.counter.owners = this.counter.owners - 1;
-            }
-        }
-    }
 }
 
 public blueprint iterator<T> -> {
@@ -232,7 +147,137 @@ public impl Option<T> -> {
         }
     }
 }
+public impl Result<T> -> {
+    fn is_Ok() -> bool {
+        match this {
+            Ok(_) => return true,
+            Err(_) => return false,
+        }
+        return false;
+    }
+    fn is_Err() -> bool {
+        match this {
+            Ok(_) => return false,
+            Err(_) => return true,
+        }
+        return true;
+    }
+    fn get() -> T {
+        match this {
+            Ok(val) => {
+                return val;
+            }
+            Err(msg) => {
+                throw new Error(msg);
+            }
+        }
+    }
+    fn get_or(default_val := T.default()) -> T {
+        match this {
+            Ok(val) => {
+                return val;
+            }
+            Err(_) => {
+                return default_val;
+            }
+        }
+    }
+}
+public impl ref<...T> -> {
+    handle -> {
+        fn property_access(prop: MemberType) -> raw_ptr<unknown> {
+            return @compile::access(this.ptr, prop);
+        }
+        fn call<...Args>(...args: ...Args) -> auto {
+            return (*this.ptr)(...args);
+        }
+        fn display() -> char[] {
+            if (!this.ptr) {
+                return "None";
+            }
+            return "" + *this.ptr;
+        }
+        /*
+        fn drop() -> void {
+            // TODO: that is a bug (that don't run at compile time)
+            @compile::throw new Error(" Attempting to delete a borrowed reference 'ref<T>'");
+        }
+        */
+    }
+}
+public impl mutRef<...T> -> {
+    fn claim() -> void {
+        if (this.counter) {
+            this.counter.owners = 1;
+        }
+    }
+    handle -> {
+        fn property_access(prop: MemberType) -> raw_ptr<unknown> {
+            return @compile::access(this.ptr, prop);
+        }
+        fn call<...Args>(...args: ...Args) -> auto {
+            return (*this.ptr)(...args);
+        }
+        fn display() -> char[] {
+            if (!this.ptr) {
+                return "None";
+            }
+            return "" + *this.ptr;
+        }
+        fn add_reassign(val: T) -> void {
+            *this.ptr += val;
+        }
+        fn sub_reassign(val: T) -> void {
+            *this.ptr -= val;
+        }
+        fn mul_reassign(val: T) -> void {
+            *this.ptr *= val;
+        }
+        fn div_reassign(val: T) -> void {
+            *this.ptr /= val;
+        }
+        fn drop() -> void {
+            if (!this.ptr) {
+                return;
+            }
+            if (!this.counter) {
+                return;
+            }
+            if (this.counter.owners <= 1) {
+                del this.counter;
+            }else {
+                this.counter.owners = this.counter.owners - 1;
+            }
+        }
+    }
+}
 
+public impl pointer<T> -> {
+    handle -> {
+        fn property_access(prop: MemberType) -> raw_ptr<unknown> {
+            return @compile::access(this.ptr, prop);
+        }
+        fn display() -> char[] {
+            if (!this.ptr) {
+                return "None";
+            }
+            return "" + *this.ptr;
+        }
+        fn drop() -> void {
+            if (!this.ptr) {
+                return;
+            }
+            if (!this.counter) {
+                return;
+            }
+            if (this.counter.owners <= 1) {
+                del this.counter;
+            } else {
+                this.counter.owners = this.counter.owners - 1;
+            }
+        }
+    }
+}
 public impl char -> {
     handle -> {
         fn default() -> char {

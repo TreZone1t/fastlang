@@ -1423,32 +1423,211 @@ impl x {
         }
     }
 }
+// ------------------------------------------------------------------------------
+// Planned Features & Compiler Todos
+// ------------------------------------------------------------------------------
 
-// ------------------------------------------------------------------------------
-// CANCELLED / DROPPED CONCEPT: Member Access on Collections via Identifiers
-// ------------------------------------------------------------------------------
-// Idea previously explored:
-//   hashmap map = new hashmap([hashmap_member{ key = "x"; value = 10; }]);
-//   map[x]; // Attempting to use member identifier 'x' without string quotes
-//
-// Verdict: CANCELLED / REJECTED.
-// Reason: The indexing handle `[]` is already fully generic and accepts any key type or expression.
-// Treating bare identifiers as keys inside `[]` without quotes introduces syntactic ambiguity
-// and blurs the boundary between static schema members and dynamic collection keys.
+// 1. Compiler flag (--debug-er) to report all collected errors instead of stopping at first
+// fastlang app.fast --debug-er
 
-// ------------------------------------------------------------------------------
-// Comptime Functions in Runtime Contexts: The Inlining & Injection Dilemma
-// ------------------------------------------------------------------------------
-// Problem / Limitation:
-// If a runtime function contains a local variable initialized via a compile-time function
-// (e.g., `int r = @compile rand();`), executing this once during compilation freezes `r`
-// as a single constant across all runtime invocations of that function.
-//
-// Future Architectural Approaches to Explore:
-// 1. Full Scope Inlining:
-//    Copying the entire function scope and inlining it at each call site.
-//    Drawback: Large functions will cause severe code bloat.
-// 2. Call-Site Parameter Injection:
-//    Identify variables evaluated at compile time, extract them into synthetic parameters,
-//    and inject their newly-evaluated compile-time values at each specific call site.
-//    This keeps the runtime function body unified while re-evaluating compile-time values per call.
+// 2. Keyword Escaping via `$` prefix
+blueprint Schema = {
+    char name[];
+    type $type;
+    int32 $default;
+    bool $class;
+}
+
+// 3. Static Type Reflection on callable types and generics
+type Ret = T.return_type;
+type P[] = T.params;
+str type_name = typeof(T).as_str();
+fn take_fntype_ret_rettype<T>(fnt: T) -> T.return_type {
+    return fnt.return_type;
+}
+fn take_fntype_ret_params<T>(fnt: T) -> T.params {
+    return fnt.params;
+}
+type Num = int32 | int64 | float32 | float64;
+// 4. Comptime Type Expressions
+// type Numeric = @compile if (is_64bit) int64 else int32;
+
+// 5. Generic operator handles expansion
+impl MyCollection<T> {
+     handle -> {
+         fn add<R>(other: R) -> auto;
+        fn index_access<K>(key: K) -> auto;
+     }
+ }
+
+// for the super types they will be like this
+function::fn hi() -> void { println("hi"); }
+function::method hi = () -> void { println("hi"); }
+function::lambda<void -> void> hi = ||println("hi");
+// if you try to do this 
+function hi() -> void { println("hi"); } // that will be a function::fn
+function hi = () -> void { println("hi"); } // that will be a function::method
+function hi = ||println("hi"); // that will be a function::lambda
+object::struct hi {
+    public {
+        fn hi() -> void { println("hi"); }
+    }
+}
+object::class hi {
+    public {
+        fn hi() -> void { println("hi"); }
+    }
+}
+object::blueprint hi = {};
+impl hi {
+        fn hi() -> void { println("hi"); }
+}
+object::enum hi {
+    public {
+        fn hi() -> void { println("hi"); }
+    }
+}
+object::namespace hi {
+      fn hi() -> void { println("hi"); }
+}
+object hi {
+    fn hi() -> void {  println("hi");}
+} // or
+object hi :: {
+    fn hi() -> void { println("hi"); }
+} // that will be a object::namespace
+object hi {
+    public {
+        fn hi() -> void { println("hi"); }
+    }
+} // that will not be a object::struct (default)
+object hi = {} // that will be a object::blueprint
+// or 
+object hi = {
+    int x = 10;
+} // that will be a object::blueprint
+object hi {
+    X,
+    Y,
+    Z
+}; // that will be a object::enum
+
+number::int8 hi = 10;
+number::int32 hi = 10;
+number::int64 hi = 10;
+number::float32 hi = 10.0;
+number::float64 hi = 10.0;
+number hi = 10; // that will be a number::int32 (default)
+number hi = 10.0; // that will be a number::float64 (default)
+impl number {
+    handle -> {
+        fn add(other: number) -> number {
+            println("add"); // override the default add for all number
+            return this + other;
+        }
+    }
+}
+fn i_take_func<...Args>(fnc: function , ...args: ...Args) -> void {
+     fnc(...args);
+}
+fn i_take_obj(obj: object) -> void {
+   if(typeof(obj).has_method("hi")){
+      obj.hi();
+   }else{
+    println("cannot say hi");
+   }
+}
+// union types for now are not supported and may not in future
+
+int x = if (true) 10 else 20;
+int y = (true) ? 10 : 20;
+// late if
+{
+    println(x);
+}if(true);
+
+enum Result<T> {
+    Ok(T),
+    Err {
+        char[] msg;
+        int32 code;
+    },
+}
+impl handle for Result::Err {
+    fn call(code: int32) -> Result::Err {
+        return Result::Err {
+            msg = "error",
+            code = code,
+        };
+    }
+    fn call(msg: char[]) -> Result::Err {
+        return Result::Err {
+            msg = msg,
+            code = 0,
+        };
+    }
+    fn call(msg: char[], code: int32) -> Result::Err {
+        return Result::Err {
+            msg = msg,
+            code = code,
+        };
+    }
+    fn call(fnc: function<()-> char[]>) -> Result::Err {
+        return Result::Err {
+            msg = fnc(),
+            code = 0,
+        };
+    }   
+}
+impl Result {
+    fn is_Ok() -> bool {
+        match this {
+            Ok(_) => return true,
+            Err{_,_} => return false,
+        }
+        return false;
+    }
+    fn is_Err() -> bool {
+        match this {
+            Ok(_) => return false,
+            Err{_,_} => return true,
+        }
+        return true;
+    }
+    fn get() -> T {
+        match this {
+            Ok(val) => {
+                return val;
+            }
+            Err{msg,code} => {
+                throw new Error(msg , code);
+            }
+        }
+    }
+}
+// how to use it
+fn i_do_something(state : int32) -> Result<int32> {
+ match state {
+     10 => {
+        return Ok(10);
+     }
+     20 => {
+        return Err("error");
+     }
+     30 => {
+        return Err("error" , 100);
+     }
+     40 => {
+        return Err(|| "error");
+     }
+     50 => {
+        return Err(100);
+     }
+     _ => {
+        method make_error() -> char[] {
+            return "error";
+        }
+        return Err(make_error);
+     }
+ }
+}
