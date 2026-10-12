@@ -274,40 +274,91 @@ impl Parser {
             TokenKind::Throw => self.parse_throw_stmt(),
             TokenKind::Try => self.parse_try_catch_stmt(),
 
-            TokenKind::LabelName(lbl) if lbl.eq_ignore_ascii_case("@compile") => {
-                if self.is_compile_validation_ahead() {
+            TokenKind::LabelName(lbl)
+                if lbl.eq_ignore_ascii_case("@dependency") =>
+            {
+                self.advance(); // consume directive
+                if self.peek().kind == TokenKind::LBrace {
+                    self.advance(); // consume '{'
+                    let mut depth = 1;
+                    while !self.is_at_end() && depth > 0 {
+                        if self.peek().kind == TokenKind::LBrace {
+                            depth += 1;
+                        } else if self.peek().kind == TokenKind::RBrace {
+                            depth -= 1;
+                            if depth == 0 {
+                                self.advance(); // consume '}'
+                                break;
+                            }
+                        }
+                        self.advance();
+                    }
+                }
+                if self.peek().kind == TokenKind::SemiColon {
+                    self.advance();
+                }
+                return Ok(None);
+            }
+
+            TokenKind::LabelName(lbl)
+                if lbl.eq_ignore_ascii_case("@compile")
+                    || lbl.eq_ignore_ascii_case("@sys") =>
+            {
+                if lbl.eq_ignore_ascii_case("@compile") && self.is_compile_validation_ahead() {
                     self.advance(); // consume '@compile'
                     if self.peek().kind == TokenKind::Arrow {
                         self.advance();
                     }
-                    self.consume(TokenKind::LBrace, "Expected '{' to open @compile validation body")?;
+                    self.consume(
+                        TokenKind::LBrace,
+                        "Expected '{' to open @compile validation body",
+                    )?;
                     let mut body = Vec::new();
                     while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
                         if let Some(s) = self.parse_statement(ScopeType::Block)? {
                             body.push(s);
                         }
                     }
-                    self.consume(TokenKind::RBrace, "Expected '}' after @compile validation body")?;
-                    self.consume(TokenKind::LParen, "Expected '(' after @compile validation block")?;
+                    self.consume(
+                        TokenKind::RBrace,
+                        "Expected '}' after @compile validation body",
+                    )?;
                     let mut args = Vec::new();
-                    if self.peek().kind != TokenKind::RParen {
-                        args.push(self.parse_expression()?);
-                        while self.peek().kind == TokenKind::Comma {
-                            self.advance();
+                    if self.peek().kind == TokenKind::LParen {
+                        self.advance(); // consume '('
+                        if self.peek().kind != TokenKind::RParen {
                             args.push(self.parse_expression()?);
+                            while self.peek().kind == TokenKind::Comma {
+                                self.advance();
+                                args.push(self.parse_expression()?);
+                            }
                         }
+                        self.consume(
+                            TokenKind::RParen,
+                            "Expected ')' after @compile validation arguments",
+                        )?;
                     }
-                    self.consume(TokenKind::RParen, "Expected ')' after @compile validation arguments")?;
                     if self.peek().kind == TokenKind::SemiColon {
                         self.advance();
                     }
                     Ok(Stmt::CompileValidation { body, args })
+                } else if (self.peek_ahead(1).map(|t| &t.kind) == Some(&TokenKind::DoubleColon)
+                    && self.peek_ahead(2).map(|t| &t.kind) == Some(&TokenKind::LBrace))
+                    || (matches!(
+                        self.peek_ahead(1).map(|t| &t.kind),
+                        Some(TokenKind::Identifier(_))
+                    ) && self.peek_ahead(2).map(|t| &t.kind) == Some(&TokenKind::DoubleColon)
+                        && self.peek_ahead(3).map(|t| &t.kind) == Some(&TokenKind::LBrace))
+                {
+                    self.parse_directive_decl().map(Stmt::Declaration)
                 } else if self.peek_ahead(1).map(|t| &t.kind) == Some(&TokenKind::Arrow)
                     || self.peek_ahead(1).map(|t| &t.kind) == Some(&TokenKind::LBrace)
-                    || (self.peek_ahead(1).map(|t| &t.kind) == Some(&TokenKind::DoubleColon)
-                        && self.peek_ahead(2).map(|t| &t.kind) == Some(&TokenKind::LBrace))
                 {
-                    self.parse_compile_decl().map(Stmt::Declaration)
+                    let lbl_name = lbl.clone();
+                    Err(format!(
+                        "Syntax Error: Expected '::' after '{}' (e.g. '{} :: {{ ... }}')",
+                        lbl_name, lbl_name
+                    ))
                 } else {
                     self.parse_expression_or_reassignment()
                 }
@@ -534,11 +585,19 @@ impl Parser {
             _ => "C".to_string(),
         };
 
+        if self.peek().kind == TokenKind::DoubleColon {
+            self.advance(); // consume '::'
+        } else if self.peek().kind == TokenKind::LBrace {
+            return Err("Syntax Error: Expected '::' after extern ABI (e.g. 'extern @c :: { ... }')".to_string());
+        }
+
         if self.peek().kind == TokenKind::LBrace {
             self.advance(); // consume '{'
             let mut decls = Vec::new();
             while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
-                if self.peek().kind == TokenKind::Fn {
+                if self.peek().kind == TokenKind::Set {
+                    return Err("Syntax Error: 'set' keyword is not allowed in 'extern' blocks; only 'fn' is allowed for foreign declarations.".to_string());
+                } else if self.peek().kind == TokenKind::Fn {
                     let fn_decl = self.parse_extern_fn_signature(&abi)?;
                     decls.push(fn_decl);
                 } else {
@@ -554,7 +613,7 @@ impl Parser {
             self.parse_extern_fn_signature(&abi)
         } else {
             Err(format!(
-                "Syntax Error: Expected '{{' or 'fn' after extern, found '{:?}'",
+                "Syntax Error: Expected ':: {{' or 'fn' after extern, found '{:?}'",
                 self.peek().kind
             ))
         }
@@ -582,7 +641,8 @@ impl Parser {
                 | TokenKind::TypeUChar
                 | TokenKind::TypeBool
                 | TokenKind::TypeVoid
-                | TokenKind::TypeType => {
+                | TokenKind::TypeType
+                | TokenKind::TypeAuto => {
                     let next_kind = self.peek_ahead(1).map(|t| &t.kind);
                     next_kind != Some(&TokenKind::Colon) && next_kind != Some(&TokenKind::Walrus)
                 }
@@ -611,8 +671,15 @@ impl Parser {
             self.peek().column,
             self.peek().kind
         );
-        let param_name = self.get_identifier(&err_msg)?;
-        let (type_node, default_value) = if self.peek().kind == TokenKind::Walrus {
+        let param_name = if self.peek().kind == TokenKind::Underscore {
+            self.advance();
+            format!("__unused_{}", self.current)
+        } else {
+            self.get_identifier(&err_msg)?
+        };
+        let (type_node, default_value) = if self.peek().kind == TokenKind::Comma || self.peek().kind == TokenKind::RParen {
+            (BaseType::Auto, None)
+        } else if self.peek().kind == TokenKind::Walrus {
             self.advance(); // consume ':='
             let val_expr = self.parse_expression()?;
             let t = type_from_expr(&val_expr);
@@ -643,6 +710,59 @@ impl Parser {
         })
     }
 
+    pub(crate) fn parse_params_entry(&mut self) -> Result<Vec<Param>, String> {
+        if self.peek().kind == TokenKind::LParen {
+            self.advance(); // consume '('
+            let mut names = Vec::new();
+            while self.peek().kind != TokenKind::RParen {
+                let name = if self.peek().kind == TokenKind::Underscore {
+                    self.advance();
+                    format!("__unused_{}", self.current)
+                } else {
+                    self.get_identifier("Expected parameter name in grouped parameters")?
+                };
+                names.push(name);
+                if self.peek().kind == TokenKind::Comma {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            self.consume(TokenKind::RParen, "Expected ')' after grouped parameter names")?;
+
+            let (type_node, default_value) = if self.peek().kind == TokenKind::Walrus {
+                self.advance();
+                let expr = self.parse_expression()?;
+                (type_from_expr(&expr), Some(expr))
+            } else if self.peek().kind == TokenKind::Colon {
+                self.advance();
+                let t = self.parse_type()?;
+                let def = if self.peek().kind == TokenKind::Assign || self.peek().kind == TokenKind::Walrus {
+                    self.advance();
+                    Some(self.parse_expression()?)
+                } else {
+                    None
+                };
+                (t, def)
+            } else {
+                return Err("Expected ':' or ':=' after grouped parameters '(a, b)'".to_string());
+            };
+
+            let mut out = Vec::new();
+            for n in names {
+                out.push(Param {
+                    name: n,
+                    type_node: type_node.clone(),
+                    default_value: default_value.clone(),
+                    is_variadic: false,
+                });
+            }
+            return Ok(out);
+        }
+        let p = self.parse_single_param()?;
+        Ok(vec![p])
+    }
+
     pub(crate) fn parse_extern_fn_signature(&mut self, abi: &str) -> Result<Decl, String> {
         self.consume(TokenKind::Fn, "Expected 'fn'")?;
         let name = self.get_identifier("Expected function name in extern declaration")?;
@@ -666,7 +786,7 @@ impl Parser {
         self.consume(TokenKind::RParen, "Expected ')' after parameters")?;
         let return_type = if self.peek().kind == TokenKind::Arrow {
             self.advance();
-            self.parse_type()?
+            self.parse_return_type()?
         } else {
             BaseType::Void
         };
@@ -831,8 +951,11 @@ impl Parser {
             TokenKind::TypeBlock => self.parse_block_scope_decl()?,
             TokenKind::Define => self.parse_define_stmt(true)?,
             TokenKind::Impl => self.parse_impl_decl()?,
-            TokenKind::LabelName(lbl) if lbl.eq_ignore_ascii_case("@compile") => {
-                self.parse_compile_decl()?
+            TokenKind::LabelName(lbl)
+                if lbl.eq_ignore_ascii_case("@compile")
+                    || lbl.eq_ignore_ascii_case("@sys") =>
+            {
+                self.parse_directive_decl()?
             }
             TokenKind::Identifier(_) if self.is_namespace_decl_start() => {
                 self.parse_namespace_decl()?
@@ -1880,6 +2003,21 @@ impl Parser {
     pub(crate) fn parse_reassign_stmt(&mut self) -> Result<Stmt, String> {
         self.advance(); // 'set'
 
+        if self.peek().kind == TokenKind::Dot {
+            self.advance(); // consume '.'
+            if self.peek().kind == TokenKind::DoubleColon {
+                self.advance();
+            }
+            if self.peek().kind == TokenKind::LBrace {
+                self.advance();
+                self.consume(TokenKind::RBrace, "Expected '}' in set . directive")?;
+            }
+            if self.peek().kind == TokenKind::SemiColon {
+                self.advance();
+            }
+            return Ok(Stmt::SetNamespace(".".to_string()));
+        }
+
         // Check if this is an intrinsic signature declaration: `set name<T>(params) -> return_type;` or `set name() -> return_type;`
         if let TokenKind::Identifier(name) = &self.peek().kind.clone() {
             if let Some(next) = self.tokens.get(self.current + 1) {
@@ -1926,7 +2064,7 @@ impl Parser {
 
                     let return_type = if self.peek().kind == TokenKind::Arrow {
                         self.advance();
-                        self.parse_type()?
+                        self.parse_return_type()?
                     } else {
                         BaseType::Void
                     };
@@ -1955,6 +2093,61 @@ impl Parser {
                 }
             }
         }
+        if let TokenKind::Identifier(first_name) = &self.peek().kind.clone() {
+            let mut is_ns = false;
+            let mut ns_path = first_name.clone();
+            let mut lookahead = 1;
+            while let Some(tok) = self.tokens.get(self.current + lookahead) {
+                if tok.kind == TokenKind::DoubleColon {
+                    if let Some(next_id) = self.tokens.get(self.current + lookahead + 1) {
+                        if let TokenKind::Identifier(id_str) = &next_id.kind {
+                            ns_path.push_str("::");
+                            ns_path.push_str(id_str);
+                            lookahead += 2;
+                            continue;
+                        }
+                    }
+                }
+                break;
+            }
+            if let Some(tok) = self.tokens.get(self.current + lookahead) {
+                if tok.kind == TokenKind::SemiColon {
+                    is_ns = true;
+                } else if tok.kind == TokenKind::LBrace {
+                    if let Some(after) = self.tokens.get(self.current + lookahead + 1) {
+                        if after.kind == TokenKind::RBrace {
+                            is_ns = true;
+                        }
+                    }
+                } else if tok.kind == TokenKind::DoubleColon {
+                    if let Some(after) = self.tokens.get(self.current + lookahead + 1) {
+                        if after.kind == TokenKind::LBrace {
+                            if let Some(after2) = self.tokens.get(self.current + lookahead + 2) {
+                                if after2.kind == TokenKind::RBrace {
+                                    is_ns = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if is_ns {
+                for _ in 0..lookahead {
+                    self.advance();
+                }
+                if self.peek().kind == TokenKind::DoubleColon {
+                    self.advance();
+                }
+                if self.peek().kind == TokenKind::LBrace {
+                    self.advance();
+                    self.consume(TokenKind::RBrace, "Expected '}' in set directive")?;
+                }
+                if self.peek().kind == TokenKind::SemiColon {
+                    self.advance();
+                }
+                return Ok(Stmt::SetNamespace(ns_path));
+            }
+        }
 
         let target = self.parse_expression()?;
 
@@ -1981,9 +2174,14 @@ impl Parser {
     pub(crate) fn parse_if_stmt(&mut self) -> Result<Stmt, String> {
         self.advance(); // 'if'
 
-        self.consume(TokenKind::LParen, "Expected '(' after 'if'")?;
-        let condition = self.parse_expression()?;
-        self.consume(TokenKind::RParen, "Expected ')' after if condition")?;
+        let condition = if self.peek().kind == TokenKind::LParen {
+            self.advance();
+            let c = self.parse_expression()?;
+            self.consume(TokenKind::RParen, "Expected ')' after if condition")?;
+            c
+        } else {
+            self.parse_expression()?
+        };
 
         if self.peek().kind == TokenKind::Arrow {
             self.advance();

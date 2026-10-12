@@ -25,7 +25,10 @@ pub struct Parser {
 }
 
 impl Parser {
-    pub fn new(tokens: Vec<Token>) -> Self {
+    pub fn new_with_aliases(
+        tokens: Vec<Token>,
+        type_aliases: HashMap<String, BaseType>,
+    ) -> Self {
         let mut macro_metadata = std::collections::HashSet::new();
         for i in 0..tokens.len() {
             if tokens[i].kind == TokenKind::TypeMacro {
@@ -45,9 +48,13 @@ impl Parser {
             fn_metadata: HashMap::new(),
             macro_metadata,
             current_generics: std::collections::HashSet::new(),
-            type_aliases: HashMap::new(),
+            type_aliases,
             in_match_pattern: false,
         }
+    }
+
+    pub fn new(tokens: Vec<Token>) -> Self {
+        Self::new_with_aliases(tokens, HashMap::new())
     }
 
     pub(crate) fn peek(&self) -> &Token {
@@ -79,23 +86,7 @@ impl Parser {
         if self.tokens.get(idx).map(|t| &t.kind) == Some(&TokenKind::Arrow) {
             idx += 1;
         }
-        if self.tokens.get(idx).map(|t| &t.kind) != Some(&TokenKind::LBrace) {
-            return false;
-        }
-        let mut depth = 1;
-        idx += 1;
-        while idx < self.tokens.len() && depth > 0 {
-            match self.tokens[idx].kind {
-                TokenKind::LBrace => depth += 1,
-                TokenKind::RBrace => depth -= 1,
-                _ => {}
-            }
-            idx += 1;
-        }
-        if depth == 0 && idx < self.tokens.len() {
-            return matches!(self.tokens[idx].kind, TokenKind::LParen);
-        }
-        false
+        self.tokens.get(idx).map(|t| &t.kind) == Some(&TokenKind::LBrace)
     }
 
     /// Keywords that can legally appear as identifiers in name positions
@@ -106,11 +97,22 @@ impl Parser {
         let mut statements = Vec::new();
 
         while !self.is_at_end() {
+            let prev_cur = self.current;
             match self.parse_statement(ScopeType::Global) {
-                Ok(Some(stmt)) => statements.push(stmt),
+                Ok(Some(stmt)) => {
+                    if self.current == prev_cur {
+                        panic!("Parser infinite loop: parse_statement returned Ok(Some) without advancing at token {:?}", self.peek());
+                    }
+                    statements.push(stmt);
+                }
 
                 // Skip empty statements
-                Ok(None) => continue,
+                Ok(None) => {
+                    if self.current == prev_cur {
+                        panic!("Parser infinite loop: parse_statement returned Ok(None) without advancing at token {:?}", self.peek());
+                    }
+                    continue;
+                }
 
                 Err(e) => {
                     return Err(e);

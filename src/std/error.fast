@@ -2,16 +2,8 @@
 
 public class Error -> {
     public -> {
-        str message = "";
+        char message[];
         int32 code = 0;
-
-
-
-
-
-
-
-
         fn as_str() -> char[] {
             return "{ message: " + this.message + ", code: " + this.code + " }";
         }
@@ -22,7 +14,7 @@ public class Error -> {
             this.message = err.message;
             this.code = err.code;
         }
-        init(msg: str) -> {
+        init(msg: char[]) -> {
             this.message = msg;
             this.code = 0;
         }
@@ -30,7 +22,7 @@ public class Error -> {
             this.message = "Error happened with code";
             this.code = code;
         }
-        init(msg: str, code: int32) -> {
+        init(msg: char[], code: int32) -> {
             this.message = msg;
             this.code = code;
         }
@@ -46,7 +38,7 @@ public class Error -> {
     }
 }
 
-public @compile -> {
+public @compile :: {
     macro $throw[e: Error] -> {
         throw e;
     }

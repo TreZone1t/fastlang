@@ -1,4 +1,5 @@
 // Test 91: Compile-time Validation Block
+import std::fmt;
 micro test_micro_in_compile = ()-> {
     @compile::print("test_micro_in_compile");
 }

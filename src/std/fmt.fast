@@ -1,0 +1,134 @@
+import std::error;
+import @c "clib/fmt.h";
+
+extern @c :: {
+    fn fast_print<...T>(...args: ...T) -> void;
+    fn fast_println<...T>(...args: ...T) -> void;
+    fn fast_input(prompt: str) -> str;
+}
+
+public fn print<...T>(...args: ...T) -> void {
+    @compile {
+        for arg in args {
+            if (!typeof(arg).printable) {
+                @compile::throw new Error("Argument type is not printable");
+            }
+        }
+    }(args);
+    if (@compile::backend() == Backend::Cpp) {
+        @c::fast_print(...args);
+    } else {
+        @sys::write(1, ...args, 0);
+    }
+}
+
+public fn println<...T>(...args: ...T) -> void {
+    @compile {
+        for arg in args {
+            if (!typeof(arg).printable) {
+                @compile::throw new Error("Argument type is not printable: " + typeof(arg).as_str());
+            }
+        }
+    }(args);
+    if (@compile::backend() == Backend::Cpp) {
+        @c::fast_println(...args);
+    } else {
+        @sys::write(1, ...args, 0);
+    }
+}
+
+public fn input(prompt := "") -> char[] {
+    if (@compile::backend() == Backend::Cpp) {
+        return @c::fast_input(prompt);
+    } else {
+        return @sys::read(0, 0, 0);
+    }
+}
+
+public method numberfy = (s: char[]) -> number {
+    if (s.len == 0) {
+        throw new Error("Cannot numberfy empty string");
+    }
+    usize idx = 0;
+    float64 sign = 1.0;
+    if (s[0] == '-') {
+        sign = -1.0;
+        idx = 1;
+    } else if (s[0] == '+') {
+        idx = 1;
+    }
+
+    if (idx >= s.len) {
+        throw new Error("Invalid number: string contains only sign");
+    }
+
+    // Check Hex prefixes: 0x, 0X, #, #hex
+    bool is_hex = false;
+    if (idx + 1 < s.len && s[idx] == '0' && (s[idx + 1] == 'x' || s[idx + 1] == 'X')) {
+        is_hex = true;
+        idx = idx + 2;
+    } else if (s[idx] == '#') {
+        is_hex = true;
+        idx = idx + 1;
+        if (idx + 2 < s.len && s[idx] == 'h' && s[idx + 1] == 'e' && s[idx + 2] == 'x') {
+            idx = idx + 3;
+        }
+    }
+
+    if (is_hex) {
+        if (idx >= s.len) {
+            throw new Error("Invalid hex number in numberfy");
+        }
+        float64 hex_val = 0.0;
+        for (usize i = idx; i < s.len; i = i + 1) {
+            char c = s[i];
+            float64 digit = 0.0;
+            if (c >= '0' && c <= '9') {
+                digit = ((c - '0') as int32) as float64;
+            } else if (c >= 'a' && c <= 'f') {
+                digit = ((c - 'a' + 10) as int32) as float64;
+            } else if (c >= 'A' && c <= 'F') {
+                digit = ((c - 'A' + 10) as int32) as float64;
+            } else {
+                throw new Error("Invalid hex character in numberfy");
+            }
+            hex_val = hex_val * 16.0 + digit;
+        }
+        return hex_val * sign;
+    }
+
+    // Decimal parsing with optional single dot '.'
+    float64 int_part = 0.0;
+    float64 frac_part = 0.0;
+    float64 frac_div = 1.0;
+    bool has_dot = false;
+    usize digits_seen = 0;
+
+    for (usize i = idx; i < s.len; i = i + 1) {
+        char c = s[i];
+        if (c == '.') {
+            if (has_dot) {
+                throw new Error("Multiple decimal points in numberfy");
+            }
+            has_dot = true;
+            continue;
+        }
+        if (c < '0' || c > '9') {
+            throw new Error("Invalid character in numberfy");
+        }
+        digits_seen = digits_seen + 1;
+        float64 digit = ((c - '0') as int32) as float64;
+        if (!has_dot) {
+            int_part = int_part * 10.0 + digit;
+        } else {
+            frac_div = frac_div * 10.0;
+            frac_part = frac_part + (digit / frac_div);
+        }
+    }
+
+    if (digits_seen == 0) {
+        throw new Error("No digits found in numberfy");
+    }
+
+    return (int_part + frac_part) * sign;
+}

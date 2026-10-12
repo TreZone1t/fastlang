@@ -1,5 +1,6 @@
 // Comprehensive Suite 05: Native 'str' Primitive Type, Char Methods, and Escape Sequences
 import std::string;
+import std::fmt;
 fn test_str_operations() -> void {
     str greeting = "Hello";
     str target = "FastLang";
@@ -104,6 +105,24 @@ fn test_uchar() -> void {
     println("uchar eq: ", eq1, " ", eq2); // EXPECT: uchar eq: true false
 }
 
+fn test_unicode_strings() -> void {
+    array<uchar> u_msg = u"Hello World 🚀";
+    println("unicode message: ", u_msg); // EXPECT: unicode message: Hello World 🚀
+
+    uchar ch = '🌟';
+    println("single uchar: ", ch); // EXPECT: single uchar: 🌟
+
+    uchar ch2 = u'🔥';
+    println("explicit uchar: ", ch2); // EXPECT: explicit uchar: 🔥
+}
+
+fn test_unicode_concatenation() -> void {
+    array<char> ascii_part = "Hello ";
+    array<uchar> unicode_part = u"World 🚀";
+    array<uchar> combined = ascii_part + unicode_part;
+    println("combined: ", combined); // EXPECT: combined: Hello World 🚀
+}
+
 fn main() -> int32 {
     test_str_operations();
     test_char_methods();
@@ -111,6 +130,8 @@ fn main() -> int32 {
     test_casting();
     test_string();
     test_uchar();
+    test_unicode_strings();
+    test_unicode_concatenation();
     println("ALL 05_STR_AND_PRIMITIVES TESTS PASSED"); // EXPECT: ALL 05_STR_AND_PRIMITIVES TESTS PASSED
     return 0;
 }

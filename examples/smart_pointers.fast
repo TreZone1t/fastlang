@@ -1,4 +1,5 @@
 // FastLang Example: Smart Pointers & Memory Management (.fast)
+import std::fmt;
 
 class User -> {
     public -> {

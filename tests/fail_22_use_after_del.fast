@@ -1,4 +1,5 @@
 // Test 92 (Expected Failure): Attempting to use a variable after deletion
+import std::fmt;
 class Thing -> {
     public -> {
         int32 val = 10;

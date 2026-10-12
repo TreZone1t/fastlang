@@ -1,5 +1,6 @@
 // Comprehensive Suite 15: Type Traits, Flags, Printable, Throwable, and Default Reflection
 import std;
+import std::fmt;
 
 class CustomError extends Error -> {
     public -> {

@@ -188,6 +188,7 @@ impl Parser {
                 allowed_handle.push(HandleMethods::Deref);
                 allowed_handle.push(HandleMethods::Copy);
                 allowed_handle.push(HandleMethods::Cast);
+                allowed_handle.push(HandleMethods::Extension);
             }
             BaseType::Block { .. } => {
                 allowed_handle.push(HandleMethods::Display);
@@ -273,7 +274,22 @@ impl Parser {
 
                 let mut generics: Vec<BaseType> = Vec::new();
                 if self.peek().kind == TokenKind::Less {
-                    if !matches!(handle_kind, HandleMethods::Call | HandleMethods::Cast) {
+                    if matches!(
+                        handle_kind,
+                        HandleMethods::Display
+                            | HandleMethods::Iter
+                            | HandleMethods::Next
+                            | HandleMethods::IterDone
+                            | HandleMethods::Break
+                            | HandleMethods::Continue
+                            | HandleMethods::Copy
+                            | HandleMethods::Drop
+                            | HandleMethods::IsDone
+                            | HandleMethods::Increment
+                            | HandleMethods::Decrement
+                            | HandleMethods::PreIncrement
+                            | HandleMethods::PreDecrement
+                    ) {
                         return Err(format!(
                             "Syntax Error: Handle method '{}' is not allowed to have generics at line {}, column {}",
                             method_name,
@@ -373,7 +389,7 @@ impl Parser {
             } else {
                 return Err(
                     format!(
-                        "Syntax Error: Unsupported token '{}' in handle block at line {}, column {}",
+                        "Syntax Error: Only 'fn' declarations are permitted inside a handle block. Modifiers like 'public', 'private', or 'method' are forbidden. Found '{}' at line {}, column {}",
                         self.peek().kind.as_str(),
                         self.peek().line,
                         self.peek().column

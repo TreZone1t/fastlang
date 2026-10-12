@@ -1,8 +1,9 @@
 // Comprehensive Suite 11: Modules, Bare Blocks, and Extern C FFI
 import @c "math.h";
 import @c "stdlib.h";
+import std::fmt;
 
-extern @c {
+extern @c :: {
     fn sqrt(x: float64) -> float64;
 }
 

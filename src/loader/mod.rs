@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use crate::frontend::parser::ast::{Decl, Stmt};
 use crate::frontend::parser::ast::TypeMetadata;
+use crate::project::{FastManifest, GlobalConfig};
 pub fn merge_metadata(target: &mut HashMap<String, TypeMetadata>, incoming: HashMap<String, TypeMetadata>) {
     for (k, v) in incoming {
         let entry = target.entry(k).or_insert_with(|| v.clone());
@@ -27,41 +28,203 @@ pub struct Program {
 
 pub struct ProjectLoader {
     pub include_paths: Vec<String>,
+    pub project_root: Option<PathBuf>,
+    pub packages_dir: Option<PathBuf>,
+    pub global_libs: Vec<PathBuf>,
+    pub manifest: Option<FastManifest>,
+}
+
+pub fn get_std_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(custom) = std::env::var("FAST_STD_PATH") {
+        let p = PathBuf::from(custom);
+        if p.exists() {
+            dirs.push(p);
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let mut curr = exe.clone();
+        for _ in 0..5 {
+            if curr.pop() {
+                let test_src_std = curr.join("src").join("std");
+                if test_src_std.exists() && !dirs.contains(&test_src_std) {
+                    dirs.push(test_src_std);
+                }
+                let test_std = curr.join("std");
+                if test_std.exists() && !dirs.contains(&test_std) {
+                    dirs.push(test_std);
+                }
+            }
+        }
+    }
+    let local_src_std = PathBuf::from("src/std");
+    if local_src_std.exists() && !dirs.contains(&local_src_std) {
+        dirs.push(local_src_std);
+    }
+    let local_std = PathBuf::from("std");
+    if local_std.exists() && !dirs.contains(&local_std) {
+        dirs.push(local_std);
+    }
+    dirs
 }
 
 impl ProjectLoader {
     pub fn new() -> Self {
-        ProjectLoader {
-            include_paths: vec![
-                "src/".to_string(),
-                "src/examples/".to_string(),
-                "src/std/".to_string(),
-            ],
+        let global_libs = GlobalConfig::load().get_resolved_paths();
+        let mut includes = vec![
+            "src/".to_string(),
+            "src/examples/".to_string(),
+            "src/std/".to_string(),
+        ];
+        for s_dir in get_std_dirs() {
+            let path_str = format!("{}/", s_dir.display());
+            if !includes.contains(&path_str) {
+                includes.push(path_str);
+            }
         }
+        ProjectLoader {
+            include_paths: includes,
+            project_root: None,
+            packages_dir: None,
+            global_libs,
+            manifest: None,
+        }
+    }
+
+    pub fn new_with_project(project_root: PathBuf, manifest: Option<FastManifest>) -> Self {
+        let mut loader = Self::new();
+        loader.project_root = Some(project_root.clone());
+        loader.manifest = manifest.clone();
+        let pkg_dir = manifest
+            .as_ref()
+            .map(|m| m.get_packages_dir(&project_root))
+            .unwrap_or_else(|| project_root.join("packages"));
+        loader.packages_dir = Some(pkg_dir);
+
+        if let Some(ref m) = manifest {
+            if let Some(ref paths) = m.paths {
+                if let Some(ref libs) = paths.libraries {
+                    for lib in libs {
+                        let p = PathBuf::from(lib);
+                        if p.exists() {
+                            loader.global_libs.push(p);
+                        }
+                    }
+                }
+            }
+        }
+
+        let src_dir = project_root.join("src");
+        if src_dir.exists() {
+            loader.include_paths.insert(0, format!("{}/", src_dir.display()));
+        }
+        loader.include_paths.insert(0, format!("{}/", project_root.display()));
+        loader
     }
 
     pub fn resolve_path(&self, mod_name: &str) -> Option<String> {
         let extensions = [".fast", ".fs"];
+
+        // 1. Relative paths (e.g. ./utils or ../shared)
+        if mod_name.starts_with("./") || mod_name.starts_with("../") {
+            for ext in &extensions {
+                let test = format!("{}{}", mod_name, ext);
+                if Path::new(&test).exists() {
+                    return Some(test);
+                }
+                if let Some(ref root) = self.project_root {
+                    let full = root.join(&test);
+                    if full.exists() {
+                        return Some(full.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+
+        // 2. Standard library (std/...)
+        let std_dirs = get_std_dirs();
         for ext in &extensions {
             if mod_name.starts_with("std/") {
+                let sub = &mod_name[4..];
+                for s_dir in &std_dirs {
+                    let test = s_dir.join(format!("{}{}", sub, ext));
+                    if test.exists() {
+                        return Some(test.to_string_lossy().to_string());
+                    }
+                }
                 let test = format!("src/{}{}", mod_name, ext);
                 if Path::new(&test).exists() {
                     return Some(test);
                 }
+                let test_nostd = format!("{}{}", mod_name, ext);
+                if Path::new(&test_nostd).exists() {
+                    return Some(test_nostd);
+                }
             } else if mod_name == "std" {
+                for s_dir in &std_dirs {
+                    let test = s_dir.join(format!("std{}", ext));
+                    if test.exists() {
+                        return Some(test.to_string_lossy().to_string());
+                    }
+                }
                 let test = format!("src/std/std{}", ext);
                 if Path::new(&test).exists() {
                     return Some(test);
                 }
+                let test_nostd = format!("std/std{}", ext);
+                if Path::new(&test_nostd).exists() {
+                    return Some(test_nostd);
+                }
             }
-            
+        }
+
+        // 3. Local packages/ directory (e.g. packages/<mod_name>/src/lib.fast or packages/<mod_name>.fast)
+        if let Some(ref pkg_dir) = self.packages_dir {
+            if pkg_dir.exists() {
+                for ext in &extensions {
+                    let candidates = [
+                        pkg_dir.join(mod_name).join("src").join(format!("lib{}", ext)),
+                        pkg_dir.join(mod_name).join("src").join(format!("main{}", ext)),
+                        pkg_dir.join(mod_name).join(format!("lib{}", ext)),
+                        pkg_dir.join(mod_name).join(format!("{}{}", mod_name, ext)),
+                        pkg_dir.join(format!("{}{}", mod_name, ext)),
+                    ];
+                    for c in &candidates {
+                        if c.exists() {
+                            return Some(c.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Global registered library paths
+        for lib_dir in &self.global_libs {
+            if lib_dir.exists() {
+                for ext in &extensions {
+                    let candidates = [
+                        lib_dir.join(mod_name).join("src").join(format!("lib{}", ext)),
+                        lib_dir.join(mod_name).join(format!("{}{}", mod_name, ext)),
+                        lib_dir.join(format!("{}{}", mod_name, ext)),
+                    ];
+                    for c in &candidates {
+                        if c.exists() {
+                            return Some(c.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5. Project root and include paths
+        for ext in &extensions {
             for path in &self.include_paths {
                 let test = format!("{}{}{}", path, mod_name, ext);
                 if Path::new(&test).exists() {
                     return Some(test);
                 }
             }
-            
+
             let local_test = format!("{}{}", mod_name, ext);
             if Path::new(&local_test).exists() {
                 return Some(local_test);
@@ -117,16 +280,48 @@ impl ProjectLoader {
 
     fn resolve_path_static(mod_name: &str) -> Option<String> {
         let extensions = [".fast", ".fs"];
+        let std_dirs = get_std_dirs();
         for ext in &extensions {
             if mod_name.starts_with("std/") {
+                let sub = &mod_name[4..];
+                for s_dir in &std_dirs {
+                    let test = s_dir.join(format!("{}{}", sub, ext));
+                    if test.exists() {
+                        return Some(test.to_string_lossy().to_string());
+                    }
+                }
                 let test = format!("src/{}{}", mod_name, ext);
                 if Path::new(&test).exists() {
                     return Some(test);
                 }
             } else if mod_name == "std" {
+                for s_dir in &std_dirs {
+                    let test = s_dir.join(format!("std{}", ext));
+                    if test.exists() {
+                        return Some(test.to_string_lossy().to_string());
+                    }
+                }
                 let test = format!("src/std/std{}", ext);
                 if Path::new(&test).exists() {
                     return Some(test);
+                }
+            }
+
+            if let Ok(curr) = std::env::current_dir() {
+                let pkg_dir = curr.join("packages");
+                if pkg_dir.exists() {
+                    let candidates = [
+                        pkg_dir.join(mod_name).join("src").join(format!("lib{}", ext)),
+                        pkg_dir.join(mod_name).join("src").join(format!("main{}", ext)),
+                        pkg_dir.join(mod_name).join(format!("lib{}", ext)),
+                        pkg_dir.join(mod_name).join(format!("{}{}", mod_name, ext)),
+                        pkg_dir.join(format!("{}{}", mod_name, ext)),
+                    ];
+                    for c in &candidates {
+                        if c.exists() {
+                            return Some(c.to_string_lossy().to_string());
+                        }
+                    }
                 }
             }
 
@@ -145,8 +340,117 @@ impl ProjectLoader {
         None
     }
 
+    pub fn process_file_dependencies(&mut self, content: &str) {
+        let mut idx = 0;
+        while let Some(pos) = content[idx..].find("@dependency") {
+            let start = idx + pos + "@dependency".len();
+            if let Some(brace_open) = content[start..].find('{') {
+                let inner_start = start + brace_open + 1;
+                let mut depth = 1;
+                let mut inner_end = None;
+                for (byte_offset, ch) in content[inner_start..].char_indices() {
+                    if ch == '{' {
+                        depth += 1;
+                    } else if ch == '}' {
+                        depth -= 1;
+                        if depth == 0 {
+                            inner_end = Some(inner_start + byte_offset);
+                            break;
+                        }
+                    }
+                }
+                if let Some(end) = inner_end {
+                    let block_toml = &content[inner_start..end];
+                    self.resolve_dependency_block(block_toml);
+                    idx = end + 1;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn resolve_dependency_block(&mut self, block: &str) {
+        let val_res: Result<toml::Value, _> = toml::from_str(block)
+            .or_else(|_| toml::from_str(&format!("[dependencies]\n{}", block)));
+
+        if let Ok(val) = val_res {
+            let mut extracted = Vec::new();
+            if let Some(table) = val.as_table() {
+                for key in &["dependencies", "packages", "dependency", "package"] {
+                    if let Some(arr) = table.get(*key).and_then(|v| v.as_array()) {
+                        for item in arr {
+                            if let Some(item_table) = item.as_table() {
+                                if let Some(n) = item_table.get("name").and_then(|v| v.as_str()) {
+                                    let ver = item_table.get("version").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                    extracted.push((n.to_string(), ver));
+                                }
+                            } else if let Some(n) = item.as_str() {
+                                extracted.push((n.to_string(), None));
+                            }
+                        }
+                    } else if let Some(t) = table.get(*key).and_then(|v| v.as_table()) {
+                        for (k, v) in t {
+                            let ver = match v {
+                                toml::Value::String(s) => Some(s.clone()),
+                                toml::Value::Table(inner) => inner.get("version").and_then(|x| x.as_str()).map(|s| s.to_string()),
+                                _ => None,
+                            };
+                            extracted.push((k.clone(), ver));
+                        }
+                    }
+                }
+
+                for (k, v) in table {
+                    if k == "dependencies" || k == "packages" || k == "dependency" || k == "package" {
+                        continue;
+                    }
+                    let ver = match v {
+                        toml::Value::String(s) => Some(s.clone()),
+                        toml::Value::Table(inner) => inner.get("version").and_then(|x| x.as_str()).map(|s| s.to_string()),
+                        _ => None,
+                    };
+                    extracted.push((k.clone(), ver));
+                }
+            }
+
+            let packages_dir = self.packages_dir.clone().unwrap_or_else(|| {
+                if let Some(ref root) = self.project_root {
+                    root.join("packages")
+                } else {
+                    PathBuf::from("packages")
+                }
+            });
+
+            for (name, ver) in extracted {
+                if let Some(ref mut m) = self.manifest {
+                    let deps = m.dependencies.get_or_insert_with(HashMap::new);
+                    if !deps.contains_key(&name) {
+                        deps.insert(name.clone(), ver.clone().unwrap_or_else(|| "latest".to_string()));
+                        if let Some(ref root) = self.project_root {
+                            let _ = m.save_to_file(&root.join("Fast.toml"));
+                        }
+                    }
+                }
+
+                if let Ok(pkg_path) = crate::project::resolve_and_fetch_dependency(
+                    &name,
+                    ver.as_deref(),
+                    &packages_dir,
+                ) {
+                    let path_str = format!("{}/", pkg_path.display());
+                    if !self.include_paths.contains(&path_str) {
+                        self.include_paths.insert(0, path_str);
+                    }
+                }
+            }
+        }
+    }
+
     fn resolve_import_deps(
-        &self,
+        &mut self,
         deps: &[(String, Option<Vec<String>>)],
         loaded_names: &mut HashSet<String>,
         loaded_paths: &mut HashSet<PathBuf>,
@@ -197,9 +501,11 @@ impl ProjectLoader {
         Ok(())
     }
 
-    fn parse_file(&self, path: &str) -> Result<(Vec<Stmt>, HashMap<String, TypeMetadata>), String> {
+    fn parse_file(&mut self, path: &str) -> Result<(Vec<Stmt>, HashMap<String, TypeMetadata>), String> {
         let contents = std::fs::read_to_string(path)
             .unwrap_or_else(|_| panic!("Could not read '{}'. Make sure the file exists.", path));
+
+        self.process_file_dependencies(&contents);
     
         let mut scanner = crate::frontend::lexer::scanner::Scanner::new(contents.clone());
         let mut tokens = Vec::new();
@@ -223,9 +529,80 @@ impl ProjectLoader {
         }
     
         let mut parser = crate::frontend::parser::parser::Parser::new(tokens);
-    
-        match parser.parse_program() {
-            Ok(program) => Ok((program.statements, parser.metadata.clone())),
+        let prog = parser.parse_program();
+
+        match prog {
+            Ok(program) => {
+                let mut metadata = parser.metadata.clone();
+                let set_ns_opt = program.statements.iter().find_map(|s| {
+                    if let Stmt::SetNamespace(ns) = s {
+                        Some(ns.clone())
+                    } else {
+                        None
+                    }
+                });
+
+                let stmts = if let Some(ns) = set_ns_opt {
+                    let resolved_ns = if ns == "." {
+                        let p = Path::new(path);
+                        let folder_name = p.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("");
+                        let stem_name = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                        if !folder_name.is_empty() && folder_name != "src" && folder_name != "std" && folder_name != "." {
+                            folder_name.to_string()
+                        } else {
+                            stem_name.to_string()
+                        }
+                    } else {
+                        ns
+                    };
+
+                    let current_keys: Vec<String> = metadata.keys().cloned().collect();
+                    for k in current_keys {
+                        let meta = metadata[&k].clone();
+                        let qual = format!("{}::{}", resolved_ns, k);
+                        metadata.insert(qual, meta);
+                    }
+
+                    let mut top_stmts = Vec::new();
+                    let mut inner_decls = Vec::new();
+                    for s in program.statements {
+                        match s {
+                            Stmt::SetNamespace(_) => {}
+                            Stmt::Declaration(Decl::Import { .. }) => top_stmts.push(s),
+                            Stmt::UsingStmt(_) => top_stmts.push(s),
+                            Stmt::Declaration(mut d) => {
+                                match &mut d {
+                                    Decl::FnDecl { ref mut visibility, .. }
+                                    | Decl::BlueprintDecl { ref mut visibility, .. }
+                                    | Decl::ClassDecl { ref mut visibility, .. }
+                                    | Decl::StructDecl { ref mut visibility, .. }
+                                    | Decl::EnumDecl { ref mut visibility, .. }
+                                    | Decl::MachineDecl { ref mut visibility, .. }
+                                    | Decl::MacroDecl { ref mut visibility, .. }
+                                    | Decl::MicroDecl { ref mut visibility, .. } => {
+                                        *visibility = crate::frontend::parser::ast::Visibility::Public;
+                                    }
+                                    _ => {}
+                                }
+                                inner_decls.push(d);
+                            }
+                            _ => top_stmts.push(s),
+                        }
+                    }
+
+                    top_stmts.push(Stmt::Declaration(Decl::NamespaceDecl {
+                        visibility: crate::frontend::parser::ast::Visibility::Public,
+                        name: resolved_ns,
+                        decls: inner_decls,
+                    }));
+
+                    top_stmts
+                } else {
+                    program.statements
+                };
+
+                Ok((stmts, metadata))
+            }
             Err(err_msg) => {
                 let mut line = 1;
                 let mut column = 1;
@@ -255,7 +632,7 @@ impl ProjectLoader {
         }
     }
 
-    pub fn load(&self, path: &str, target_module: Option<&str>) -> Result<Program, String> {
+    pub fn load(&mut self, path: &str, target_module: Option<&str>) -> Result<Program, String> {
         let entry_path = if let Some(target) = target_module {
             self.resolve_path(target).ok_or_else(|| format!("Target module '{}' not found in include paths.", target))?
         } else {

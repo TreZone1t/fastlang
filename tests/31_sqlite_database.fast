@@ -1,0 +1,68 @@
+// EXPECT: Testing FastLang SQLite Engine...
+// EXPECT: Database opened in memory!
+// EXPECT: CREATE TABLE rc = 0
+// EXPECT: Inserted rows: last statement changes = 1
+// EXPECT: Statement prepared!
+// EXPECT: User #1: Hakim (Score: 99.5)
+// EXPECT: User #2: trezone (Score: 100)
+// EXPECT: SQLite statement finalized and database closed
+// EXPECT: ALL 31_SQLITE_DATABASE TESTS PASSED
+import std::fmt;
+import std::sql;
+
+fn main() -> void {
+    fmt::println("Testing FastLang SQLite Engine...");
+
+    db := sql::open(":memory:");
+    fmt::println("Database opened in memory!");
+
+    int32 create_rc = db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, score REAL);");
+    if (create_rc != 0) {
+        throw new Error("Failed to create table: rc = " + create_rc);
+    }
+    fmt::println("CREATE TABLE rc = " + create_rc);
+
+    int32 ins1 = db.exec("INSERT INTO users (name, score) VALUES ('Hakim', 99.5);");
+    int32 ins2 = db.exec("INSERT INTO users (name, score) VALUES ('trezone', 100.0);");
+    if (ins1 != 0 || ins2 != 0) {
+        throw new Error("Failed to insert rows into users table");
+    }
+
+    int32 last_changes = db.changes();
+    if (last_changes != 1) {
+        throw new Error("Expected 1 row change for ins2, got: " + last_changes);
+    }
+    fmt::println("Inserted rows: last statement changes = " + last_changes);
+
+    stmt := db.prepare("SELECT id, name, score FROM users ORDER BY id;");
+    fmt::println("Statement prepared!");
+
+    int32 row_count = 0;
+    while (stmt.step()) -> {
+        row_count = row_count + 1;
+        int32 id = stmt.get_int(0);
+        str name = stmt.get_str(1);
+        float64 score = stmt.get_float(2);
+        if (row_count == 1) {
+            if (id != 1 || name != "Hakim" || score < 99.4 || score > 99.6) {
+                throw new Error("Row 1 data verification failed");
+            }
+        }
+        if (row_count == 2) {
+            if (id != 2 || name != "trezone" || score < 99.9 || score > 100.1) {
+                throw new Error("Row 2 data verification failed");
+            }
+        }
+
+        fmt::println("User #" + id + ": " + name + " (Score: " + score + ")");
+    }
+
+    if (row_count != 2) {
+        throw new Error("Expected 2 query results, found: " + row_count);
+    }
+
+    stmt.finalize();
+    db.close();
+    fmt::println("SQLite statement finalized and database closed");
+    fmt::println("ALL 31_SQLITE_DATABASE TESTS PASSED");
+}

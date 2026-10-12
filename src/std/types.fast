@@ -10,6 +10,216 @@ public enum Result<T> -> {
     Err(char[]),
 }
 
+public enum Backend -> {
+    Cpp,
+    Cranelift,
+}
+
+public enum System -> {
+    Linux,
+    Windows,
+    MacOS,
+}
+
+public blueprint document -> {
+    char content[];
+    uchar ucontent[];
+    char ext[] = "txt";
+}
+
+public impl document -> {
+    fn get_content() -> str {
+        return this.content;
+    }
+    fn set_content(c: str) -> void {
+        this.content = c;
+    }
+    fn get_ucontent() -> uchar[] {
+        return this.ucontent;
+    }
+    fn set_ucontent(u: uchar[]) -> void {
+        this.ucontent = u;
+    }
+    fn as_str() -> str {
+        return this.content;
+    }
+    fn as_ustr() -> uchar[] {
+        return this.ucontent;
+    }
+    fn get_extension() -> str {
+        return this.ext;
+    }
+    fn set_extension(e: str) -> void {
+        this.ext = e;
+    }
+    fn len() -> usize {
+        if (this.ucontent.len > 0) {
+            return this.ucontent.len;
+        }
+        return this.content.len;
+    }
+    handle -> {
+        fn display() -> str {
+            return this.content;
+        }
+        fn extension() -> char[] {
+            return this.ext;
+        }
+    }
+}
+
+public class Document extends document -> {
+}
+
+public class HtmlDocument extends document -> {
+    public -> {
+        fn render() -> str {
+            return this.as_str();
+        }
+        fn render_u() -> uchar[] {
+            return this.as_ustr();
+        }
+    }
+    handle -> {
+        fn display() -> str {
+            return this.as_str();
+        }
+        fn extension() -> char[] {
+            return this.ext;
+        }
+    }
+}
+
+public class JsonDocument extends document -> {
+    public -> {
+        fn as_str() -> str {
+            return this.get_content();
+        }
+    }
+    handle -> {
+        fn display() -> str {
+            return this.as_str();
+        }
+        fn extension() -> char[] {
+            return this.ext;
+        }
+        fn index_access(key: str) -> str {
+            str c = this.as_str();
+            int32 c_len = c.len;
+            int32 k_len = key.len;
+            if (c_len == 0 || k_len == 0) {
+                return "";
+            }
+
+            int32 match_idx = -1;
+            for (int32 i = 0; i + k_len + 2 <= c_len; i = i + 1) {
+                if (c[i] == '"') {
+                    bool matched = true;
+                    for (int32 k = 0; k < k_len; k = k + 1) {
+                        if (c[i + 1 + k] != key[k]) {
+                            matched = false;
+                            break;
+                        }
+                    }
+                    if (matched && c[i + 1 + k_len] == '"') {
+                        match_idx = i + 2 + k_len;
+                        break;
+                    }
+                }
+            }
+
+            if (match_idx == -1) {
+                return "";
+            }
+
+            int32 pos = match_idx;
+            while (pos < c_len) {
+                char ch = c[pos];
+                if (ch == ' ') { pos = pos + 1; }
+                else if (ch == '\t') { pos = pos + 1; }
+                else if (ch == '\r') { pos = pos + 1; }
+                else if (ch == '\n') { pos = pos + 1; }
+                else if (ch == ':') { pos = pos + 1; }
+                else { break; }
+            }
+
+            if (pos >= c_len) {
+                return "";
+            }
+
+            if (c[pos] == '"') {
+                pos = pos + 1;
+                int32 start = pos;
+                while (pos < c_len && c[pos] != '"') {
+                    pos = pos + 1;
+                }
+                int32 val_len = pos - start;
+                char res[] = new char[](val_len);
+                for (int32 j = 0; j < val_len; j = j + 1) {
+                    res[j] = c[start + j];
+                }
+                return res;
+            } else {
+                int32 start = pos;
+                while (pos < c_len) {
+                    char ch = c[pos];
+                    if (ch == ',') { break; }
+                    if (ch == '}') { break; }
+                    if (ch == ']') { break; }
+                    if (ch == ' ') { break; }
+                    if (ch == '\t') { break; }
+                    if (ch == '\r') { break; }
+                    if (ch == '\n') { break; }
+                    pos = pos + 1;
+                }
+                int32 val_len = pos - start;
+                char res[] = new char[](val_len);
+                for (int32 j = 0; j < val_len; j = j + 1) {
+                    res[j] = c[start + j];
+                }
+                return res;
+            }
+        }
+    }
+}
+
+public enum DocumentType -> {
+    Html(HtmlDocument),
+    Json(JsonDocument),
+    Safe(document),
+    Raw(document),
+}
+
+public impl DocumentType -> {
+    fn as_str() -> str {
+        match this {
+            Html(d) => return d.as_str(),
+            Json(d) => return d.as_str(),
+            Safe(d) => return d.as_str(),
+            Raw(d) => return d.as_str(),
+        }
+        return "";
+    }
+    fn as_ustr() -> uchar[] {
+        match this {
+            Html(d) => return d.as_ustr(),
+            Json(d) => return d.as_ustr(),
+            Safe(d) => return d.as_ustr(),
+            Raw(d) => return d.as_ustr(),
+        }
+        return u"";
+    }
+    fn extension() -> str {
+        match this {
+            Html(d) => return d.get_extension(),
+            Json(d) => return d.get_extension(),
+            Safe(d) => return d.get_extension(),
+            Raw(d) => return d.get_extension(),
+        }
+        return "";
+    }
+}
+
 public blueprint shared -> {
     int32 owners = 0;
 }
@@ -64,7 +274,7 @@ public impl iterator<T> -> {
 }
 
 public define str = array<char>;
-
+public define ustr = array<uchar>;
 public impl Option<T> -> {
     fn is_Some() -> bool {
         match this {
@@ -171,6 +381,7 @@ public impl Result<T> -> {
                 throw new Error(msg);
             }
         }
+        return T.default();
     }
     fn get_or(default_val := T.default()) -> T {
         match this {
@@ -286,9 +497,6 @@ public impl char -> {
         fn add(other: char[]) -> char[] {
             return [this, ...other];
         }
-        fn add(other: char) -> char[] {
-            return [this, other];
-        }
     }
     fn is_digit() -> bool {
         return this >= '0' && this <= '9';
@@ -322,7 +530,38 @@ public impl char -> {
 }
 
 public impl array<char> -> {
-
+    handle -> {
+        fn default() -> char[] {
+            return ['\0'];
+        }
+        fn add(other: char[]) -> char[] {
+            return [...this, ...other];
+        }
+        fn add(other: char) -> char[] {
+            return [...this, other];
+        }
+        fn add(other: uchar[]) -> uchar[] {
+            uchar res[] = new uchar[](this.len + other.len);
+            for (usize i = 0; i < this.len; i = i + 1) {
+                res[i] = this[i] as uchar;
+            }
+            for (usize j = 0; j < other.len; j = j + 1) {
+                res[this.len + j] = other[j];
+            }
+            return res;
+        }
+        fn add(other: uchar) -> uchar[] {
+            uchar res[] = new uchar[](this.len + 1);
+            for (usize i = 0; i < this.len; i = i + 1) {
+                res[i] = this[i] as uchar;
+            }
+            res[this.len] = other;
+            return res;
+        }
+        fn add<Other>(other: Other) -> char[] {
+            return [...this, ...other.as_str()];
+        }
+    }
     fn to_upper() -> char[] {
         char result[] = new char[](this.len);
         for (usize i = 0; i < this.len; i = i + 1) {
@@ -359,6 +598,38 @@ public impl array<char> -> {
 
     fn as_str() -> str {
         return this;
+    }
+}
+
+public impl array<uchar> -> {
+    handle -> {
+        fn add(other: uchar[]) -> uchar[] {
+            return [...this, ...other];
+        }
+        fn add(other: uchar) -> uchar[] {
+            return [...this, other];
+        }
+        fn add(other: char[]) -> uchar[] {
+            uchar res[] = new uchar[](this.len + other.len);
+            for (usize i = 0; i < this.len; i = i + 1) {
+                res[i] = this[i];
+            }
+            for (usize j = 0; j < other.len; j = j + 1) {
+                res[this.len + j] = other[j] as uchar;
+            }
+            return res;
+        }
+        fn add(other: char) -> uchar[] {
+            uchar res[] = new uchar[](this.len + 1);
+            for (usize i = 0; i < this.len; i = i + 1) {
+                res[i] = this[i];
+            }
+            res[this.len] = other as uchar;
+            return res;
+        }
+    }
+    fn is_empty() -> bool {
+        return this.len == 0;
     }
 }
 
@@ -410,6 +681,18 @@ public impl array<T> -> {
         }
         fn add(item: T) -> array<T> {
             return [...this, item];
+        }
+        fn cast<Target>() -> Target[] {
+            @compile{
+                if (!T.castable_to(Target)) {
+                    throw new Error("Cannot cast array elements: source element type is not castable to target type [" + Target.as_str() + "]");
+                }
+            }();
+            Target result[] = new Target[](this.len);
+            for (usize i = 0; i < this.len; i = i + 1) {
+                result[i] = this[i] as Target;
+            }
+            return result;
         }
         fn default() -> T[] {
             T arr[] = new T[](this.len || 0);
@@ -509,3 +792,4 @@ public impl array<T> -> {
         return arr;
     }
 }
+

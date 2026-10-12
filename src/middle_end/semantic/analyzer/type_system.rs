@@ -169,11 +169,12 @@ impl SemanticAnalyzer {
             || actual == "num"
             || actual.starts_with("number<")
         {
-            let other = if expected == "number" || expected == "num" || expected.starts_with("number<") {
-                actual
-            } else {
-                expected
-            };
+            let other =
+                if expected == "number" || expected == "num" || expected.starts_with("number<") {
+                    actual
+                } else {
+                    expected
+                };
             let other_clean = if let Some(stripped) = other.strip_prefix("number::") {
                 stripped
             } else if let Some(stripped) = other.strip_prefix("num::") {
@@ -192,6 +193,9 @@ impl SemanticAnalyzer {
             {
                 return true;
             }
+        }
+        if is_numeric_widening(expected, actual) {
+            return true;
         }
         if expected == "function"
             || expected.starts_with("function<")
@@ -636,6 +640,121 @@ impl SemanticAnalyzer {
             Expr::UnaryOp { operator, operand } if operator == "!" => {
                 self.eval_static_bool_expr(operand).map(|b| !b)
             }
+            Expr::BinaryOp {
+                left,
+                operator,
+                right,
+            } => {
+                if operator == "&&" {
+                    let l = self.eval_static_bool_expr(left);
+                    let r = self.eval_static_bool_expr(right);
+                    if l == Some(false) || r == Some(false) {
+                        return Some(false);
+                    }
+                    if let (Some(lb), Some(rb)) = (l, r) {
+                        return Some(lb && rb);
+                    }
+                    return None;
+                }
+                if operator == "||" {
+                    let l = self.eval_static_bool_expr(left);
+                    let r = self.eval_static_bool_expr(right);
+                    if l == Some(true) || r == Some(true) {
+                        return Some(true);
+                    }
+                    if let (Some(lb), Some(rb)) = (l, r) {
+                        return Some(lb || rb);
+                    }
+                    return None;
+                }
+                if operator == "==" || operator == "!=" {
+                    let l_b = self.eval_static_bool_expr(left);
+                    let r_b = self.eval_static_bool_expr(right);
+                    if let (Some(lb), Some(rb)) = (l_b, r_b) {
+                        let eq = lb == rb;
+                        return Some(if operator == "==" { eq } else { !eq });
+                    }
+
+                    let resolve_static_sym =
+                        |analyzer: &SemanticAnalyzer, e: &Expr| -> Option<String> {
+                            match e {
+                                Expr::Call { callee, .. } => {
+                                    if let Expr::NamespaceAccess {
+                                        namespace,
+                                        property,
+                                    } = &**callee
+                                    {
+                                        if namespace == "@compile" {
+                                            if let Expr::Identifier(p) = &**property {
+                                                if p == "backend" {
+                                                    let variant =
+                                                        if analyzer.target_backend == "cranelift" {
+                                                            "Cranelift"
+                                                        } else {
+                                                            "Cpp"
+                                                        };
+                                                    return Some(format!("Backend::{}", variant));
+                                                } else if p == "system" {
+                                                    let variant = if cfg!(target_os = "windows") {
+                                                        "Windows"
+                                                    } else if cfg!(target_os = "macos") {
+                                                        "MacOS"
+                                                    } else {
+                                                        "Linux"
+                                                    };
+                                                    return Some(format!("System::{}", variant));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    None
+                                }
+                                Expr::NamespaceAccess {
+                                    namespace,
+                                    property,
+                                } => {
+                                    if namespace == "@compile" {
+                                        if let Expr::Identifier(p) = &**property {
+                                            if p == "backend" {
+                                                let variant =
+                                                    if analyzer.target_backend == "cranelift" {
+                                                        "Cranelift"
+                                                    } else {
+                                                        "Cpp"
+                                                    };
+                                                return Some(format!("Backend::{}", variant));
+                                            } else if p == "system" {
+                                                let variant = if cfg!(target_os = "windows") {
+                                                    "Windows"
+                                                } else if cfg!(target_os = "macos") {
+                                                    "MacOS"
+                                                } else {
+                                                    "Linux"
+                                                };
+                                                return Some(format!("System::{}", variant));
+                                            }
+                                        }
+                                    } else if let Expr::Identifier(p) = &**property {
+                                        return Some(format!("{}::{}", namespace, p));
+                                    }
+                                    None
+                                }
+                                Expr::LiteralString(s) => Some(s.clone()),
+                                Expr::Identifier(id) => Some(id.clone()),
+                                _ => None,
+                            }
+                        };
+
+                    if let (Some(s1), Some(s2)) = (
+                        resolve_static_sym(self, left),
+                        resolve_static_sym(self, right),
+                    ) {
+                        let eq = s1 == s2;
+                        return Some(if operator == "==" { eq } else { !eq });
+                    }
+                }
+                None
+            }
             Expr::Call { callee, args, .. } => {
                 if let Expr::PropertyAccess { object, property } = &**callee {
                     let inner_opt = if let Ok(obj_type) = self.visit_expression(object) {
@@ -831,4 +950,55 @@ pub(crate) fn extract_iter_payload_type(t: &BaseType) -> String {
         BaseType::Generic(vec) if !vec.is_empty() => extract_iter_payload_type(&vec[0]),
         _ => t.as_str(),
     }
+}
+
+pub(crate) fn is_numeric_widening(expected: &str, actual: &str) -> bool {
+    let int_rank = |t: &str| -> Option<u32> {
+        match t {
+            "int8" => Some(8),
+            "int16" => Some(16),
+            "int32" | "int" => Some(32),
+            "int64" | "isize" => Some(64),
+            "int128" => Some(128),
+            _ => None,
+        }
+    };
+    let uint_rank = |t: &str| -> Option<u32> {
+        match t {
+            "uint8" => Some(8),
+            "uint16" => Some(16),
+            "uint32" | "uint" => Some(32),
+            "uint64" | "usize" => Some(64),
+            "uint128" => Some(128),
+            _ => None,
+        }
+    };
+    let float_rank = |t: &str| -> Option<u32> {
+        match t {
+            "float32" | "float" => Some(32),
+            "float64" => Some(64),
+            "float128" => Some(128),
+            _ => None,
+        }
+    };
+
+    if let (Some(e), Some(a)) = (int_rank(expected), int_rank(actual)) {
+        return e >= a;
+    }
+    if let (Some(e), Some(a)) = (uint_rank(expected), uint_rank(actual)) {
+        return e >= a;
+    }
+    if let (Some(e), Some(a)) = (float_rank(expected), float_rank(actual)) {
+        return e >= a;
+    }
+    if let (Some(e), Some(a)) = (float_rank(expected), int_rank(actual)) {
+        return e >= a || (e == 64 && a <= 32);
+    }
+    if let (Some(e), Some(a)) = (float_rank(expected), uint_rank(actual)) {
+        return e >= a || (e == 64 && a <= 32);
+    }
+    if let (Some(e), Some(a)) = (int_rank(expected), uint_rank(actual)) {
+        return e > a;
+    }
+    false
 }

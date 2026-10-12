@@ -1,4 +1,5 @@
 // FastLang Example: Smart Function Pointers, Lambdas & Higher-Order Functions (.fast)
+import std::fmt;
 
 fn add(x: int32, y: int32) -> int32 {
     return x + y;

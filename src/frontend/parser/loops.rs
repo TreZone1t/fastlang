@@ -38,9 +38,14 @@ impl Parser {
     // --- while (cond) -> { ... }  or  while (cond) -> scope_name() ---
     pub(crate) fn parse_while_stmt(&mut self) -> Result<Stmt, String> {
         self.advance(); // 'while'
-        self.consume(TokenKind::LParen, "Expected '(' after 'while'")?;
-        let condition = self.parse_expression()?;
-        self.consume(TokenKind::RParen, "Expected ')' after while condition")?;
+        let condition = if self.peek().kind == TokenKind::LParen {
+            self.advance();
+            let c = self.parse_expression()?;
+            self.consume(TokenKind::RParen, "Expected ')' after while condition")?;
+            c
+        } else {
+            self.parse_expression()?
+        };
 
         if self.peek().kind == TokenKind::Arrow {
             self.advance(); // consume '->'
@@ -84,9 +89,14 @@ impl Parser {
         };
 
         self.consume(TokenKind::While, "Expected 'while' after do body")?;
-        self.consume(TokenKind::LParen, "Expected '(' after 'while'")?;
-        let condition = self.parse_expression()?;
-        self.consume(TokenKind::RParen, "Expected ')' after while condition")?;
+        let condition = if self.peek().kind == TokenKind::LParen {
+            self.advance();
+            let c = self.parse_expression()?;
+            self.consume(TokenKind::RParen, "Expected ')' after while condition")?;
+            c
+        } else {
+            self.parse_expression()?
+        };
 
         if self.peek().kind == TokenKind::SemiColon {
             self.advance();

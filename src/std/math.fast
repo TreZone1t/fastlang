@@ -1,6 +1,6 @@
 import @c "clib/math.h";
 
-extern @c {
+extern @c :: {
     fn fast_sqrt(x: float64) -> float64;
     fn fast_pow(base: float64, exp: float64) -> float64;
     fn fast_sin(x: float64) -> float64;

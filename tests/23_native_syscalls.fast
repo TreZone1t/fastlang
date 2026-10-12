@@ -1,0 +1,23 @@
+// Comprehensive Suite 23: Native Syscalls (@sys::open, close, read, write, alloc, free)
+// EXPECT: Testing Native Syscalls...
+// EXPECT: Alloc and Free OK
+// EXPECT: Direct @sys::write to stdout OK
+// EXPECT: ALL 23_NATIVE_SYSCALLS TESTS PASSED
+import std::fmt;
+import std::mem;
+import std::io;
+
+fn main() -> int32 {
+    println("Testing Native Syscalls...");
+
+    // 1. Test alloc and free
+    auto ptr = alloc(64 as usize);
+    free(ptr);
+    println("Alloc and Free OK");
+
+    // 2. Test direct low-level @sys::write to stdout
+    @sys::write(1, "Direct @sys::write to stdout OK\n", 32 as usize);
+
+    println("ALL 23_NATIVE_SYSCALLS TESTS PASSED");
+    return 0;
+}

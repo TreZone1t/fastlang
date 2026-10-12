@@ -1,0 +1,23 @@
+
+import @c "clib/io.h";
+
+public @sys :: {
+    set alloc(usize) -> auto;
+    set free(auto) -> void;
+}
+
+public fn alloc(s: usize) -> auto {
+    if (@compile::backend() == Backend::Cpp) {
+        return @c::fast_alloc(s);
+    } else {
+        return @sys::alloc(s);
+    }
+}
+
+public fn free(ptr: auto) -> void {
+    if (@compile::backend() == Backend::Cpp) {
+        @c::fast_free(ptr);
+    } else {
+        @sys::free(ptr);
+    }
+}

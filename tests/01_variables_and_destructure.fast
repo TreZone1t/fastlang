@@ -1,5 +1,6 @@
 // Comprehensive Suite 01: Variables, Types, Assignment, Walrus, and Destructuring
 import std;
+import std::fmt;
 
 class PointClass -> {
     public -> {

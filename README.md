@@ -1,6 +1,6 @@
 <div align="center">
   <h1>⚡ FastLang</h1>
-  <p>A fun, experimental systems programming language written in Rust to explore compiler design, custom memory models, and compile-time execution.</p>
+  <p>A statically typed, high-performance systems language with native reactive web primitives and zero-overhead compilation.</p>
 
   <a href="https://ko-fi.com/W5V0236W86" target="_blank">
       <img src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" alt="Support me on Ko-fi" height="36" style="border:0px;height:36px;" />
@@ -10,184 +10,164 @@
 <br />
 
 > [!NOTE]
-> **Disclaimer:** FastLang is a personal, educational hobby project created for learning and experimenting with compiler construction. It is **not** intended for production use.
+> FastLang is an open, experimental systems programming language developed from scratch in Rust, designed to explore compiler architectures, ergonomic type systems, and native reactive document runtimes.
 
 ---
 
-## 💡 About the Project
+## 🚀 Key Highlights
 
-FastLang is a statically typed language designed from scratch in Rust. The primary goal of the project is to experiment with:
-- Hand-written recursive descent parsing and lexical scanning.
-- Robust semantic analysis with multi-pass symbol tables and dependency resolution.
-- Scoped Enums, Algebraic Data Types with Struct & Tuple payloads, and Variant Proxies.
-- Standard Library `Result<T>` and `Option<T>` with implicit prelude exports via `std`.
-- Rust-style implicit returns in functions and block expressions.
-- Ergonomic `?` inline error handler operator with zero-overhead exception propagation.
-- Ternary conditional expressions (`cond ? then : else`) as first-class syntactic sugar.
-- Zero-overhead runtime panic safety shield with clean diagnostics.
-- Explicit memory semantics (`ref<T>`, `mutRef<T>`, `copy<T>`).
-- Compile-time reflection and validation blocks (`@compile { ... }`, `typeof`, `sizeof`).
-- Code generation targeting modern C++20 (with experimental Cranelift AOT support).
-
-Source files use the **`.fast`** extension.
+- **Modern Statically Typed Syntax**: Expressive type inference, first-class functions, pipelines, and explicit memory semantics (`ref<T>`, `mutRef<T>`).
+- **Blueprints & Object Orientation**: Data-first structs (`blueprint`), encapsulation, and decoupled method definitions (`impl`).
+- **Algebraic Data Types & Matching**: Exhaustive pattern matching on tagged enums, `Option<T>`, and `Result<T>`.
+- **First-Class Reactive Web & Foreign Scopes**: Native `@html`, `@json`, and `@safe` blocks with `@f{...}` interpolation, paired with FastReact declarative directives (`onclick`, `onsubmit`, `live`, `target`, `swap`).
+- **Comprehensive Standard Library**: Native support for threads, synchronization mutexes, network sockets, HTTP servers, collections (`list`, `HashSet`, `HashMap`), and embedded SQLite (`std::sql`).
+- **Zero-Config Project Tooling**: Built-in CLI workflow with `fast new`, `fast run`, `fast build`, and `fast test` managed via `Fast.toml`.
+- **High-Performance Backend**: Emits optimized C++20 code, compiled directly with native toolchains.
 
 ---
 
-## 🔍 Code Examples
+## 🔍 Language Tour
 
-### 1. Variables & Basic Functions
+### 1. Functions & Control Flow
 ```rust
-fn add(a: int32, b: int32) -> int32 {
-    return a + b;
+import std::fmt;
+
+fn fibonacci(n: int32) -> int32 {
+    if (n <= 1) {
+        return n;
+    }
+    return fibonacci(n - 1) + fibonacci(n - 2);
 }
 
-fn main() -> int32 {
-    int32 x = 10;
-    int32 y = 20;
-    int32 sum = add(x, y);
-    println("Sum: ", sum);
-    return 0;
+fn main() -> void {
+    int32 result = fibonacci(10);
+    fmt::println("Fibonacci(10) = " + result);
 }
 ```
 
-### 2. Blueprints & Objects
+### 2. Blueprints & Methods
 ```rust
-object Point = {
-    int32 x = 0;
-    int32 y = 0;
-};
+import std::fmt;
 
-impl Point {
+blueprint User -> {
+    int32 id;
+    str name;
+    bool active = true;
+}
+
+impl User -> {
     fn display() -> void {
-        println("Point(", this.x, ", ", this.y, ")");
+        fmt::println("User #" + this.id + ": " + this.name);
     }
 }
 
-fn main() -> int32 {
-    auto pt = Point();
-    pt.x = 10;
-    pt.y = 20;
-    pt.display();
-    return 0;
+fn main() -> void {
+    User u = new User(1, "Hakim");
+    u.display();
 }
 ```
 
-### 3. Super-Types & Inference
+### 3. Pattern Matching & Enums
 ```rust
-// Numbers with auto-inferred bitwidths
-number count = 42;       // Inferred as number::int32
-number pi = 3.14159;     // Inferred as number::float64
+import std::fmt;
 
-// Functions as first-class citizens
-function greet() -> void {
-    println("Hello, FastLang!");
+enum Status -> {
+    Pending,
+    Active(int32),
+    Completed(str)
 }
 
-// Namespaces
-object MathUtils :: {
-    fn square(n: int32) -> int32 {
-        return n * n;
+fn handle_status(s: Status) -> void {
+    match (s) -> {
+        Pending => fmt::println("Waiting..."),
+        Active(id) => fmt::println("In progress with task: " + id),
+        Completed(msg) => fmt::println("Done: " + msg),
+        _ => fmt::println("Unknown state")
     }
 }
+```
 
-fn main() -> int32 {
-    greet();
-    println("Square of 5: ", MathUtils::square(5));
-    return 0;
+### 4. Native Reactive Web & FastReact
+```rust
+import std::http;
+
+blueprint ItemCard -> {
+    str name = "Calculator";
+    int32 price = 350;
+}
+
+impl ItemCard -> {
+    fn render() -> HtmlDocument {
+        return @html {
+            <div id="card" class="item">
+                <h3>@f{this.name}</h3>
+                <p>Price: @f{this.price} EGP</p>
+                <button onclick="/buy" target="#card" swap="outerHTML">
+                    Purchase
+                </button>
+            </div>
+        };
+    }
 }
 ```
 
-### 4. Compile-time Introspections & Return Types
+### 5. Embedded SQLite Database
 ```rust
-object User = {
-    int32 id = 1;
-    array<char> name = "Hakim";
-};
+import std::fmt;
+import std::sql;
 
-// Return type derived from member access at compile-time
-fn get_user_id(u: User) -> typeof(u).id {
-    return u.id;
-}
+fn query_users() -> void {
+    db := sql::open("data.db");
+    db.exec("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT);");
+    db.exec("INSERT INTO users (name) VALUES ('Hakim');");
 
-fn main() -> int32 {
-    auto u = User();
-    println("User ID: ", get_user_id(u));
-    return 0;
+    stmt := db.prepare("SELECT id, name FROM users;");
+    while (stmt.step()) -> {
+        int32 id = stmt.get_int(0);
+        str name = stmt.get_str(1);
+        fmt::println("User: " + id + " - " + name);
+    }
+    stmt.finalize();
+    db.close();
 }
 ```
 
 ---
 
-## 🚀 Building & Running
+## 🛠️ Quick Start
 
-### Prerequisites
-- [Rust](https://rustup.rs/) (edition 2021)
-- C++20 compiler (`g++` or `clang++`)
+### Requirements
+- [Rust Toolchain](https://rustup.rs/) (edition 2021+)
+- Modern C++20 compiler (`g++` or `clang++`)
 
-### Build FastLang
+### Installation & Build
 ```bash
+# Clone the repository
+git clone https://github.com/Trezone/fast_lang.git
+cd fast_lang
+
+# Build release binary
 cargo build --release
 ```
 
-### Run Tests
+### Project Workflow
 ```bash
-# Run all integration test suites
-cargo test run_all_fs_tests
+# Create a new FastLang binary project
+fast new my_app -y
+cd my_app
 
-# Test error accumulation diagnostics
-cargo test test_debug_error_accumulation
-```
+# Run the project
+fast run
 
-### Compile a FastLang Program
-```bash
-# Compile and run
-cargo run -- main.fast
-
-# Compile with a specific output binary
-cargo run -- main.fast -o build/app.exe
-
-# Diagnostics mode: collect all semantic errors without compiling
-cargo run -- main.fast --debug-error
-
-# Emit generated C++ code without invoking backend compiler
-cargo run -- main.fast --emit-cpp
-```
-
----
-
-## 🛠️ CLI Options
-
-```text
-FastLang Compiler (fast_lang) v0.1.5-stable
-High-performance compiled language with fine-grained memory management and explicit scopes.
-
-USAGE:
-    fast_lang [OPTIONS] <SOURCE_FILE>
-
-ARGUMENTS:
-    <SOURCE_FILE>                  Path to the main entry source file (.fast or .fs)
-
-OPTIONS:
-    -h, --help, -help              Print help information and exit
-    -d, --debug                    Enable verbose debug and compilation trace output
-    --debug-error, --debug-errors  Accumulate and report all semantic errors without generating code
-    -o, --output <PATH>            Specify output binary or build directory path
-    -I, --include <DIR>            Add module search directory
-    -b, --backend <BACKEND>        Set code generator backend: 'cpp' (default) or 'cranelift'
-    --ast, --emit-ast [FILE]       Dump parsed AST as formatted JSON
-    --ast-file, --json-ast <FILE>  Export parsed AST directly to FILE
-    --emit-cpp, --cpp-only         Generate C++ source file without compiling binary
-    --emit-ir, --print-ir          Print intermediate representation (IR) output
-    --aot                          Enable Ahead-Of-Time (AOT) compilation
-    --clean                        Remove temporary build files
-
-SUBCOMMANDS:
-    clean [PATH]                   Delete build/ directory and cached artifacts
+# Run tests
+fast test
 ```
 
 ---
 
 <div align="center">
+  <p>Crafted with passion for fast, expressive systems programming.</p>
+
   <a href="https://ko-fi.com/W5V0236W86" target="_blank">
       <img src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" alt="Support me on Ko-fi" height="36" style="border:0px;height:36px;" />
   </a>

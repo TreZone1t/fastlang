@@ -231,7 +231,6 @@ pub fn build_blueprint_from_base_type(
                 bp.fields.insert(f_name.clone(), f_type.clone());
             }
             for (m_name, fn_type) in methods.as_ref() {
-                let hk = HandleMethods::from_str(m_name.as_str());
                 let sig = FnSignature {
                     name: fn_type.name.clone(),
                     generics: fn_type.generics.clone(),
@@ -240,11 +239,7 @@ pub fn build_blueprint_from_base_type(
                     is_virtual: false,
                     is_abstract: false,
                 };
-                if hk != HandleMethods::NotFound {
-                    bp.define_handle(hk, sig);
-                } else {
-                    bp.methods.insert(m_name.clone(), sig);
-                }
+                bp.methods.insert(m_name.clone(), sig);
             }
             for g in generics {
                 if let BaseType::New(name) = g {
@@ -268,7 +263,6 @@ pub fn build_blueprint_from_base_type(
                 bp.fields.insert(f_name.clone(), f_type.clone());
             }
             for (m_name, fn_type) in methods.as_ref() {
-                let hk = HandleMethods::from_str(m_name.as_str());
                 let sig = FnSignature {
                     name: fn_type.name.clone(),
                     generics: fn_type.generics.clone(),
@@ -277,11 +271,7 @@ pub fn build_blueprint_from_base_type(
                     is_virtual: true,
                     is_abstract: false,
                 };
-                if hk != HandleMethods::NotFound {
-                    bp.define_handle(hk, sig);
-                } else {
-                    bp.methods.insert(m_name.clone(), sig);
-                }
+                bp.methods.insert(m_name.clone(), sig);
             }
             for g in generics {
                 if let BaseType::New(name) = g {
@@ -392,7 +382,6 @@ pub fn build_blueprint_from_metadata(
     }
     let is_class = bp.is_class;
     for (m_name, fn_type) in &meta.methods {
-        let hk = HandleMethods::from_str(m_name.as_str());
         let sig = FnSignature {
             name: fn_type.name.clone(),
             generics: fn_type.generics.clone(),
@@ -401,11 +390,7 @@ pub fn build_blueprint_from_metadata(
             is_virtual: is_class,
             is_abstract: false,
         };
-        if hk != HandleMethods::NotFound {
-            bp.define_handle(hk, sig);
-        } else {
-            bp.methods.entry(m_name.clone()).or_insert_with(|| sig);
-        }
+        bp.methods.entry(m_name.clone()).or_insert_with(|| sig);
     }
     for (h_name, fn_type) in &meta.handle_signatures {
         let hk = HandleMethods::from_str(h_name.as_str());

@@ -15,22 +15,22 @@ impl CodeGenerator {
             }
             Expr::LiteralFloat(f) => format!("{:?}", f),
             Expr::LiteralString(s) => {
-                let mut chars_code = Vec::new();
-                for &b in s.as_bytes() {
-                    let b_str = match b {
-                        b'\n' => "'\\n'".to_string(),
-                        b'\t' => "'\\t'".to_string(),
-                        b'\r' => "'\\r'".to_string(),
-                        b'\\' => "'\\\\'".to_string(),
-                        b'\'' => "'\\''".to_string(),
-                        b'\0' => "'\\0'".to_string(),
-                        32..=126 => format!("'{}'", b as char),
-                        _ => format!("(char)0x{:02x}", b),
-                    };
-                    chars_code.push(b_str);
-                }
-                chars_code.push("'\\0'".to_string());
-                format!("fastlang_string_create({{{}}})", chars_code.join(", "))
+                let escaped = s
+                    .replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+                    .replace('\n', "\\n")
+                    .replace('\r', "\\r")
+                    .replace('\t', "\\t");
+                format!("fastlang_string_create_from_ptr(\"{}\")", escaped)
+            }
+            Expr::LiteralUString(s) => {
+                let escaped = s
+                    .replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+                    .replace('\n', "\\n")
+                    .replace('\r', "\\r")
+                    .replace('\t', "\\t");
+                format!("fastlang_ustring_create_from_ptr(U\"{}\")", escaped)
             }
             Expr::LiteralChar(c) => match c {
                 '\n' => "'\\n'".to_string(),
@@ -114,7 +114,7 @@ impl CodeGenerator {
             }
             Expr::ObjectLiteral(stmts) => {
                 let mut struct_code = "([]() { struct __Anon {\n".to_string();
-                let mut temp_gen = CodeGenerator::new();
+                let mut temp_gen = self.fork_child();
                 temp_gen.indent_level = self.indent_level + 1;
                 for s in stmts {
                     temp_gen.visit_statement(s);
@@ -215,7 +215,27 @@ impl CodeGenerator {
                         format!("{}.fat_arrow({})", l, r)
                     }
                 } else if operator == "+" {
-                    format!("fastlang_add({}, {})", l, r)
+                    if let Some(target) = self.match_primitive_target(left, "add") {
+                        if target == "char" {
+                            let rt = self.extract_cpp_type_from_expr(right);
+                            let is_array = rt.as_deref().map_or(false, |s| {
+                                let resolved = self.resolve_alias(s);
+                                resolved == "array"
+                                    || resolved.starts_with("array<")
+                                    || resolved.starts_with("fast_std::array")
+                                    || resolved.ends_with("[]")
+                            });
+                            if is_array {
+                                format!("fastlang_{}_add({}, {})", target, l, r)
+                            } else {
+                                format!("({} + {})", l, r)
+                            }
+                        } else {
+                            format!("fastlang_{}_add({}, {})", target, l, r)
+                        }
+                    } else {
+                        format!("({} + {})", l, r)
+                    }
                 } else if operator == "==" {
                     format!("fastlang_eq({}, {})", l, r)
                 } else if operator == "!=" {
@@ -299,25 +319,24 @@ impl CodeGenerator {
                     if let Some(targets) = self.primitive_impl_methods.get(property).cloned() {
                         let obj_code = self.visit_expression(object);
                         let cpp_type = self.extract_cpp_type_from_expr(object).unwrap_or_default();
+                        let resolved_type = self.resolve_alias(&cpp_type);
                         let is_this = matches!(**object, Expr::This);
 
                         let matched_target = if is_this && self.in_primitive_impl {
                             self.current_primitive_target.clone()
-                        } else if targets.iter().any(|t| t == &cpp_type) {
-                            Some(cpp_type.clone())
+                        } else if targets.iter().any(|t| t == &cpp_type || t == &resolved_type) {
+                            Some(if targets.contains(&cpp_type) { cpp_type.clone() } else { resolved_type.clone() })
                         } else if targets.contains(&"array".to_string())
-                            && (cpp_type == "array"
-                                || cpp_type == "str"
-                                || cpp_type == "fast_std::str"
-                                || cpp_type.starts_with("fast_std::array")
-                                || cpp_type.starts_with("array<")
-                                || cpp_type.ends_with("[]"))
+                            && (resolved_type == "array"
+                                || resolved_type.starts_with("fast_std::array")
+                                || resolved_type.starts_with("array<")
+                                || resolved_type.ends_with("[]"))
                         {
                             Some("array".to_string())
-                        } else if targets.contains(&"char".to_string()) && cpp_type == "char" {
+                        } else if targets.contains(&"char".to_string()) && (cpp_type == "char" || resolved_type == "char") {
                             Some("char".to_string())
                         } else if targets.contains(&"bool".to_string())
-                            && (cpp_type == "bool" || cpp_type == "flag")
+                            && (cpp_type == "bool" || cpp_type == "flag" || resolved_type == "bool" || resolved_type == "flag")
                         {
                             Some("bool".to_string())
                         } else {
@@ -370,9 +389,43 @@ impl CodeGenerator {
                         let prop_code = self.visit_expression(property);
                         let clean_prop = prop_code.trim_end_matches("()");
                         if namespace == "@compile" {
+                            if clean_prop == "backend" {
+                                return "Backend::Cpp".to_string();
+                            }
+                            if clean_prop == "system" {
+                                let sys = if cfg!(target_os = "windows") {
+                                    "System::Windows"
+                                } else if cfg!(target_os = "macos") {
+                                    "System::MacOS"
+                                } else {
+                                    "System::Linux"
+                                };
+                                return sys.to_string();
+                            }
                             clean_prop.to_string()
+                        } else if namespace == "@c" || namespace == "@cpp" {
+                            clean_prop.to_string()
+                        } else if namespace == "@sys" {
+                            format!("fast_{}", clean_prop)
                         } else {
-                            format!("{}::{}", namespace, clean_prop)
+                            let effective_ns = if namespace.starts_with("std::") {
+                                namespace.replacen("std::", "fast_std::", 1)
+                            } else if namespace == "std" {
+                                "fast_std".to_string()
+                            } else {
+                                namespace.clone()
+                            };
+                            if self.enum_types.contains(namespace)
+                                || self.payload_enum_types.contains(namespace)
+                                || self.struct_field_types.contains_key(namespace)
+                                || self.is_known_namespace(namespace)
+                                || self.is_known_namespace(&effective_ns)
+                                || namespace.chars().next().map_or(false, |c| c.is_uppercase())
+                            {
+                                format!("{}::{}", effective_ns, clean_prop)
+                            } else {
+                                clean_prop.to_string()
+                            }
                         }
                     }
                     _ => self.visit_expression(callee),
@@ -412,8 +465,8 @@ impl CodeGenerator {
                             if parts.len() == 2 && self.enum_types.contains(parts[0]) {
                                 let enum_name = parts[0];
                                 let variant_name = parts[1].trim_end_matches("()");
-                                let mut struct_code = format!("([&]() {{\n    {} __obj;\n    __obj.tag = {}::Tag::{};\n    typename {}::{}_Payload __payload;\n", enum_name, enum_name, variant_name, enum_name, variant_name);
-                                let mut temp_gen = CodeGenerator::new();
+                                let mut struct_code = format!("([&]() {{\n    typename {}::{}_Payload __payload;\n", enum_name, variant_name);
+                                let mut temp_gen = self.fork_child();
                                 temp_gen.indent_level = self.indent_level + 1;
                                 for s in stmts {
                                     match s {
@@ -449,8 +502,17 @@ impl CodeGenerator {
                                 }
                                 struct_code.push_str(&temp_gen.output);
                                 struct_code.push_str(&format!(
-                                    "{}__obj.data = __payload;\n{}return __obj;\n{}}}())",
+                                    "{} {} __obj({}::__no_init_t{{}});\n{}__obj.tag = {}::Tag::{};\n{}new (&__obj.storage.v_{}) typename {}::{}_Payload(std::move(__payload));\n{}return __obj;\n{}}}())",
                                     "    ".repeat(self.indent_level + 1),
+                                    enum_name,
+                                    enum_name,
+                                    "    ".repeat(self.indent_level + 1),
+                                    enum_name,
+                                    variant_name,
+                                    "    ".repeat(self.indent_level + 1),
+                                    variant_name,
+                                    enum_name,
+                                    variant_name,
                                     "    ".repeat(self.indent_level + 1),
                                     "    ".repeat(self.indent_level)
                                 ));
@@ -458,7 +520,7 @@ impl CodeGenerator {
                             }
                         }
                         let mut struct_code = format!("([&]() {{\n    {} __obj;\n", target_code);
-                        let mut temp_gen = CodeGenerator::new();
+                        let mut temp_gen = self.fork_child();
                         temp_gen.indent_level = self.indent_level + 1;
                         for s in stmts {
                             match s {
@@ -539,13 +601,48 @@ impl CodeGenerator {
                 property,
             } => {
                 let prop_code = self.visit_expression(property);
-                if namespace.starts_with('@') {
+                if namespace == "@compile" {
+                    if prop_code == "backend" {
+                        "Backend::Cpp".to_string()
+                    } else if prop_code == "system" {
+                        let sys = if cfg!(target_os = "windows") {
+                            "System::Windows"
+                        } else if cfg!(target_os = "macos") {
+                            "System::MacOS"
+                        } else {
+                            "System::Linux"
+                        };
+                        sys.to_string()
+                    } else {
+                        prop_code
+                    }
+                } else if namespace == "@c" || namespace == "@cpp" {
+                    prop_code
+                } else if namespace == "@sys" {
+                    format!("fast_{}", prop_code)
+                } else if namespace.starts_with('@') {
                     format!("this->{}", prop_code)
                 } else if self.payload_enum_types.contains(namespace) {
                     format!("{}::{}()", namespace, prop_code)
                 } else {
+                    let effective_ns = if namespace.starts_with("std::") {
+                        namespace.replacen("std::", "fast_std::", 1)
+                    } else if namespace == "std" {
+                        "fast_std".to_string()
+                    } else {
+                        namespace.clone()
+                    };
                     let clean_prop = prop_code.trim_end_matches("()");
-                    format!("{}::{}", namespace, clean_prop)
+                    if self.enum_types.contains(namespace)
+                        || self.struct_field_types.contains_key(namespace)
+                        || self.is_known_namespace(namespace)
+                        || self.is_known_namespace(&effective_ns)
+                        || namespace.chars().next().map_or(false, |c| c.is_uppercase())
+                    {
+                        format!("{}::{}", effective_ns, clean_prop)
+                    } else {
+                        clean_prop.to_string()
+                    }
                 }
             }
             Expr::ArrayAllocate {
@@ -627,7 +724,7 @@ impl CodeGenerator {
                     "".to_string()
                 };
 
-                let mut temp_gen = CodeGenerator::new();
+                let mut temp_gen = self.fork_child();
                 temp_gen.indent_level = self.indent_level + 1;
                 for s in body {
                     temp_gen.visit_statement(s);
@@ -644,7 +741,12 @@ impl CodeGenerator {
             Expr::Cast { expr, target_type } => {
                 let expr_code = self.visit_expression(expr);
                 let cpp_type = type_to_cpp(target_type);
-                format!("static_cast<{}>({})", cpp_type, expr_code)
+                if let Some(target) = self.match_primitive_target(expr, "cast") {
+                    let template_arg = cpp_type;
+                    format!("fastlang_{}_cast<{}>({})", target, template_arg, expr_code)
+                } else {
+                    format!("static_cast<{}>({})", cpp_type, expr_code)
+                }
             }
             Expr::HandleCall {
                 object,
@@ -663,43 +765,15 @@ impl CodeGenerator {
                     return format!("fastlang_copy({})", obj_code);
                 }
 
-                if let Some(targets) = self.primitive_impl_methods.get(handle_name).cloned() {
-                    let cpp_type = self.extract_cpp_type_from_expr(object).unwrap_or_default();
-                    let is_this = matches!(**object, Expr::This);
-
-                    let matched_target = if is_this && self.in_primitive_impl {
-                        self.current_primitive_target.clone()
-                    } else if targets.iter().any(|t| t == &cpp_type) {
-                        Some(cpp_type.clone())
-                    } else if targets.contains(&"array".to_string())
-                        && (cpp_type == "array"
-                            || cpp_type == "str"
-                            || cpp_type == "fast_std::str"
-                            || cpp_type.starts_with("fast_std::array")
-                            || cpp_type.starts_with("array<")
-                            || cpp_type.ends_with("[]"))
-                    {
-                        Some("array".to_string())
-                    } else if targets.contains(&"char".to_string()) && cpp_type == "char" {
-                        Some("char".to_string())
-                    } else if targets.contains(&"bool".to_string())
-                        && (cpp_type == "bool" || cpp_type == "flag")
-                    {
-                        Some("bool".to_string())
-                    } else {
-                        None
-                    };
-
-                    if let Some(target) = matched_target {
-                        let mut all_args = vec![obj_code];
-                        all_args.extend(args_code);
-                        return format!(
-                            "fastlang_{}_{}({})",
-                            target,
-                            handle_name,
-                            all_args.join(", ")
-                        );
-                    }
+                if let Some(target) = self.match_primitive_target(object, handle_name) {
+                    let mut all_args = vec![obj_code];
+                    all_args.extend(args_code);
+                    return format!(
+                        "fastlang_{}_{}({})",
+                        target,
+                        handle_name,
+                        all_args.join(", ")
+                    );
                 }
 
                 if obj_code == "super" || obj_code == "this" {
@@ -819,6 +893,79 @@ impl CodeGenerator {
                     base_indent, base_indent, inner_code, base_indent, base_indent, base_indent, base_indent
                 )
             }
+            Expr::ForeignBlock { kind, chunks } => {
+                let old_out = std::mem::take(&mut self.output);
+                let old_indent = self.indent_level;
+                self.indent_level += 1;
+
+                self.emit("fastlang_strbuf __buf;");
+                self.emit("auto __append = [&](const char* s) { __buf.append(s); };");
+
+                let mut prev_ended_with_equal = false;
+
+                for chunk in chunks {
+                    match chunk {
+                        ForeignChunk::Static(s) => {
+                            let processed_s = if matches!(kind, ForeignKind::Html) {
+                                transform_fastreact_html(s)
+                            } else {
+                                s.clone()
+                            };
+                            let escaped = processed_s
+                                .replace('\\', "\\\\")
+                                .replace('"', "\\\"")
+                                .replace('\n', "\\n")
+                                .replace('\r', "\\r")
+                                .replace('\t', "\\t");
+                            self.emit(&format!("__append(\"{}\");", escaped));
+                            let trimmed = processed_s.trim_end();
+                            prev_ended_with_equal = matches!(kind, ForeignKind::Html) && trimmed.ends_with('=');
+                        }
+                        ForeignChunk::Interpolation(expr) => {
+                            let expr_code = self.visit_expression(expr);
+                            if prev_ended_with_equal {
+                                self.emit("__append(\"\\\"\");");
+                                self.emit(&format!("__append(fastlang_as_str({}));", expr_code));
+                                self.emit("__append(\"\\\"\");");
+                                prev_ended_with_equal = false;
+                            } else {
+                                self.emit(&format!("__append(fastlang_as_str({}));", expr_code));
+                            }
+                        }
+                        ForeignChunk::Statements(stmts) => {
+                            prev_ended_with_equal = false;
+                            for stmt in stmts {
+                                self.visit_statement(stmt);
+                            }
+                        }
+                    }
+                }
+
+                match kind {
+                    ForeignKind::Html => {
+                        self.emit("fast_std::HtmlDocument __doc;");
+                        self.emit("__doc.set_content(__buf.finalize());");
+                        self.emit("__doc.set_extension(const_cast<char*>(\"html\"));");
+                        self.emit("return __doc;");
+                    }
+                    ForeignKind::Json => {
+                        self.emit("fast_std::JsonDocument __doc;");
+                        self.emit("__doc.set_content(__buf.finalize());");
+                        self.emit("__doc.set_extension(const_cast<char*>(\"json\"));");
+                        self.emit("return __doc;");
+                    }
+                    ForeignKind::Safe | ForeignKind::Raw => {
+                        self.emit("return __buf.finalize();");
+                    }
+                }
+
+                let body_code = std::mem::take(&mut self.output);
+                self.indent_level = old_indent;
+                self.output = old_out;
+
+                let base_indent = "    ".repeat(self.indent_level);
+                format!("([&]() {{\n{}{}}}())", body_code, base_indent)
+            }
         }
     }
 
@@ -898,7 +1045,8 @@ impl CodeGenerator {
                 }
                 None
             }
-            Expr::LiteralString(_) => Some("array<char>".to_string()),
+            Expr::LiteralString(_) => Some("fast_std::array<char>".to_string()),
+            Expr::LiteralUString(_) => Some("fast_std::array<char32_t>".to_string()),
             Expr::ArrayLiteral(_) => Some("array".to_string()),
             Expr::LiteralChar(_) => Some("char".to_string()),
             Expr::LiteralBool(_) => Some("bool".to_string()),
@@ -911,8 +1059,149 @@ impl CodeGenerator {
             Expr::BlockExpr { final_expr, .. } => {
                 final_expr.as_ref().and_then(|f| self.extract_cpp_type_from_expr(f))
             }
+            Expr::Cast { target_type, .. } => Some(type_to_cpp(target_type)),
+            Expr::BinaryOp {
+                left,
+                operator,
+                right,
+            } => {
+                if operator == "+" {
+                    let lt = self.extract_cpp_type_from_expr(left);
+                    let rt = self.extract_cpp_type_from_expr(right);
+                    let is_array = |t: &Option<String>| {
+                        if let Some(s) = t {
+                            let resolved = self.resolve_alias(s);
+                            resolved == "array"
+                                || resolved.starts_with("array<")
+                                || resolved.starts_with("fast_std::array")
+                                || resolved.ends_with("[]")
+                        } else {
+                            false
+                        }
+                    };
+                    if is_array(&lt) {
+                        lt
+                    } else if is_array(&rt) {
+                        rt
+                    } else {
+                        lt.or(rt)
+                    }
+                } else {
+                    self.extract_cpp_type_from_expr(left)
+                }
+            }
             Expr::QuestionMark(inner) => self.extract_cpp_type_from_expr(inner),
+            Expr::ForeignBlock { kind, .. } => match kind {
+                ForeignKind::Html => Some("fast_std::HtmlDocument".to_string()),
+                ForeignKind::Json => Some("fast_std::JsonDocument".to_string()),
+                ForeignKind::Safe | ForeignKind::Raw => Some("array<char>".to_string()),
+            },
             _ => None,
         }
     }
+}
+
+pub(crate) fn transform_fastreact_html(input: &str) -> String {
+    let mut out = input.to_string();
+
+    // 1. onclick="/..." or onsubmit="/..."
+    for attr in &["onclick", "onsubmit"] {
+        for prefix in &[
+            format!(" {}=\"/", attr),
+            format!("\n{}=\"/", attr),
+            format!("\t{}=\"/", attr),
+            format!(" {}='/", attr),
+            format!("\n{}='/", attr),
+            format!("\t{}='/", attr),
+        ] {
+            let repl = if prefix.starts_with('\n') {
+                if prefix.ends_with('\'') { "\nhx-post='/" } else { "\nhx-post=\"/" }
+            } else if prefix.starts_with('\t') {
+                if prefix.ends_with('\'') { "\thx-post='/" } else { "\thx-post=\"/" }
+            } else {
+                if prefix.ends_with('\'') { " hx-post='/" } else { " hx-post=\"/" }
+            };
+            out = out.replace(prefix.as_str(), repl);
+        }
+        // trailing onclick= or onsubmit= before interpolation
+        out = out.replace(&format!(" {}=", attr), " hx-post=");
+        out = out.replace(&format!("\n{}=", attr), "\nhx-post=");
+        out = out.replace(&format!("\t{}=", attr), "\thx-post=");
+    }
+
+    // 2. target="..." (exclude _blank, _self, _top, _parent)
+    for prefix in &[" target=\"", "\ntarget=\"", "\ttarget=\"", " target='", "\ntarget='", "\ttarget='"] {
+        let mut start_idx = 0;
+        while let Some(pos) = out[start_idx..].find(prefix) {
+            let actual_pos = start_idx + pos;
+            let after_prefix = actual_pos + prefix.len();
+            if !out[after_prefix..].starts_with("_blank")
+                && !out[after_prefix..].starts_with("_self")
+                && !out[after_prefix..].starts_with("_top")
+                && !out[after_prefix..].starts_with("_parent")
+            {
+                let repl = if prefix.starts_with('\n') {
+                    if prefix.ends_with('\'') { "\nhx-target='" } else { "\nhx-target=\"" }
+                } else if prefix.starts_with('\t') {
+                    if prefix.ends_with('\'') { "\thx-target='" } else { "\thx-target=\"" }
+                } else {
+                    if prefix.ends_with('\'') { " hx-target='" } else { " hx-target=\"" }
+                };
+                out.replace_range(actual_pos..actual_pos + prefix.len(), repl);
+                start_idx = actual_pos + repl.len();
+            } else {
+                start_idx = after_prefix;
+            }
+        }
+    }
+    // trailing target= before interpolation
+    out = out.replace(" target=", " hx-target=");
+    out = out.replace("\ntarget=", "\nhx-target=");
+    out = out.replace("\ttarget=", "\thx-target=");
+
+    // 3. swap="..."
+    out = out.replace(" swap=\"append\"", " hx-swap=\"beforeend\"");
+    out = out.replace(" swap=\"prepend\"", " hx-swap=\"afterbegin\"");
+    out = out.replace(" swap=\"", " hx-swap=\"");
+    out = out.replace("\nswap=\"", "\nhx-swap=\"");
+    out = out.replace("\tswap=\"", "\thx-swap=\"");
+    out = out.replace(" swap='append'", " hx-swap='beforeend'");
+    out = out.replace(" swap='prepend'", " hx-swap='afterbegin'");
+    out = out.replace(" swap='", " hx-swap='");
+    out = out.replace("\nswap='", "\nhx-swap='");
+    out = out.replace("\tswap='", "\thx-swap='");
+    out = out.replace(" swap=", " hx-swap=");
+    out = out.replace("\nswap=", "\nhx-swap=");
+    out = out.replace("\tswap=", "\thx-swap=");
+
+    // 4. live="..." (e.g. live="300ms", live="blur")
+    for prefix in &[" live=\"", "\nlive=\"", "\tlive=\""] {
+        let mut start_idx = 0;
+        while let Some(pos) = out[start_idx..].find(prefix) {
+            let actual_pos = start_idx + pos;
+            let after_prefix = actual_pos + prefix.len();
+            if let Some(quote_end) = out[after_prefix..].find('"') {
+                let val = &out[after_prefix..after_prefix + quote_end];
+                let trigger_val = if val == "blur" || val == "change" {
+                    val.to_string()
+                } else if val.ends_with("ms") || val.ends_with('s') {
+                    format!("keyup changed delay:{}", val)
+                } else if val == "true" {
+                    "keyup changed delay:300ms".to_string()
+                } else {
+                    val.to_string()
+                };
+                let full_span = actual_pos..after_prefix + quote_end + 1;
+                let repl = format!(" hx-trigger=\"{}\"", trigger_val);
+                out.replace_range(full_span, &repl);
+                start_idx = actual_pos + repl.len();
+            } else {
+                start_idx = after_prefix;
+            }
+        }
+    }
+    out = out.replace(" live=", " hx-trigger=");
+    out = out.replace("\nlive=", "\nhx-trigger=");
+
+    out
 }

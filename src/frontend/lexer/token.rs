@@ -5,6 +5,7 @@ pub enum TokenKind {
     UInt(u128),
     Float(f64),
     String(String),
+    UString(String),
     Char(char),
     UChar(u32),
     Identifier(String),
@@ -55,6 +56,7 @@ pub enum TokenKind {
     Call,              // call
     Label,             // label
     LabelName(String), // label_name  @string
+    TemplateText(String), // Raw template text inside foreign blocks
     // comments
     MultiLineComment,
     InlineComment,
@@ -176,7 +178,8 @@ impl TokenKind {
             TokenKind::Int(_) => "int",
             TokenKind::UInt(_) => "uint",
             TokenKind::Float(_) => "float",
-            TokenKind::String(_) => "array<uchar>",
+            TokenKind::String(_) => "array<char>",
+            TokenKind::UString(_) => "array<uchar>",
             TokenKind::Char(_) => "char",
             TokenKind::UChar(_) => "uchar",
             TokenKind::Identifier(v) => v,
@@ -216,6 +219,7 @@ impl TokenKind {
             TokenKind::Call => "call",
             TokenKind::Label => "label",
             TokenKind::LabelName(v) => v,
+            TokenKind::TemplateText(v) => v,
             TokenKind::TypeClass => "class",
             TokenKind::TypeMicro => "micro",
             TokenKind::TypeMacro => "macro",

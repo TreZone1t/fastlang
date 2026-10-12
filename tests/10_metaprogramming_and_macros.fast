@@ -1,4 +1,5 @@
 // Comprehensive Suite 10: Metaprogramming, Defines, Type Variables, Sizeof, Typeof, and Macros
+import std::fmt;
 
 define UserID = int32;
 define MAX_COUNT = 100;

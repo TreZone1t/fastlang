@@ -1,6 +1,7 @@
 // Comprehensive Suite 04: Arrays, Collections, Generic Array Methods, and Spread Protocol
-import std::list;
 import std::collections;
+import std::fmt;
+import std::range;
 class Matrix -> {
     handle -> {
         fn index_access(r: int32, c: int32) -> int32 {
@@ -191,6 +192,45 @@ fn test_slice() -> void {
     println("Slice char len: ", char_sub.len); // EXPECT: Slice char len: 5
 }
 
+fn test_std_hashmap() -> void {
+    println("--- Testing HashMap in collections ---");
+    HashMap<str, int32> map;
+    println("initial empty: ", map.is_empty()); // EXPECT: initial empty: true
+    map.insert("hakim", 100);
+    map.insert("omega", 95);
+    map.insert("trezone", 99);
+    println("map size: ", map.size()); // EXPECT: map size: 3
+    println("contains hakim: ", map.contains_key("hakim")); // EXPECT: contains hakim: true
+    println("contains alpha: ", map.contains_key("alpha")); // EXPECT: contains alpha: false
+
+    match (map.get("hakim")) -> {
+        Some(score) => {
+            println("hakim score: ", score); // EXPECT: hakim score: 100
+        }
+        None => {
+            println("hakim score: not found");
+        }
+    }
+
+    // Overwrite existing key
+    map.insert("hakim", 101);
+    match (map.get("hakim")) -> {
+        Some(score) => {
+            println("hakim updated score: ", score); // EXPECT: hakim updated score: 101
+        }
+        None => {
+            println("hakim score: not found");
+        }
+    }
+    println("map size after overwrite: ", map.size()); // EXPECT: map size after overwrite: 3
+
+    // Remove key
+    bool removed = map.remove("omega");
+    println("removed omega: ", removed); // EXPECT: removed omega: true
+    println("contains omega: ", map.contains_key("omega")); // EXPECT: contains omega: false
+    println("map size after remove: ", map.size()); // EXPECT: map size after remove: 2
+}
+
 fn main() -> int32 {
     test_basic_and_multi_index();
     test_generic_array_methods();
@@ -202,6 +242,7 @@ fn main() -> int32 {
     test_reverse();
     test_std_set();
     test_slice();
+    test_std_hashmap();
     println("ALL 04_ARRAYS TESTS PASSED"); // EXPECT: ALL 04_ARRAYS TESTS PASSED
     return 0;
 }

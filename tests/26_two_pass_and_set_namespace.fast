@@ -1,0 +1,44 @@
+// Test 26: Two-Pass Semantic Analysis (Forward Referencing) and Namespace Directives
+import std::fmt;
+
+fn test_forward_calls() -> void {
+    println("--- Testing Forward Function Calls ---");
+    int32 result = compute_late(10, 5);
+    println("compute_late(10, 5) = " + result); // EXPECT: compute_late(10, 5) = 15
+
+    str msg = get_message();
+    println("get_message() = " + msg); // EXPECT: get_message() = Hello from future!
+}
+
+fn test_forward_blueprints() -> void {
+    println("--- Testing Forward Blueprint Referencing ---");
+    ForwardUser u = new ForwardUser("Hakim", 20);
+    println("ForwardUser: " + u.name + ", age=" + u.age); // EXPECT: ForwardUser: Hakim, age=20
+    println("u.greet() = " + u.greet()); // EXPECT: u.greet() = Welcome, Hakim!
+}
+
+fn main() -> void {
+    test_forward_calls();
+    test_forward_blueprints();
+    println("ALL 26_TWO_PASS_AND_SET_NAMESPACE TESTS PASSED"); // EXPECT: ALL 26_TWO_PASS_AND_SET_NAMESPACE TESTS PASSED
+}
+
+// Declarations below main (Forward Referenced)
+fn compute_late(a: int32, b: int32) -> int32 {
+    return a + b;
+}
+
+fn get_message() -> str {
+    return "Hello from future!";
+}
+
+public blueprint ForwardUser -> {
+    str name;
+    int32 age;
+}
+
+public impl ForwardUser -> {
+    fn greet() -> str {
+        return "Welcome, " + this.name + "!";
+    }
+}

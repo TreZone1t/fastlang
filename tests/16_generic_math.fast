@@ -1,5 +1,6 @@
 // Test 16: Generic Math Functions in std::math
 import std::math;
+import std::fmt;
 
 fn main() -> int32 {
     int32 n = 144;

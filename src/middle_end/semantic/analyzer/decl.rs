@@ -320,6 +320,219 @@ impl SemanticAnalyzer {
                         );
                     }
                 }
+                let mut bp_entry = self
+                    .current_env
+                    .borrow()
+                    .lookup_blueprint(target)
+                    .unwrap_or_else(|| BlueprintData::new(target.clone()));
+                for h in handle_block {
+                    if let Decl::FnDecl { name: h_name, .. } = h {
+                        let hk = HandleMethods::from_str(h_name.as_str());
+                        if hk != HandleMethods::NotFound && !bp_entry.handles.contains(&hk) {
+                            bp_entry.handles.insert(hk);
+                        }
+                    }
+                }
+                self.current_env
+                    .borrow_mut()
+                    .define_blueprint(target.clone(), bp_entry);
+            }
+            Decl::FnDecl {
+                visibility,
+                name,
+                generics,
+                params,
+                return_type,
+                body,
+                is_virtual,
+                is_abstract,
+                ..
+            } => {
+                let sig = FnSignature {
+                    name: name.clone(),
+                    generics: generics.clone(),
+                    params: params.clone(),
+                    return_type: return_type.clone(),
+                    is_virtual: *is_virtual,
+                    is_abstract: *is_abstract,
+                };
+                let entry = self.fn_overloads.entry(name.clone()).or_default();
+                if !entry.iter().any(|s| s.params == sig.params && s.generics == sig.generics) {
+                    entry.push(sig);
+                }
+
+                let exec_mode = detect_execution_mode(body);
+                let is_compilable_fn =
+                    name.starts_with("@compile::") || exec_mode == ExecutionMode::FullyCompilable;
+
+                let fn_info = SymbolInfo {
+                    name: name.clone(),
+                    kind: SymbolKind::Function {
+                        params: params.clone(),
+                        return_type: return_type.clone(),
+                        generics: generics.clone(),
+                        body: Some(body.clone()),
+                    },
+                    visibility: visibility.clone(),
+                    dependencies: vec![],
+                    is_used: false,
+                    is_param: false,
+                    is_uninitialized: false,
+                    is_compilable: is_compilable_fn,
+                };
+                self.current_env
+                    .borrow_mut()
+                    .define_or_update(name.clone(), fn_info);
+            }
+            Decl::BlueprintDecl {
+                visibility,
+                name,
+                generics,
+                definition,
+                ..
+            } => {
+                let mut bp = self
+                    .current_env
+                    .borrow()
+                    .lookup_blueprint(name)
+                    .unwrap_or_else(|| BlueprintData::new(name.clone()));
+                bp.generics = generics.iter().map(|g| g.as_str()).collect();
+                if let BlueprintDef::Explicit(fields) = definition {
+                    for f in fields {
+                        bp.fields.insert(f.name.clone(), f.type_node.clone());
+                    }
+                }
+                self.current_env
+                    .borrow_mut()
+                    .define_blueprint(name.to_string(), bp);
+                let info = self.make_blueprint_symbol(name, visibility.clone());
+                self.current_env
+                    .borrow_mut()
+                    .define_or_update(name.clone(), info);
+            }
+            Decl::ClassDecl {
+                visibility,
+                name,
+                generics,
+                extends,
+                ..
+            } => {
+                let mut bp = self
+                    .current_env
+                    .borrow()
+                    .lookup_blueprint(name)
+                    .unwrap_or_else(|| BlueprintData::new(name.clone()));
+                bp.is_class = true;
+                bp.generics = generics.iter().map(|g| g.as_str()).collect();
+                self.current_env
+                    .borrow_mut()
+                    .define_blueprint(name.to_string(), bp);
+                let info = self.make_blueprint_symbol(name, visibility.clone());
+                self.current_env
+                    .borrow_mut()
+                    .define_or_update(name.clone(), info);
+                if let Some(parent) = extends {
+                    self.class_hierarchy.insert(name.clone(), parent.clone());
+                }
+            }
+            Decl::StructDecl {
+                visibility,
+                name,
+                ..
+            } => {
+                let bp = self
+                    .current_env
+                    .borrow()
+                    .lookup_blueprint(name)
+                    .unwrap_or_else(|| BlueprintData::new(name.clone()));
+                self.current_env
+                    .borrow_mut()
+                    .define_blueprint(name.to_string(), bp);
+                let info = self.make_blueprint_symbol(name, visibility.clone());
+                self.current_env
+                    .borrow_mut()
+                    .define_or_update(name.clone(), info);
+            }
+            Decl::EnumDecl {
+                visibility,
+                name,
+                variants,
+                generics,
+                ..
+            } => {
+                let info = self.make_blueprint_symbol(name, visibility.clone());
+                self.current_env
+                    .borrow_mut()
+                    .define_or_update(name.clone(), info);
+                for v in variants {
+                    let var_qualified = format!("{}::{}", name, v.name);
+                    let bp_var_info = self.make_blueprint_symbol(&var_qualified, visibility.clone());
+                    self.current_env
+                        .borrow_mut()
+                        .define_or_update(var_qualified.clone(), bp_var_info);
+                    let var_symbol = SymbolInfo {
+                        name: v.name.clone(),
+                        kind: SymbolKind::Variable {
+                            type_node: BaseType::from_str(name),
+                            editability: Editability::NotEditable,
+                            is_array: false,
+                        },
+                        visibility: visibility.clone(),
+                        dependencies: vec![],
+                        is_used: false,
+                        is_param: false,
+                        is_uninitialized: false,
+                        is_compilable: false,
+                    };
+                    self.current_env
+                        .borrow_mut()
+                        .define_or_update(var_qualified, var_symbol);
+                }
+                self.global_metadata.insert(
+                    name.clone(),
+                    TypeMetadata {
+                        name: name.clone(),
+                        ty: BaseType::Enum {
+                            name: name.clone(),
+                            variants: variants.clone(),
+                            methods: Box::new(HashMap::new()),
+                            generics: generics.clone(),
+                        },
+                        fields: HashMap::new(),
+                        methods: HashMap::new(),
+                        constructor: None,
+                        handles: vec![],
+                        handle_signatures: HashMap::new(),
+                        vars: HashMap::new(),
+                        variants: Some(variants.clone()),
+                    },
+                );
+            }
+            Decl::DefineDecl {
+                name,
+                type_alias,
+                visibility,
+                ..
+            } => {
+                if let Some(t) = type_alias {
+                    let info = SymbolInfo {
+                        name: name.clone(),
+                        kind: SymbolKind::Variable {
+                            type_node: BaseType::Type(Box::new(t.clone())),
+                            editability: Editability::NotEditable,
+                            is_array: false,
+                        },
+                        visibility: visibility.clone(),
+                        dependencies: vec![],
+                        is_used: false,
+                        is_param: false,
+                        is_uninitialized: false,
+                        is_compilable: true,
+                    };
+                    self.current_env
+                        .borrow_mut()
+                        .define_or_update(name.clone(), info);
+                }
             }
             _ => {}
         }
@@ -1002,6 +1215,12 @@ impl SemanticAnalyzer {
 
                     if let Some(existing_sigs) = self.fn_overloads.get(name) {
                         for ex in existing_sigs {
+                            if ex.params == resolved_params
+                                && ex.generics == *generics
+                                && ex.return_type == *return_type
+                            {
+                                continue;
+                            }
                             let _ex_var = ex.params.last().map(|p| p.is_variadic).unwrap_or(false);
                             let ex_min = ex
                                 .params
@@ -1030,10 +1249,9 @@ impl SemanticAnalyzer {
                         }
                     }
 
-                    self.fn_overloads
-                        .entry(name.clone())
-                        .or_default()
-                        .push(FnSignature {
+                    let sigs = self.fn_overloads.entry(name.clone()).or_default();
+                    if !sigs.iter().any(|s| s.params == resolved_params && s.generics == *generics) {
+                        sigs.push(FnSignature {
                             name: name.clone(),
                             generics: generics.clone(),
                             params: resolved_params.clone(),
@@ -1041,6 +1259,7 @@ impl SemanticAnalyzer {
                             is_virtual: *is_virtual,
                             is_abstract: *is_abstract,
                         });
+                    }
                 }
                 let exec_mode = detect_execution_mode(body);
                 let is_compilable_fn =
@@ -1181,6 +1400,13 @@ impl SemanticAnalyzer {
                         return Err("Semantic Error: 'typeof' is currently not supported for generic or runtime types. This feature will be supported in future versions.".to_string());
                     }
                     resolved_fn_return = BaseType::from_str(&clean_t);
+                    if let Some(sigs) = self.fn_overloads.get_mut(name) {
+                        for sig in sigs.iter_mut() {
+                            if matches!(sig.return_type, BaseType::TypeExpr(_)) {
+                                sig.return_type = resolved_fn_return.clone();
+                            }
+                        }
+                    }
                 }
                 self.active_return_type = Some(resolved_fn_return.clone());
                 for dep in extract_all_type_names(&resolved_fn_return.as_str()) {
@@ -1190,7 +1416,8 @@ impl SemanticAnalyzer {
                     self.visit_statement(s)?;
                 }
 
-                if !self.in_custom_scope
+                if name != "main"
+                    && !self.in_custom_scope
                     && !body.is_empty()
                     && resolved_fn_return != BaseType::Void
                     && !self.block_always_terminates(body)
@@ -1595,9 +1822,9 @@ impl SemanticAnalyzer {
                             if h_name == "display" {
                                 let resolved_ret = self.resolve_type(return_type);
                                 let is_valid = match &resolved_ret {
-                                    BaseType::Char => true,
+                                    BaseType::Char | BaseType::UChar => true,
                                     BaseType::Array { base_type, .. } => {
-                                        matches!(base_type.as_ref(), BaseType::Char)
+                                        matches!(base_type.as_ref(), BaseType::Char | BaseType::UChar)
                                     }
                                     _ => false,
                                 };
@@ -1711,7 +1938,7 @@ impl SemanticAnalyzer {
                                 },
                             );
                         }
-                        if let Some(bp) = self.current_env.borrow_mut().blueprints.get_mut(target) {
+                        self.current_env.borrow_mut().mutate_blueprint(target, |bp| {
                             bp.methods.insert(
                                 name.clone(),
                                 FnSignature {
@@ -1723,7 +1950,7 @@ impl SemanticAnalyzer {
                                     is_abstract: false,
                                 },
                             );
-                        }
+                        });
                     }
                 }
 
@@ -1753,7 +1980,7 @@ impl SemanticAnalyzer {
                                 },
                             );
                         }
-                        if let Some(bp) = self.current_env.borrow_mut().blueprints.get_mut(target) {
+                        self.current_env.borrow_mut().mutate_blueprint(target, |bp| {
                             if bp.generics.is_empty() {
                                 for g in target_generics {
                                     bp.generics.push(g.as_str());
@@ -1773,7 +2000,7 @@ impl SemanticAnalyzer {
                                     is_abstract: false,
                                 },
                             );
-                        }
+                        });
                     }
                 }
 
@@ -1840,7 +2067,7 @@ impl SemanticAnalyzer {
                         is_uninitialized: false,
                         is_compilable: false,
                     };
-                    self.current_env.borrow_mut().define(name.clone(), info)?;
+                    self.current_env.borrow_mut().define_or_update(name.clone(), info);
                 } else if let Some(expr) = value {
                     let _val_type = self.visit_expression(expr)?;
                     let info = SymbolInfo {
@@ -1857,7 +2084,7 @@ impl SemanticAnalyzer {
                         is_uninitialized: false,
                         is_compilable: false,
                     };
-                    self.current_env.borrow_mut().define(name.clone(), info)?;
+                    self.current_env.borrow_mut().define_or_update(name.clone(), info);
                 }
             }
             Decl::NamespaceDecl { name, decls, .. } => {
@@ -2438,9 +2665,9 @@ impl SemanticAnalyzer {
                     }
                     let resolved_ret = self.resolve_type(return_type);
                     let is_valid = match &resolved_ret {
-                        BaseType::Char => true,
+                        BaseType::Char | BaseType::UChar => true,
                         BaseType::Array { base_type, .. } => {
-                            matches!(base_type.as_ref(), BaseType::Char)
+                            matches!(base_type.as_ref(), BaseType::Char | BaseType::UChar)
                         }
                         _ => false,
                     };
@@ -2479,6 +2706,13 @@ impl SemanticAnalyzer {
             } = d
             {
                 bp.fields.insert(f_name.clone(), type_node.clone());
+            }
+        }
+        for d in private_block {
+            if let Decl::VarDecl { name: f_name, .. } = d {
+                bp.private_fields.insert(f_name.clone());
+            } else if let Decl::FnDecl { name: fn_name, .. } = d {
+                bp.private_methods.insert(fn_name.clone());
             }
         }
         for d in private_block.iter().chain(public_block).chain(static_block) {

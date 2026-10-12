@@ -5,7 +5,6 @@ pub fn generate_runtime_header() -> String {
 #include <type_traits>
 #include <functional>
 #include <cstring>
-#include <cstdio>
 #include <vector>
 #include <memory>
 
@@ -106,6 +105,56 @@ inline char* fastlang_string_create_from_ptr(const char* s) {
     return data;
 }
 
+inline char32_t* fastlang_ustring_create_from_ptr(const char32_t* s) {
+    if (!s) s = U"";
+    size_t len = 0;
+    while (s[len] != 0) ++len;
+    size_t total_bytes = sizeof(size_t) + (len + 1) * sizeof(char32_t);
+    void* mem = std::malloc(total_bytes);
+    if (!mem) return nullptr;
+    size_t* raw = reinterpret_cast<size_t*>(mem);
+    raw[0] = len;
+    char32_t* data = reinterpret_cast<char32_t*>(raw + 1);
+    for (size_t i = 0; i < len; ++i) data[i] = s[i];
+    data[len] = 0;
+    return data;
+}
+
+struct fastlang_strbuf {
+    char* data = nullptr;
+    size_t capacity = 0;
+    size_t length = 0;
+
+    void append(const char* s) {
+        if (!s) return;
+        size_t slen = std::strlen(s);
+        if (length + slen + 1 > capacity) {
+            size_t new_cap = (capacity == 0) ? 256 : (capacity * 2);
+            while (new_cap < length + slen + 1) new_cap *= 2;
+            char* next = (char*)std::realloc(data, new_cap);
+            if (!next) return;
+            data = next;
+            capacity = new_cap;
+        }
+        std::memcpy(data + length, s, slen);
+        length += slen;
+        data[length] = '\0';
+    }
+
+    char* finalize() {
+        if (!data) return fastlang_string_create_from_ptr("");
+        size_t total_bytes = sizeof(size_t) + length + 1;
+        void* mem = std::malloc(total_bytes);
+        if (!mem) { std::free(data); return nullptr; }
+        size_t* raw = reinterpret_cast<size_t*>(mem);
+        raw[0] = length;
+        char* out = reinterpret_cast<char*>(raw + 1);
+        std::memcpy(out, data, length + 1);
+        std::free(data);
+        return out;
+    }
+};
+
 template <typename T>
 inline void fastlang_array_free(T* arr) {
     if (!arr) return;
@@ -120,11 +169,9 @@ inline void fastlang_array_free(T* arr) {
 namespace fast_std {
 template <typename T>
 using array = T*;
-using str = char*;
 }
 
 using fast_std::array;
-using fast_std::str;
 // ============================================================================
 
 struct fastlang_unit_t {
@@ -158,12 +205,16 @@ template <typename T>
 bool fastlang_array_partial_equal(T* __this, T* other);
 template <typename T>
 bool fastlang_array_not_equal(T* __this, T* other);
+
+inline fast_std::array<char> fastlang_array_add(fast_std::array<char> __this, fast_std::array<char> other);
+inline fast_std::array<char> fastlang_array_add(fast_std::array<char> __this, char other);
+template <typename Other>
+inline fast_std::array<char> fastlang_array_add(fast_std::array<char> __this, Other other);
 template <typename T>
-T* fastlang_array_add(T* __this, T* other);
+inline fast_std::array<T> fastlang_array_add(fast_std::array<T> __this, fast_std::array<T> other);
 template <typename T>
-T* fastlang_array_add(T* __this, T item);
-inline char* fastlang_char_add(char __this, char* other);
-inline char* fastlang_char_add(char __this, char other);
+inline fast_std::array<T> fastlang_array_add(fast_std::array<T> __this, T item);
+inline fast_std::array<char> fastlang_char_add(char __this, fast_std::array<char> other);
 }
 
 // Forward declarations for string conversion
@@ -172,46 +223,9 @@ inline char* fastlang_as_str(const T& val);
 inline char* fastlang_as_str(bool b);
 inline char* fastlang_as_str(char* s);
 inline char* fastlang_as_str(const char* s);
+inline char* fastlang_as_str(char32_t* s);
+inline char* fastlang_as_str(const char32_t* s);
 
-template <typename A, typename B>
-inline auto fastlang_add(A&& a, B&& b) {
-    using DecA = std::decay_t<A>;
-    using DecB = std::decay_t<B>;
-    if constexpr (std::is_same_v<DecA, char> && (std::is_same_v<DecB, char*> || std::is_same_v<DecB, const char*>)) {
-        return fast_std::fastlang_char_add(a, const_cast<char*>(b));
-    } else if constexpr (std::is_same_v<DecA, char> && std::is_same_v<DecB, char>) {
-        return fast_std::fastlang_char_add(a, b);
-    } else if constexpr ((std::is_same_v<DecA, char*> || std::is_same_v<DecA, const char*>) && std::is_same_v<DecB, char>) {
-        return fast_std::fastlang_array_add(const_cast<char*>(a), b);
-    } else if constexpr ((std::is_same_v<DecA, char*> || std::is_same_v<DecA, const char*>) && (std::is_same_v<DecB, char*> || std::is_same_v<DecB, const char*>)) {
-        return fast_std::fastlang_array_add(const_cast<char*>(a), const_cast<char*>(b));
-    } else if constexpr ((std::is_same_v<DecA, char*> || std::is_same_v<DecA, const char*>)) {
-        return fast_std::fastlang_array_add(const_cast<char*>(a), fastlang_as_str(b));
-    } else if constexpr ((std::is_same_v<DecB, char*> || std::is_same_v<DecB, const char*>)) {
-        return fast_std::fastlang_array_add(fastlang_as_str(a), const_cast<char*>(b));
-    } else if constexpr (std::is_pointer_v<DecA> && std::is_integral_v<DecB>) {
-        return a + b;
-    } else if constexpr (std::is_integral_v<DecA> && std::is_pointer_v<DecB>) {
-        return a + b;
-    } else if constexpr (std::is_pointer_v<DecA> && std::is_pointer_v<DecB>) {
-        return fast_std::fastlang_array_add(a, b);
-    } else if constexpr (std::is_pointer_v<DecA>) {
-        return fast_std::fastlang_array_add(a, b);
-    } else {
-        return a + b;
-    }
-}
-
-template <typename A, typename B>
-inline decltype(auto) fastlang_add_assign(A&& a, B&& b) {
-    using DecA = std::decay_t<A>;
-    if constexpr (std::is_pointer_v<DecA>) {
-        a = fastlang_add(a, std::forward<B>(b));
-        return a;
-    } else {
-        return (a += std::forward<B>(b));
-    }
-}
 
 template <typename A, typename B>
 inline bool fastlang_eq(A&& a, B&& b) {
@@ -253,6 +267,53 @@ inline char* fastlang_as_str(bool b) { return fastlang_string_create_from_ptr(b 
 inline char* fastlang_as_str(char* s) { return s ? s : fastlang_string_create_from_ptr(""); }
 inline char* fastlang_as_str(const char* s) { return fastlang_string_create_from_ptr(s ? s : ""); }
 
+inline char* fastlang_uchar_to_utf8(const char32_t* u_str) {
+    if (!u_str) return fastlang_string_create_from_ptr("");
+    size_t u_len = fastlang_array_len(u_str);
+    size_t actual_len = 0;
+    while (actual_len < u_len && u_str[actual_len] != 0) {
+        actual_len++;
+    }
+    size_t byte_count = 0;
+    for (size_t i = 0; i < actual_len; ++i) {
+        uint32_t val = (uint32_t)u_str[i];
+        if (val <= 0x7F) byte_count += 1;
+        else if (val <= 0x7FF) byte_count += 2;
+        else if (val <= 0xFFFF) byte_count += 3;
+        else byte_count += 4;
+    }
+    size_t total_bytes = sizeof(size_t) + byte_count + 1;
+    void* mem = std::malloc(total_bytes);
+    if (!mem) return nullptr;
+    size_t* raw = reinterpret_cast<size_t*>(mem);
+    raw[0] = byte_count;
+    char* buf = reinterpret_cast<char*>(raw + 1);
+    size_t out_idx = 0;
+    for (size_t i = 0; i < actual_len; ++i) {
+        uint32_t val = (uint32_t)u_str[i];
+        if (val <= 0x7F) {
+            buf[out_idx++] = (char)val;
+        } else if (val <= 0x7FF) {
+            buf[out_idx++] = (char)(0xC0 | ((val >> 6) & 0x1F));
+            buf[out_idx++] = (char)(0x80 | (val & 0x3F));
+        } else if (val <= 0xFFFF) {
+            buf[out_idx++] = (char)(0xE0 | ((val >> 12) & 0x0F));
+            buf[out_idx++] = (char)(0x80 | ((val >> 6) & 0x3F));
+            buf[out_idx++] = (char)(0x80 | (val & 0x3F));
+        } else {
+            buf[out_idx++] = (char)(0xF0 | ((val >> 18) & 0x07));
+            buf[out_idx++] = (char)(0x80 | ((val >> 12) & 0x3F));
+            buf[out_idx++] = (char)(0x80 | ((val >> 6) & 0x3F));
+            buf[out_idx++] = (char)(0x80 | (val & 0x3F));
+        }
+    }
+    buf[byte_count] = '\0';
+    return buf;
+}
+
+inline char* fastlang_as_str(char32_t* s) { return fastlang_uchar_to_utf8(s); }
+inline char* fastlang_as_str(const char32_t* s) { return fastlang_uchar_to_utf8(s); }
+
 template <typename T>
 inline char* fastlang_as_str(const T& val) {
     using Decayed = std::decay_t<T>;
@@ -283,6 +344,11 @@ inline char* fastlang_as_str(const T& val) {
         return fastlang_string_create_from_ptr(const_cast<Decayed&>(val).display());
     } else if constexpr (fastlang_has_as_str<Decayed>::value) {
         return fastlang_string_create_from_ptr(const_cast<Decayed&>(val).as_str());
+    } else if constexpr (std::is_same_v<Decayed, char32_t>) {
+        char32_t single[2] = {val, 0};
+        return fastlang_uchar_to_utf8(single);
+    } else if constexpr (std::is_same_v<Decayed, const char32_t*> || std::is_same_v<Decayed, char32_t*>) {
+        return fastlang_uchar_to_utf8(val);
     } else if constexpr (std::is_pointer_v<Decayed>) {
         if (!val) return fastlang_string_create_from_ptr("None");
         return fastlang_as_str(*val);
@@ -294,7 +360,11 @@ inline char* fastlang_as_str(const T& val) {
 template <typename T>
 inline char* fastlang_as_str(T* ptr) {
     if (!ptr) return fastlang_string_create_from_ptr("None");
-    return fastlang_as_str(*ptr);
+    if constexpr (std::is_same_v<T, char32_t> || std::is_same_v<T, const char32_t>) {
+        return fastlang_uchar_to_utf8(ptr);
+    } else {
+        return fastlang_as_str(*ptr);
+    }
 }
 
 template <typename T>
@@ -386,6 +456,5 @@ template<typename T>
 inline T fastlang_type_default() {
     return fastlang_type_default_helper<T>::get();
 }
-
 "#.to_string()
 }

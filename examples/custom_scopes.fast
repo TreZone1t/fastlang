@@ -1,6 +1,7 @@
 // FastLang Example: Custom Scopes & Operator Overloading (.fast)
 // Handles operate under the hood (e.g. handle display is invoked automatically when passed to print)
 //update : we removed custom
+import std::fmt;
 class Vector2D {
     public {
         int32 x = 0;

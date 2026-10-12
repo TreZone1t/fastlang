@@ -1,16 +1,14 @@
 // FastLang Standard Library: Core Prelude, Option & Base Types
 import std::types;
 import std::error;
-import std::io;
-import std::string;
-import std::range;
+using types;
 
 
 public micro stop = ()-> {
     break;
 }
 
-public @compile -> {
+public @compile :: {
 
     set typeof<T>(T) -> type;
     set sizeof<T>(T) -> uint32;
@@ -20,6 +18,8 @@ public @compile -> {
     set rand<T>(T, T) -> T;
     set rand<T>(T, T, T) -> T;
     set print<...T>(...T) -> void;
+    set backend() -> Backend;
+    set system() -> System;
     impl type<T> -> {
         set printable() -> bool;
         set as_str() -> str;
@@ -121,3 +121,9 @@ public method deepCopy<T>(val: T) -> T {
 
 using Option;
 using Result;
+using Backend;
+using System;
+
+public @sys :: {
+    set exit(int32) -> void;
+}

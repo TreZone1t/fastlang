@@ -1,0 +1,166 @@
+// FastLang Standard Library: Native Threading & Synchronization
+import std::error;
+import @c "clib/thread.h";
+
+set thread;
+
+extern @c :: {
+    fn fast_thread_create(func: auto, arg: auto) -> auto;
+    fn fast_thread_spawn(func: auto) -> auto;
+    fn fast_thread_join(h: auto) -> int32;
+    fn fast_sleep_ms(ms: int32) -> void;
+    fn fast_thread_yield() -> void;
+    fn fast_mutex_create() -> auto;
+    fn fast_mutex_lock(m: auto) -> void;
+    fn fast_mutex_unlock(m: auto) -> void;
+    fn fast_mutex_destroy(m: auto) -> void;
+}
+
+public @sys :: {
+    set thread_create(auto, auto) -> auto;
+    set thread_spawn(auto) -> auto;
+    set thread_join(auto) -> int32;
+    set sleep_ms(int32) -> void;
+    set thread_yield() -> void;
+    set mutex_create() -> auto;
+    set mutex_lock(auto) -> void;
+    set mutex_unlock(auto) -> void;
+    set mutex_destroy(auto) -> void;
+}
+
+public class Mutex -> {
+    private -> {
+        raw_ptr<void> raw_handle = undefined;
+        bool is_initialized = false;
+        fn init_handle() -> void {
+            if (@compile::backend() == Backend::Cpp) {
+                if (!this.is_initialized) {
+                    this.raw_handle = @c::fast_mutex_create();
+                    this.is_initialized = true;
+                }
+            } else {
+                if (!this.is_initialized) {
+                    this.raw_handle = @sys::mutex_create();
+                    this.is_initialized = true;
+                }
+            }
+        }
+    }
+    public -> {
+        fn lock() -> void {
+            this.init_handle();
+            if (@compile::backend() == Backend::Cpp) {
+                @c::fast_mutex_lock(this.raw_handle);
+            } else {
+                @sys::mutex_lock(this.raw_handle);
+            }
+        }
+        fn unlock() -> void {
+            if (@compile::backend() == Backend::Cpp) {
+                if (this.is_initialized) {
+                    @c::fast_mutex_unlock(this.raw_handle);
+                }
+            } else {
+                if (this.is_initialized) {
+                    @sys::mutex_unlock(this.raw_handle);
+                }
+            }
+        }
+    }
+    constructor -> {
+        init() -> {
+            this.init_handle();
+        }
+    }
+    handle -> {
+        fn drop() -> void {
+            if (@compile::backend() == Backend::Cpp) {
+                if (this.is_initialized) {
+                    @c::fast_mutex_destroy(this.raw_handle);
+                    this.is_initialized = false;
+                }
+            } else {
+                if (this.is_initialized) {
+                    @sys::mutex_destroy(this.raw_handle);
+                    this.is_initialized = false;
+                }
+            }
+        }
+    }
+}
+
+public class Thread -> {
+    private -> {
+        raw_ptr<void> raw_handle = undefined;
+        bool has_joined = false;
+    }
+    public -> {
+        fn set_handle(h: raw_ptr<void>) -> void {
+            this.raw_handle = h;
+            this.has_joined = false;
+        }
+        fn get_handle() -> raw_ptr<void> {
+            return this.raw_handle;
+        }
+        fn join() -> int32 {
+            if (@compile::backend() == Backend::Cpp) {
+                if (!this.has_joined) {
+                    int32 res = @c::fast_thread_join(this.raw_handle);
+                    this.has_joined = true;
+                    return res;
+                }
+            } else {
+                if (!this.has_joined) {
+                    int32 res = @sys::thread_join(this.raw_handle);
+                    this.has_joined = true;
+                    return res;
+                }
+            }
+            return 0;
+        }
+    }
+    constructor -> {
+        init() -> {
+            this.has_joined = true;
+        }
+        init(h: raw_ptr<void>) -> {
+            this.raw_handle = h;
+            this.has_joined = false;
+        }
+    }
+    handle -> {
+        fn drop() -> void {
+            if (!this.has_joined) {
+                this.join();
+            }
+        }
+    }
+}
+
+    public fn spawn(action: auto) -> Thread {
+        Thread t = new Thread();
+        raw_ptr<void> h = undefined;
+        if (@compile::backend() == Backend::Cpp) {
+            h = @c::fast_thread_spawn(action);
+        } else {
+            h = @sys::thread_spawn(action);
+        }
+        t.set_handle(h);
+        return t;
+    }
+
+    public fn sleep(ms: int32) -> void {
+        if (@compile::backend() == Backend::Cpp) {
+            @c::fast_sleep_ms(ms);
+        } else {
+            @sys::sleep_ms(ms);
+        }
+    }
+
+    public fn thread_yield() -> void {
+        if (@compile::backend() == Backend::Cpp) {
+            @c::fast_thread_yield();
+        } else {
+            @sys::thread_yield();
+        }
+    }

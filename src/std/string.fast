@@ -55,6 +55,14 @@ public class string -> {
             this.length = arr.len;
             this.capacity = arr.len;
         }
+        /*
+        fn add<T>(s:T[]) -> void {
+            char[] arr = s.as_str();
+            for (int32 i = 0; i < s.len; i = i + 1) {
+                this.push(arr[i]);
+            }
+        }
+        */
         fn arrow_assign(arr: char[]) -> void {
             this.buffer = arr;
             this.length = arr.len;

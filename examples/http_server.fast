@@ -1,0 +1,49 @@
+// FastLang Example: Real Persistent Web Server
+// MANUAL_RUN
+// Run this example: cargo run -- examples/http_server.fast
+// Then open your browser at: http://localhost:8080
+import std::net;
+import std::http;
+import std::fmt;
+import std::io;
+
+using http;
+
+
+fn main() -> void {
+    int32 port = 8080;
+    println("=================================================");
+    println(" FastLang Native HTTP Web Server");
+    println(" Listening on: http://localhost:" + port);
+    println(" Press Ctrl+C in terminal to stop");
+    println("=================================================");
+
+    HttpServer server = new HttpServer(port);
+
+    HtmlDocument page = @html {
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>FastLang Web Server</title>
+        </head>
+        <body style="font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; background: #0f172a; color: #f8fafc; text-align: center; padding-top: 80px; margin: 0;">
+            <div style="display: inline-block; background: #1e293b; padding: 40px 60px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); border: 1px solid #334155; max-width: 500px;">
+                <h1 style="color: #38bdf8; font-size: 2.75rem; margin-top: 0; margin-bottom: 12px;">Hello, World!</h1>
+                <p style="color: #94a3b8; font-size: 1.15rem; line-height: 1.6; margin-bottom: 24px;">Welcome to FastLang! This page is served natively using FastLang C++ network sockets and HTTP response engine.</p>
+                <div style="display: inline-block; background: #0284c7; color: white; padding: 8px 18px; border-radius: 9999px; font-weight: bold; font-size: 0.95rem;">
+                    HTTP 200 OK &bull; Port 8080
+                </div>
+            </div>
+        </body>
+        </html>
+    };
+
+    while (true) {
+        http::serve_once(server, fn _(req: HttpRequest, res: HttpResponse) -> void {
+            println("--> Incoming Request: " + req.http_method + " " + req.path);
+            res.send_html(page);
+        });
+    }
+
+    server.close();
+}

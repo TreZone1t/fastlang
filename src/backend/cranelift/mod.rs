@@ -79,11 +79,12 @@ impl CraneliftBackend {
 
     fn map_type(ty: &IRType) -> Type {
         match ty {
-            IRType::Int(Size::S32) => types::I32,
-            IRType::Int(Size::S64) => types::I64,
+            IRType::Int(Size::S8) | IRType::UInt(Size::S8) | IRType::Bool | IRType::Byte => types::I8,
+            IRType::Int(Size::S16) | IRType::UInt(Size::S16) => types::I16,
+            IRType::Int(Size::S32) | IRType::UInt(Size::S32) | IRType::Char | IRType::Type => types::I32,
+            IRType::Int(Size::S64) | IRType::UInt(Size::S64) | IRType::USize | IRType::ISize => types::I64,
             IRType::Float(Size::S32) => types::F32,
             IRType::Float(Size::S64) => types::F64,
-            IRType::Bool => types::I8,
             IRType::Pointer(_) => types::I64,
             IRType::Array(_) => types::I64,
             IRType::Object(_) | IRType::CustomScope(_) => types::I64, // Pointers to objects

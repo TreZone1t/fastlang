@@ -48,8 +48,8 @@ impl Parser {
         self.consume(TokenKind::LParen, "Expected '(' after function name")?;
         if self.peek().kind != TokenKind::RParen {
             loop {
-                let p = self.parse_single_param()?;
-                params.push(p);
+                let p_list = self.parse_params_entry()?;
+                params.extend(p_list);
                 if self.peek().kind == TokenKind::Comma {
                     self.advance();
                 } else {
@@ -58,12 +58,22 @@ impl Parser {
             }
         }
         self.consume(TokenKind::RParen, "Expected ')' after function parameters")?;
-        self.consume(TokenKind::Arrow, "Expected '->' after function parameters")?;
-        if !(self.peek().kind == TokenKind::LBrace || self.peek().kind == TokenKind::SemiColon) {
-            return_type = self.parse_type()?;
-            if self.peek().kind == TokenKind::Pipe || self.peek().kind == TokenKind::Or {
-                return Err("Syntax Error: Union types are not supported in return type".to_string());
+        if self.peek().kind == TokenKind::Arrow {
+            self.advance();
+            if !(self.peek().kind == TokenKind::LBrace || self.peek().kind == TokenKind::SemiColon) {
+                return_type = self.parse_return_type()?;
+                if self.peek().kind == TokenKind::Pipe || self.peek().kind == TokenKind::Or {
+                    return Err("Syntax Error: Union types are not supported in return type".to_string());
+                }
             }
+        } else if name == "main" {
+            return_type = BaseType::Int(Size::S32);
+        } else {
+            return_type = BaseType::Void;
+        }
+
+        if return_type == BaseType::Unknown && name == "main" {
+            return_type = BaseType::Int(Size::S32);
         }
 
         if is_abstract {

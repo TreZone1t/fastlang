@@ -1,0 +1,4 @@
+// Test (Expected Failure): non-ASCII character in normal string literal without u prefix
+fn main() -> void {
+    str s = "Hello World 🚀";
+}

@@ -1,4 +1,5 @@
 // FastLang Example: Loops & Control Flow (.fast)
+import std::fmt;
 
 fn main() -> int32 {
     println("=== 1. Standard While Loop ===");

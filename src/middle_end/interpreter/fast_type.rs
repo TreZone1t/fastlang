@@ -164,6 +164,7 @@ impl FastType {
                 | BaseType::Char
                 | BaseType::UChar
                 | BaseType::Void
+                | BaseType::Number
         )
     }
 
@@ -207,13 +208,12 @@ impl FastType {
             || ((clean == "throw" || clean == "$throw") && self.has_throw)
             || (clean == "default" && self.has_default)
             || (clean == "share" && self.has_share)
-            || (clean == "as_str" && (self.printable() || self.as_str() == "str"))
+            || (clean == "as_str" && (self.printable()))
     }
 
     pub fn has_method(&self, name: &str) -> bool {
         let clean = name.trim();
-        self.methods.iter().any(|m| m == clean)
-            || (clean == "as_str" && (self.printable() || self.as_str() == "str"))
+        self.methods.iter().any(|m| m == clean) || (clean == "as_str" && (self.printable()))
     }
 
     pub fn has_field(&self, name: &str) -> bool {
@@ -225,9 +225,6 @@ impl FastType {
         let clean = name_or_type.trim();
         if let Some(t) = target_type {
             let t_clean = t.trim();
-            if clean == "as_str" && (self.printable() || self.as_str() == "str") {
-                return t_clean == "str" || type_matches("str", t_clean);
-            }
             if let Some(actual_t) = self.handle_types.get(clean) {
                 return actual_t == t_clean || type_matches(actual_t, t_clean);
             }
@@ -236,16 +233,15 @@ impl FastType {
         if self.has_handle(clean) {
             return true;
         }
-        self.handle_types.values().any(|v| v == clean || type_matches(v, clean))
+        self.handle_types
+            .values()
+            .any(|v| v == clean || type_matches(v, clean))
     }
 
     pub fn has_method_query(&self, name_or_type: &str, target_type: Option<&str>) -> bool {
         let clean = name_or_type.trim();
         if let Some(t) = target_type {
             let t_clean = t.trim();
-            if clean == "as_str" && (self.printable() || self.as_str() == "str") {
-                return t_clean == "str" || type_matches("str", t_clean);
-            }
             if let Some(actual_t) = self.method_types.get(clean) {
                 return actual_t == t_clean || type_matches(actual_t, t_clean);
             }
@@ -254,7 +250,9 @@ impl FastType {
         if self.has_method(clean) {
             return true;
         }
-        self.method_types.values().any(|v| v == clean || type_matches(v, clean))
+        self.method_types
+            .values()
+            .any(|v| v == clean || type_matches(v, clean))
     }
 
     pub fn has_field_query(&self, name_or_type: &str, target_type: Option<&str>) -> bool {
@@ -269,10 +267,29 @@ impl FastType {
         if self.has_field(clean) {
             return true;
         }
-        self.field_types.values().any(|v| v == clean || type_matches(v, clean))
+        self.field_types
+            .values()
+            .any(|v| v == clean || type_matches(v, clean))
     }
 
     pub fn printable(&self) -> bool {
+        if matches!(
+            self.base_type,
+            BaseType::Unknown | BaseType::Auto | BaseType::TypeExpr(_) | BaseType::GenericParam(_)
+        ) {
+            return true;
+        }
+        let s = self.as_str();
+        let name = self.base_type.get_name();
+        if s.starts_with("type<")
+            || s == "auto"
+            || s == "unknown"
+            || s == "char[]"
+            || matches!(self.base_type, BaseType::GenericParam(_))
+            || (s.starts_with("blueprint::") && name.len() == 1)
+        {
+            return true;
+        }
         self.is_primitive() || self.has_display
     }
 
@@ -297,14 +314,15 @@ impl FastType {
             | BaseType::Float(_)
             | BaseType::Bool
             | BaseType::Char
-            | BaseType::UChar => true,
+            | BaseType::UChar
+            | BaseType::Number => true,
             _ if self.is_pointer() => true,
             _ => self.has_cast,
         }
     }
 
     pub fn castable_to(&self, target: &FastType) -> bool {
-        if self.is_primitive() && target.is_primitive() {
+        if self.is_primitive() && target.is_primitive() && !target.is_array() {
             return true;
         }
         if self.base_type == target.base_type {
@@ -361,4 +379,3 @@ fn type_matches(actual: &str, expected: &str) -> bool {
     }
     normalize_type_str(a) == normalize_type_str(e)
 }
-

@@ -1,0 +1,30 @@
+import std;
+import std::fmt;
+
+fn test_grouped((a, b): int32, c: float) -> int32 {
+    println("a = ", a, ", b = ", b, ", c = ", c);
+    return a + b;
+}
+
+fn test_grouped_defaults((x, y) := 10 as int8, z: int32 := 5) -> int32 {
+    return x + y + z;
+}
+
+fn test_wildcard_param(f: Fn<(int32, int32), int32>) -> int32 {
+    return f(10, 20);
+}
+
+fn main() -> int32 {
+    res := test_grouped(5, 15, 3.14);
+    println("res = ", res);
+
+    def_res := test_grouped_defaults();
+    println("def_res = ", def_res);
+
+    w_res := test_wildcard_param(fn(_, b: int32) -> int32 {
+        return b * 2;
+    });
+    println("w_res = ", w_res);
+
+    return 0;
+}

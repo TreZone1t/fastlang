@@ -1,4 +1,5 @@
 // Test 19: Mixed branches splitting, compile validation, and compile members
+import std::fmt;
 
 fn i_print_if_has_as_str_only<T>(val: T) -> void {
     if (typeof(val).has_method("as_str")) {
@@ -17,7 +18,7 @@ fn i_print_if_has_as_str_and_have_one_branch<T>(val: T) -> void {
     println(val.as_str());
 }
 
-@compile {
+@compile :: {
     fn i_print_on_compile_time_only<T>(val: T) -> void {
         if (!typeof(val).has_method("as_str")) {
             @compile::throw new Error("not printable :" + typeof(val).as_str());

@@ -17,6 +17,7 @@ pub struct CodeGenerator {
     pub(crate) struct_field_counts: HashMap<String, usize>,
     pub(crate) struct_field_types: HashMap<String, HashMap<String, String>>,
     pub(crate) current_class_name: Option<String>,
+    pub(crate) current_fn_name: Option<String>,
     pub(crate) fn_return_types: HashMap<String, String>,
     pub(crate) primitive_impl_methods: HashMap<String, Vec<String>>,
     pub(crate) in_primitive_impl: bool,
@@ -34,6 +35,9 @@ pub struct CodeGenerator {
     pub(crate) type_own_members: HashMap<String, HashSet<String>>,
     pub(crate) types_with_drop: HashSet<String>,
     pub(crate) used_enums: HashSet<String>,
+    pub(crate) namespaces: HashSet<String>,
+    pub(crate) forward_declared_fns: HashSet<String>,
+    pub(crate) type_aliases: HashMap<String, String>,
 }
 
 impl CodeGenerator {
@@ -55,6 +59,7 @@ impl CodeGenerator {
             struct_field_counts: HashMap::new(),
             struct_field_types: HashMap::new(),
             current_class_name: None,
+            current_fn_name: None,
             fn_return_types: HashMap::new(),
             primitive_impl_methods: HashMap::new(),
             in_primitive_impl: false,
@@ -71,7 +76,23 @@ impl CodeGenerator {
             property_access_types: HashSet::new(),
             type_own_members: HashMap::new(),
             types_with_drop: HashSet::new(),
+            namespaces: HashSet::new(),
+            forward_declared_fns: HashSet::new(),
+            type_aliases: HashMap::new(),
         }
+    }
+
+    pub(crate) fn resolve_alias(&self, ty: &str) -> String {
+        let clean = ty.trim_start_matches("fast_std::");
+        let mut cur = clean.to_string();
+        for _ in 0..10 {
+            if let Some(target) = self.type_aliases.get(&cur) {
+                cur = target.trim_start_matches("fast_std::").to_string();
+            } else {
+                break;
+            }
+        }
+        cur
     }
     pub(crate) fn emit_operator_overloads(&mut self, handle_block: &Option<Vec<Decl>>) {
         if let Some(handles) = handle_block {
@@ -113,7 +134,13 @@ impl CodeGenerator {
                                 crate::backend::cpp::stmt::type_to_cpp(&params[0].type_node);
                             let param_name = &params[0].name;
                             let (op_ret, is_void) = if ret_str == "void" {
-                                (format!("{}&", self.current_class_name.as_deref().unwrap_or("auto")), true)
+                                (
+                                    format!(
+                                        "{}&",
+                                        self.current_class_name.as_deref().unwrap_or("auto")
+                                    ),
+                                    true,
+                                )
                             } else {
                                 (ret_str.clone(), false)
                             };
@@ -158,7 +185,8 @@ impl CodeGenerator {
                             let param_list: Vec<String> = params
                                 .iter()
                                 .map(|p| {
-                                    let p_type = crate::backend::cpp::stmt::type_to_cpp(&p.type_node);
+                                    let p_type =
+                                        crate::backend::cpp::stmt::type_to_cpp(&p.type_node);
                                     format!("{} {}", p_type, p.name)
                                 })
                                 .collect();
@@ -214,6 +242,45 @@ impl CodeGenerator {
         s.to_string()
     }
 
+    pub(crate) fn match_primitive_target(
+        &mut self,
+        expr: &Expr,
+        method_name: &str,
+    ) -> Option<String> {
+        if let Some(targets) = self.primitive_impl_methods.get(method_name).cloned() {
+            let cpp_type = self.extract_cpp_type_from_expr(expr).unwrap_or_default();
+            let is_this = matches!(expr, Expr::This);
+
+            let resolved_type = self.resolve_alias(&cpp_type);
+
+            if is_this && self.in_primitive_impl {
+                self.current_primitive_target.clone()
+            } else if targets
+                .iter()
+                .any(|t| t == &cpp_type || t == &resolved_type)
+            {
+                Some(cpp_type)
+            } else if targets.contains(&"array".to_string())
+                && (resolved_type == "array"
+                    || resolved_type.starts_with("fast_std::array")
+                    || resolved_type.starts_with("array<")
+                    || resolved_type.ends_with("[]"))
+            {
+                Some("array".to_string())
+            } else if targets.contains(&"char".to_string()) && cpp_type == "char" {
+                Some("char".to_string())
+            } else if targets.contains(&"bool".to_string())
+                && (cpp_type == "bool" || cpp_type == "flag")
+            {
+                Some("bool".to_string())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn find_assign_handle(
         &self,
         type_name: &str,
@@ -252,54 +319,49 @@ impl CodeGenerator {
         self.output.push_str("#include <clib/fast_runtime.h>\n\n");
     }
 
-    pub fn generate(&mut self, ast: &Vec<Stmt>, emit_headers: bool, wrap_in_main: bool) -> String {
-        if emit_headers {
-            self.emit_headers();
-        }
+    pub(crate) fn is_known_namespace(&self, ns: &str) -> bool {
+        self.namespaces.contains(ns)
+            || (!ns.is_empty()
+                && ns.split("::").all(|part| {
+                    part == "std" || part == "fast_std" || self.namespaces.contains(part)
+                }))
+    }
 
-        let flat_ast: Vec<Stmt> = ast.to_vec();
+    pub(crate) fn fork_child(&self) -> CodeGenerator {
+        let mut child = CodeGenerator::new();
+        child.indent_level = self.indent_level;
+        child.custom_scopes = self.custom_scopes.clone();
+        child.custom_scope_types = self.custom_scope_types.clone();
+        child.enum_types = self.enum_types.clone();
+        child.used_enums = self.used_enums.clone();
+        child.payload_enum_types = self.payload_enum_types.clone();
+        child.simple_enum_types = self.simple_enum_types.clone();
+        child.pointer_vars = self.pointer_vars.clone();
+        child.raw_pointer_vars = self.raw_pointer_vars.clone();
+        child.address_vars = self.address_vars.clone();
+        child.vars = self.vars.clone();
+        child.type_aliases = self.type_aliases.clone();
+        child.function_handles = self.function_handles.clone();
+        child.target_impl_methods = self.target_impl_methods.clone();
+        child.target_handle_methods = self.target_handle_methods.clone();
+        child.struct_field_types = self.struct_field_types.clone();
+        child.struct_field_counts = self.struct_field_counts.clone();
+        child.primitive_impl_methods = self.primitive_impl_methods.clone();
+        child.property_access_types = self.property_access_types.clone();
+        child.type_own_members = self.type_own_members.clone();
+        child.types_with_drop = self.types_with_drop.clone();
+        child.namespaces = self.namespaces.clone();
+        child.forward_declared_fns = self.forward_declared_fns.clone();
+        child.current_class_name = self.current_class_name.clone();
+        child.current_fn_name = self.current_fn_name.clone();
+        child.fn_return_types = self.fn_return_types.clone();
+        child
+    }
 
-        fn collect_usings(stmts: &[Stmt], used: &mut HashSet<String>) {
-            for s in stmts {
-                match s {
-                    Stmt::UsingStmt(name) => {
-                        used.insert(name.clone());
-                    }
-                    Stmt::Block(inner) | Stmt::ThisBlock(inner) => {
-                        collect_usings(inner, used);
-                    }
-                    Stmt::Declaration(Decl::FnDecl { body, .. }) => {
-                        collect_usings(body, used);
-                    }
-                    Stmt::IfStmt { then_block, else_block, .. } => {
-                        collect_usings(then_block, used);
-                        if let Some(eb) = else_block {
-                            collect_usings(eb, used);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        collect_usings(&flat_ast, &mut self.used_enums);
-
-        // Pre-pass for Blueprints and Impls
-        let mut blueprints: HashMap<
-            String,
-            (
-                Vec<BaseType>,
-                BlueprintDef,
-                Option<crate::frontend::parser::ast::BlueprintShareDirective>,
-            ),
-        > = HashMap::new();
-        let mut impls: HashMap<String, Vec<Decl>> = HashMap::new();
-        let mut blueprint_handles: HashMap<String, Vec<Decl>> = HashMap::new();
-        let mut primitive_impls: Vec<(String, Vec<BaseType>, Vec<Decl>, Vec<Decl>)> = Vec::new();
-
-        for stmt in &flat_ast {
+    pub fn scan_declarations(&mut self, flat_ast: &[Stmt]) {
+        for stmt in flat_ast {
             if let Stmt::Declaration(Decl::BlueprintDecl {
                 name,
-                generics,
                 definition,
                 share_directive,
                 ..
@@ -308,14 +370,6 @@ impl CodeGenerator {
                 if matches!(name.as_str(), "array" | "type") {
                     continue;
                 }
-                blueprints.insert(
-                    name.clone(),
-                    (
-                        generics.clone(),
-                        definition.clone(),
-                        share_directive.clone(),
-                    ),
-                );
                 let clean_name = name.split('<').next().unwrap_or(name).trim().to_string();
                 if let BlueprintDef::Explicit(fields) = definition {
                     self.struct_field_counts.insert(name.clone(), fields.len());
@@ -330,7 +384,8 @@ impl CodeGenerator {
                             .or_insert_with(HashSet::new)
                             .insert(f.name.clone());
                     }
-                    self.struct_field_types.insert(clean_name.clone(), fields_map.clone());
+                    self.struct_field_types
+                        .insert(clean_name.clone(), fields_map.clone());
                     self.struct_field_types.insert(name.clone(), fields_map);
                 }
                 if let Some(sd) = share_directive {
@@ -376,7 +431,8 @@ impl CodeGenerator {
                 } else {
                     name.clone()
                 };
-                self.struct_field_types.insert(clean_name, fields_map.clone());
+                self.struct_field_types
+                    .insert(clean_name, fields_map.clone());
                 self.struct_field_types.insert(name.clone(), fields_map);
             } else if let Stmt::Declaration(Decl::ClassDecl {
                 name,
@@ -415,7 +471,8 @@ impl CodeGenerator {
                 } else {
                     name.clone()
                 };
-                self.struct_field_types.insert(clean_name, fields_map.clone());
+                self.struct_field_types
+                    .insert(clean_name, fields_map.clone());
                 self.struct_field_types.insert(name.clone(), fields_map);
             } else if let Stmt::Declaration(Decl::EnumDecl {
                 name, handle_block, ..
@@ -433,20 +490,12 @@ impl CodeGenerator {
                     .entry(name.clone())
                     .or_insert_with(Vec::new)
                     .extend(handle_block.clone());
-            } else if let Stmt::Declaration(Decl::FnDecl {
-                name, return_type, ..
-            }) = stmt
-            {
-                if name != "typeof" && name != "sizeof" && !name.starts_with("@compile::") {
-                    self.fn_return_types
-                        .insert(name.clone(), return_type.get_name());
-                }
             } else if let Stmt::Declaration(Decl::ImplDecl {
                 target,
-                target_generics,
                 is_handle_impl,
                 methods,
                 handle_block,
+                ..
             }) = stmt
             {
                 if target == "type" {
@@ -454,17 +503,26 @@ impl CodeGenerator {
                 }
                 let is_primitive = matches!(
                     target.as_str(),
-                    "char" | "bool" | "flag" | "string" | "array" | "byte" | "usize" | "isize"
+                    "char" | "bool" | "flag" | "array" | "byte" | "usize" | "isize"
                 ) || target.starts_with("int")
                     || target.starts_with("uint")
-                    || target.starts_with("float");
+                    || target.starts_with("float")
+                    || target.starts_with("array");
                 if is_primitive {
+                    let prim_target = if target.starts_with("array") {
+                        "array".to_string()
+                    } else {
+                        target.clone()
+                    };
                     for m in methods {
                         if let Decl::FnDecl { name, .. } = m {
                             let list = self
                                 .primitive_impl_methods
                                 .entry(name.clone())
                                 .or_insert_with(Vec::new);
+                            if !list.contains(&prim_target) {
+                                list.push(prim_target.clone());
+                            }
                             if !list.contains(target) {
                                 list.push(target.clone());
                             }
@@ -476,19 +534,21 @@ impl CodeGenerator {
                                 .primitive_impl_methods
                                 .entry(name.clone())
                                 .or_insert_with(Vec::new);
+                            if !list.contains(&prim_target) {
+                                list.push(prim_target.clone());
+                            }
                             if !list.contains(target) {
                                 list.push(target.clone());
                             }
                         }
                     }
-                    primitive_impls.push((
-                        target.clone(),
-                        target_generics.clone(),
-                        methods.clone(),
-                        handle_block.clone(),
-                    ));
                 } else {
-                    let clean_target = target.split('<').next().unwrap_or(target).trim().to_string();
+                    let clean_target = target
+                        .split('<')
+                        .next()
+                        .unwrap_or(target)
+                        .trim()
+                        .to_string();
                     for h in handle_block {
                         if let Decl::FnDecl { name: fn_name, .. } = h {
                             if fn_name == "property_access"
@@ -521,16 +581,154 @@ impl CodeGenerator {
                         .entry(target.clone())
                         .or_insert_with(Vec::new)
                         .extend(handle_block.clone());
+                    if !*is_handle_impl {
+                        self.target_impl_methods
+                            .entry(target.clone())
+                            .or_insert_with(Vec::new)
+                            .extend(methods.clone());
+                    }
+                }
+            } else if let Stmt::Declaration(Decl::NamespaceDecl { name, decls, .. }) = stmt {
+                self.namespaces.insert(name.clone());
+                fn collect_inner_namespaces(
+                    decls: &[Decl],
+                    parent: &str,
+                    namespaces: &mut HashSet<String>,
+                ) {
+                    for d in decls {
+                        if let Decl::NamespaceDecl { name, decls, .. } = d {
+                            let full = format!("{}::{}", parent, name);
+                            namespaces.insert(name.clone());
+                            namespaces.insert(full.clone());
+                            collect_inner_namespaces(decls, &full, namespaces);
+                        }
+                    }
+                }
+                collect_inner_namespaces(decls, name, &mut self.namespaces);
+            } else if let Stmt::Declaration(Decl::BlockDecl {
+                visibility, name, ..
+            }) = stmt
+            {
+                if *visibility == Visibility::Public {
+                    self.namespaces.insert(name.clone());
+                }
+            } else if let Stmt::Declaration(Decl::DefineDecl {
+                name,
+                type_alias: Some(t),
+                ..
+            }) = stmt
+            {
+                let cpp_t = crate::backend::cpp::stmt::type_to_cpp(t);
+                self.type_aliases.insert(name.clone(), cpp_t);
+            } else if let Stmt::Declaration(Decl::FnDecl { name, return_type, .. }) = stmt {
+                let cpp_t = crate::backend::cpp::stmt::type_to_cpp(return_type);
+                self.fn_return_types.insert(name.clone(), cpp_t);
+            }
+        }
+    }
+
+    pub fn generate(&mut self, ast: &Vec<Stmt>, emit_headers: bool, wrap_in_main: bool) -> String {
+        if emit_headers {
+            self.emit_headers();
+        }
+
+        let flat_ast: Vec<Stmt> = ast.to_vec();
+
+        fn collect_usings(stmts: &[Stmt], used: &mut HashSet<String>) {
+            for s in stmts {
+                match s {
+                    Stmt::UsingStmt(name) => {
+                        used.insert(name.clone());
+                    }
+                    Stmt::Block(inner) | Stmt::ThisBlock(inner) => {
+                        collect_usings(inner, used);
+                    }
+                    Stmt::Declaration(Decl::FnDecl { body, .. }) => {
+                        collect_usings(body, used);
+                    }
+                    Stmt::IfStmt {
+                        then_block,
+                        else_block,
+                        ..
+                    } => {
+                        collect_usings(then_block, used);
+                        if let Some(eb) = else_block {
+                            collect_usings(eb, used);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        collect_usings(&flat_ast, &mut self.used_enums);
+
+        self.scan_declarations(&flat_ast);
+
+        // Pre-pass for Blueprints and Impls
+        let mut blueprints: HashMap<
+            String,
+            (
+                Vec<BaseType>,
+                BlueprintDef,
+                Option<crate::frontend::parser::ast::BlueprintShareDirective>,
+            ),
+        > = HashMap::new();
+        let mut impls: HashMap<String, Vec<Decl>> = HashMap::new();
+        let mut blueprint_handles: HashMap<String, Vec<Decl>> = HashMap::new();
+        let mut primitive_impls: Vec<(String, Vec<BaseType>, Vec<Decl>, Vec<Decl>)> = Vec::new();
+
+        for stmt in &flat_ast {
+            if let Stmt::Declaration(Decl::BlueprintDecl {
+                name,
+                generics,
+                definition,
+                share_directive,
+                ..
+            }) = stmt
+            {
+                if matches!(name.as_str(), "array" | "type") {
+                    continue;
+                }
+                blueprints.insert(
+                    name.clone(),
+                    (
+                        generics.clone(),
+                        definition.clone(),
+                        share_directive.clone(),
+                    ),
+                );
+            } else if let Stmt::Declaration(Decl::ImplDecl {
+                target,
+                target_generics,
+                is_handle_impl,
+                methods,
+                handle_block,
+            }) = stmt
+            {
+                if target == "type" {
+                    continue;
+                }
+                let is_primitive = matches!(
+                    target.as_str(),
+                    "char" | "bool" | "flag" | "array" | "byte" | "usize" | "isize"
+                ) || target.starts_with("int")
+                    || target.starts_with("uint")
+                    || target.starts_with("float")
+                    || target.starts_with("array");
+                if is_primitive {
+                    primitive_impls.push((
+                        target.clone(),
+                        target_generics.clone(),
+                        methods.clone(),
+                        handle_block.clone(),
+                    ));
+                } else {
                     if *is_handle_impl {
                         blueprint_handles
                             .entry(target.clone())
                             .or_insert_with(Vec::new)
                             .extend(handle_block.clone());
                     } else {
-                        self.target_impl_methods
-                            .entry(target.clone())
-                            .or_insert_with(Vec::new)
-                            .extend(methods.clone());
                         impls
                             .entry(target.clone())
                             .or_insert_with(Vec::new)
@@ -540,6 +738,14 @@ impl CodeGenerator {
                             .or_insert_with(Vec::new)
                             .extend(handle_block.clone());
                     }
+                }
+            }
+        }
+
+        for stmt in &flat_ast {
+            if let Stmt::UsingStmt(name) = stmt {
+                if self.is_known_namespace(name) {
+                    self.emit(&format!("using namespace {};", name));
                 }
             }
         }
@@ -597,6 +803,20 @@ impl CodeGenerator {
                 ));
             } else {
                 self.emit(&format!("struct {};", name));
+            }
+        }
+
+        // Emit all type aliases (using <name> = <type>;) before struct/blueprint bodies
+        for stmt in &flat_ast {
+            if let Stmt::Declaration(Decl::DefineDecl {
+                name,
+                type_alias: Some(t),
+                ..
+            }) = stmt
+            {
+                let cpp_t = crate::backend::cpp::stmt::type_to_cpp(t);
+                self.type_aliases.insert(name.clone(), cpp_t);
+                self.visit_statement(stmt);
             }
         }
 
@@ -802,10 +1022,24 @@ impl CodeGenerator {
 
                     if let Some(methods) = impls.get(&name) {
                         for m in methods {
-                            if let Decl::FnDecl { name: fn_name, params, .. } = m {
-                                if matches!(fn_name.as_str(), "property_access" | "handle_access" | "namespace_access" | "arrow" | "fat_arrow")
-                                    && params.len() == 1
-                                    && matches!(params[0].type_node.as_str().as_str(), "MemberType" | "blueprint::MemberType" | "unknown")
+                            if let Decl::FnDecl {
+                                name: fn_name,
+                                params,
+                                ..
+                            } = m
+                            {
+                                if matches!(
+                                    fn_name.as_str(),
+                                    "property_access"
+                                        | "handle_access"
+                                        | "namespace_access"
+                                        | "arrow"
+                                        | "fat_arrow"
+                                ) && params.len() == 1
+                                    && matches!(
+                                        params[0].type_node.as_str().as_str(),
+                                        "MemberType" | "blueprint::MemberType" | "unknown"
+                                    )
                                 {
                                     continue;
                                 }
@@ -816,10 +1050,24 @@ impl CodeGenerator {
 
                     if let Some(handles) = blueprint_handles.get(&name) {
                         for h in handles {
-                            if let Decl::FnDecl { name: fn_name, params, .. } = h {
-                                if matches!(fn_name.as_str(), "property_access" | "handle_access" | "namespace_access" | "arrow" | "fat_arrow")
-                                    && params.len() == 1
-                                    && matches!(params[0].type_node.as_str().as_str(), "MemberType" | "blueprint::MemberType" | "unknown")
+                            if let Decl::FnDecl {
+                                name: fn_name,
+                                params,
+                                ..
+                            } = h
+                            {
+                                if matches!(
+                                    fn_name.as_str(),
+                                    "property_access"
+                                        | "handle_access"
+                                        | "namespace_access"
+                                        | "arrow"
+                                        | "fat_arrow"
+                                ) && params.len() == 1
+                                    && matches!(
+                                        params[0].type_node.as_str().as_str(),
+                                        "MemberType" | "blueprint::MemberType" | "unknown"
+                                    )
                                 {
                                     continue;
                                 }
@@ -844,9 +1092,7 @@ impl CodeGenerator {
                                     "greater_than" => Some(">"),
                                     "less_than_equal" => Some("<="),
                                     "greater_than_equal" => Some(">="),
-                                    "equal" | "assign" => {
-                                        Some("=")
-                                    }
+                                    "equal" | "assign" => Some("="),
                                     "add_reassign" => Some("+="),
                                     "sub_reassign" => Some("-="),
                                     "mul_reassign" => Some("*="),
@@ -904,7 +1150,9 @@ impl CodeGenerator {
                                         self.indent_level -= 1;
                                         self.emit("}");
                                     }
-                                } else if fn_name == "call" && !fields.iter().any(|f| f.name == "ptr") {
+                                } else if fn_name == "call"
+                                    && !fields.iter().any(|f| f.name == "ptr")
+                                {
                                     let param_sigs: Vec<String> = params
                                         .iter()
                                         .map(|p| {
@@ -976,22 +1224,105 @@ impl CodeGenerator {
             }
         }
 
-        // Generate top-level non-main functions, classes, structs, globals first
+        // 1. Emit all top-level types (Enums, Structs, Classes, Machines, Arrays) first
         for stmt in ast {
             match &stmt {
-                Stmt::Declaration(Decl::ClassDecl { .. })
+                Stmt::Declaration(Decl::EnumDecl { .. })
+                | Stmt::Declaration(Decl::ClassDecl { .. })
                 | Stmt::Declaration(Decl::StructDecl { .. })
                 | Stmt::Declaration(Decl::ArrayDecl { .. })
-                | Stmt::Declaration(Decl::MachineDecl { .. })
-                | Stmt::Declaration(Decl::EnumDecl { .. })
-                | Stmt::Declaration(Decl::FnDecl { .. })
+                | Stmt::Declaration(Decl::MachineDecl { .. }) => {
+                    self.visit_statement(stmt);
+                }
+                _ => {}
+            }
+        }
+
+        // 2. Emit forward declarations for all top-level functions so forward referencing works seamlessly
+        for stmt in ast {
+            if let Stmt::Declaration(Decl::FnDecl {
+                name,
+                generics,
+                params,
+                return_type,
+                body,
+                is_abstract,
+                ..
+            }) = stmt
+            {
+                if name != "main"
+                    && !name.starts_with("@compile::")
+                    && !*is_abstract
+                    && !body.is_empty()
+                    && crate::middle_end::semantic::analyzer::detect_execution_mode(body)
+                        != crate::frontend::parser::ast::ExecutionMode::FullyCompilable
+                {
+                    let has_variadic_param = params.iter().any(|p| p.is_variadic);
+                    let mut gen_names: Vec<String> = generics
+                        .iter()
+                        .map(|g| {
+                            let s = g.as_str();
+                            if s.starts_with("...") {
+                                format!("typename... {}", s.trim_start_matches('.'))
+                            } else {
+                                format!("typename {}", s)
+                            }
+                        })
+                        .collect();
+                    if gen_names.is_empty() && has_variadic_param {
+                        gen_names.push("typename... __Args".to_string());
+                    }
+                    if !gen_names.is_empty() {
+                        self.emit(&format!("template <{}>", gen_names.join(", ")));
+                    }
+                    let ret_type_str = crate::backend::cpp::stmt::type_to_cpp(return_type);
+                    let mut param_strs = Vec::new();
+                    for p in params {
+                        let cpp_t = crate::backend::cpp::stmt::type_to_cpp(&p.type_node);
+                        if p.is_variadic {
+                            let base_pack = if cpp_t.is_empty() || cpp_t == "any" || cpp_t == "auto"
+                            {
+                                "__Args".to_string()
+                            } else {
+                                cpp_t
+                                    .trim_start_matches('.')
+                                    .trim_end_matches('*')
+                                    .trim()
+                                    .to_string()
+                            };
+                            param_strs.push(format!("{}... {}", base_pack, p.name));
+                        } else if let Some(ref def_val) = p.default_value {
+                            let def_code = self.visit_expression(def_val);
+                            param_strs.push(format!("{} {} = {}", cpp_t, p.name, def_code));
+                        } else {
+                            param_strs.push(format!("{} {}", cpp_t, p.name));
+                        }
+                    }
+                    let safe_name = crate::backend::cpp::stmt::cpp_safe_name(name);
+                    self.emit(&format!(
+                        "inline {} {}({});",
+                        ret_type_str,
+                        safe_name,
+                        param_strs.join(", ")
+                    ));
+                    self.forward_declared_fns.insert(name.clone());
+                }
+            }
+        }
+
+        // 3. Generate functions, namespaces, globals, imports
+        for stmt in ast {
+            match &stmt {
+                Stmt::Declaration(Decl::FnDecl { .. })
                 | Stmt::Declaration(Decl::ExternFnDecl { .. })
                 | Stmt::Declaration(Decl::ExternBlockDecl { .. })
                 | Stmt::Declaration(Decl::MicroDecl { .. })
                 | Stmt::Declaration(Decl::MacroDecl { .. })
                 | Stmt::Declaration(Decl::NamespaceDecl { .. })
                 | Stmt::Declaration(Decl::BlockDecl { .. })
-                | Stmt::Declaration(Decl::DefineDecl { .. })
+                | Stmt::Declaration(Decl::DefineDecl {
+                    type_alias: None, ..
+                })
                 | Stmt::Declaration(Decl::DestructureDecl { .. })
                 | Stmt::Declaration(Decl::VarDecl { .. }) => {
                     self.visit_statement(stmt);
@@ -1033,14 +1364,26 @@ impl CodeGenerator {
         }
 
         for (target, target_generics, methods, handle_block) in primitive_impls {
-            let target_base_type = if target == "array" {
-                BaseType::Array {
-                    base_type: Box::new(if target_generics.is_empty() {
-                        BaseType::Unknown
-                    } else {
-                        target_generics[0].clone()
-                    }),
-                    size: Box::new(None),
+            let clean_target = if target.starts_with("array") {
+                "array".to_string()
+            } else {
+                target.clone()
+            };
+            let target_base_type = if target == "array" || target.starts_with("array<") {
+                if target == "array<char>" {
+                    BaseType::Array {
+                        base_type: Box::new(BaseType::Char),
+                        size: Box::new(None),
+                    }
+                } else {
+                    BaseType::Array {
+                        base_type: Box::new(if target_generics.is_empty() {
+                            BaseType::GenericParam("T".to_string())
+                        } else {
+                            target_generics[0].clone()
+                        }),
+                        size: Box::new(None),
+                    }
                 }
             } else {
                 BaseType::from_str(&target)
@@ -1058,6 +1401,7 @@ impl CodeGenerator {
                     params,
                     return_type,
                     body,
+                    generics,
                     ..
                 } = m
                 {
@@ -1079,14 +1423,23 @@ impl CodeGenerator {
                         }
                     }
 
-                    let mut all_gen_params: Vec<String> = if is_generic {
-                        target_generics
-                            .iter()
-                            .map(|g| format!("typename {}", g.as_str()))
-                            .collect()
-                    } else {
-                        Vec::new()
-                    };
+                    let mut all_gen_params: Vec<String> = Vec::new();
+                    for g in generics {
+                        let clean = g.as_str();
+                        let clean = clean.trim_start_matches('.');
+                        let s = format!("typename {}", clean);
+                        if !all_gen_params.contains(&s) {
+                            all_gen_params.push(s);
+                        }
+                    }
+                    if is_generic {
+                        for g in &target_generics {
+                            let s = format!("typename {}", g.as_str());
+                            if !all_gen_params.contains(&s) {
+                                all_gen_params.push(s);
+                            }
+                        }
+                    }
                     all_gen_params.extend(extra_gen_params);
 
                     if !all_gen_params.is_empty() {
@@ -1095,7 +1448,7 @@ impl CodeGenerator {
                     self.emit(&format!(
                         "inline {} fastlang_{}_{}({}) {{",
                         ret_cpp,
-                        target,
+                        clean_target,
                         name,
                         param_cpps.join(", ")
                     ));
@@ -1103,7 +1456,7 @@ impl CodeGenerator {
                     let prev_prim = self.in_primitive_impl;
                     let prev_target = self.current_primitive_target.clone();
                     self.in_primitive_impl = true;
-                    self.current_primitive_target = Some(target.clone());
+                    self.current_primitive_target = Some(clean_target.clone());
                     for s in body {
                         self.visit_statement(s);
                     }

@@ -1,4 +1,5 @@
 // Comprehensive Suite 07: Enums, Struct Payloads, Pattern Matching, and Using Directive
+import std::fmt;
 
 fn test_number_match() -> void {
     int32 num = 2;

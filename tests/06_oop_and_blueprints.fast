@@ -1,4 +1,5 @@
 // Comprehensive Suite 06: OOP, Blueprints, Defaults, Inheritance, and Operator Overloading
+import std::fmt;
 
 blueprint PointBp = {
     x := 100;

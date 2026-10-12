@@ -1,6 +1,7 @@
 // Comprehensive Suite 14: I/O, Escape Sequences, and Interactive Input
 // INPUT: FastDeveloper
 // INPUT: 42
+import std::fmt;
 
 fn test_escape_sequences() -> void {
     char newline_char = '\n';

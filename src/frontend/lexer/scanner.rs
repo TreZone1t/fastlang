@@ -5,6 +5,11 @@ pub struct Scanner {
     position: usize,
     line: usize,
     column: usize,
+    template_tag_pending: bool,
+    in_template: bool,
+    template_stack: Vec<usize>,
+    code_brace_stack: Vec<usize>,
+    at_f_pending: bool,
 }
 
 impl Scanner {
@@ -15,6 +20,11 @@ impl Scanner {
             position: 0,
             line: 1,
             column: 1,
+            template_tag_pending: false,
+            in_template: false,
+            template_stack: Vec::new(),
+            code_brace_stack: Vec::new(),
+            at_f_pending: false,
         }
     }
 
@@ -184,7 +194,214 @@ impl Scanner {
         }
     }
 
+    fn scan_string_literal(&mut self, start_line: usize, is_unicode: bool) -> TokenKind {
+        let mut s = String::new();
+        let mut terminated = false;
+        let mut non_ascii_ch: Option<char> = None;
+        while let Some(next_c) = self.peek() {
+            if next_c == '"' {
+                self.advance();
+                terminated = true;
+                break;
+            } else if next_c == '\n' {
+                break;
+            } else if next_c == '\\' {
+                self.advance(); // consume '\'
+                if let Some(esc) = self.advance() {
+                    match esc {
+                        'n' => s.push('\n'),
+                        't' => s.push('\t'),
+                        'r' => s.push('\r'),
+                        '\\' => s.push('\\'),
+                        '"' => s.push('"'),
+                        '\'' => s.push('\''),
+                        '0' => s.push('\0'),
+                        'a' => s.push('\x07'),
+                        'b' => s.push('\x08'),
+                        'f' => s.push('\x0C'),
+                        'v' => s.push('\x0B'),
+                        other => {
+                            s.push('\\');
+                            s.push(other);
+                        }
+                    }
+                }
+            } else {
+                let ch = self.advance().unwrap();
+                if !is_unicode && !ch.is_ascii() && non_ascii_ch.is_none() {
+                    non_ascii_ch = Some(ch);
+                }
+                s.push(ch);
+            }
+        }
+        if !is_unicode {
+            if let Some(ch) = non_ascii_ch {
+                return TokenKind::Error(format!(
+                    "String literal at line {} contains non-ASCII character '{}'; prefix with 'u' or 'U' for a uchar string (e.g. u\"...\")",
+                    start_line, ch
+                ));
+            }
+        }
+        if terminated {
+            if is_unicode {
+                TokenKind::UString(s)
+            } else {
+                TokenKind::String(s)
+            }
+        } else {
+            TokenKind::Error(format!(
+                "Unterminated string literal starting at line {}",
+                start_line
+            ))
+        }
+    }
+
+    fn scan_char_literal(&mut self, start_line: usize, is_unicode: bool) -> TokenKind {
+        let inner = match self.advance() {
+            Some('\\') => match self.advance() {
+                Some('n') => '\n',
+                Some('t') => '\t',
+                Some('r') => '\r',
+                Some('\\') => '\\',
+                Some('\'') => '\'',
+                Some('"') => '"',
+                Some('0') => '\0',
+                Some('a') => '\x07',
+                Some('b') => '\x08',
+                Some('f') => '\x0C',
+                Some('v') => '\x0B',
+                Some(c) => c,
+                None => '\0',
+            },
+            Some(c) => c,
+            None => '\0',
+        };
+
+        if self.peek() == Some('\'') {
+            self.advance(); // consume closing quote
+            if is_unicode || !inner.is_ascii() {
+                TokenKind::UChar(inner as u32)
+            } else {
+                TokenKind::Char(inner)
+            }
+        } else {
+            TokenKind::Error(format!(
+                "Invalid char literal starting at line {}: expected closing '\''",
+                start_line
+            ))
+        }
+    }
+
     pub fn next_token(&mut self) -> Token {
+        if self.in_template {
+            let start_line = self.line;
+            let start_column = self.column;
+
+            if self.is_at_end() {
+                self.in_template = false;
+                self.template_stack.clear();
+                return Token::new(TokenKind::EOF, start_line, start_column);
+            }
+
+            // 1. Check if lookahead starts an interpolation hole: '@f{' or '@f {'
+            if self.peek() == Some('@') && self.peek_at(1) == Some('f') {
+                let mut lookahead = 2;
+                while let Some(ch) = self.peek_at(lookahead) {
+                    if ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' {
+                        lookahead += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if self.peek_at(lookahead) == Some('{') {
+                    self.advance(); // consume '@'
+                    self.advance(); // consume 'f'
+                    while let Some(ch) = self.peek() {
+                        if ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' {
+                            if ch == '\n' {
+                                self.line += 1;
+                                self.column = 1;
+                            }
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.at_f_pending = true;
+                    self.in_template = false;
+                    return Token::new(TokenKind::LabelName("@f".to_string()), start_line, start_column);
+                }
+            }
+
+            // 2. Check if we are at closing '}' of this template level
+            if self.peek() == Some('}') {
+                if let Some(&depth) = self.template_stack.last() {
+                    if depth == 1 {
+                        self.advance(); // consume '}'
+                        self.template_stack.pop();
+                        self.in_template = !self.template_stack.is_empty() && self.code_brace_stack.is_empty();
+                        return Token::new(TokenKind::RBrace, start_line, start_column);
+                    }
+                }
+            }
+
+            // 3. Scan template text chunk
+            let mut text = String::new();
+            while !self.is_at_end() {
+                if self.peek() == Some('@') {
+                    if self.peek_at(1) == Some('f') {
+                        let mut lookahead = 2;
+                        while let Some(ch) = self.peek_at(lookahead) {
+                            if ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' {
+                                lookahead += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        if self.peek_at(lookahead) == Some('{') {
+                            break;
+                        }
+                    } else if self.peek_at(1) == Some('@') {
+                        self.advance();
+                        self.advance();
+                        text.push('@');
+                        continue;
+                    }
+                }
+
+                if self.peek() == Some('}') {
+                    if let Some(&depth) = self.template_stack.last() {
+                        if depth == 1 {
+                            break;
+                        } else {
+                            *self.template_stack.last_mut().unwrap() -= 1;
+                            let ch = self.advance().unwrap();
+                            text.push(ch);
+                            continue;
+                        }
+                    }
+                }
+
+                if self.peek() == Some('{') {
+                    if let Some(depth) = self.template_stack.last_mut() {
+                        *depth += 1;
+                    }
+                    let ch = self.advance().unwrap();
+                    text.push(ch);
+                    continue;
+                }
+
+                let ch = self.advance().unwrap();
+                if ch == '\n' {
+                    self.line += 1;
+                    self.column = 1;
+                }
+                text.push(ch);
+            }
+
+            return Token::new(TokenKind::TemplateText(text), start_line, start_column);
+        }
+
         self.skip_whitespace();
 
         // Capture the start position AFTER whitespace/comments are skipped by the
@@ -197,22 +414,33 @@ impl Scanner {
         }
 
         let c = self.advance().unwrap();
+        if c != '{' {
+            self.template_tag_pending = false;
+        }
 
         let kind = match c {
             'a'..='z' | 'A'..='Z' | '_' | '$' => {
-                let mut word = String::new();
-                word.push(c);
-                while let Some(next_c) = self.peek() {
-                    if next_c.is_alphanumeric() || next_c == '_' || next_c == '$' {
-                        word.push(self.advance().unwrap());
-                    } else {
-                        break;
-                    }
-                }
-                if let Some(keyword) = Self::check_keyword(&word) {
-                    keyword
+                if (c == 'u' || c == 'U') && self.peek() == Some('"') {
+                    self.advance(); // consume '"'
+                    self.scan_string_literal(start_line, true)
+                } else if (c == 'u' || c == 'U') && self.peek() == Some('\'') {
+                    self.advance(); // consume '\''
+                    self.scan_char_literal(start_line, true)
                 } else {
-                    TokenKind::Identifier(word.clone())
+                    let mut word = String::new();
+                    word.push(c);
+                    while let Some(next_c) = self.peek() {
+                        if next_c.is_alphanumeric() || next_c == '_' || next_c == '$' {
+                            word.push(self.advance().unwrap());
+                        } else {
+                            break;
+                        }
+                    }
+                    if let Some(keyword) = Self::check_keyword(&word) {
+                        keyword
+                    } else {
+                        TokenKind::Identifier(word.clone())
+                    }
                 }
             }
             '@' => {
@@ -224,6 +452,9 @@ impl Scanner {
                     } else {
                         break;
                     }
+                }
+                if matches!(word.as_str(), "@html" | "@json" | "@safe" | "@raw") {
+                    self.template_tag_pending = true;
                 }
                 TokenKind::LabelName(word.clone())
             }
@@ -383,87 +614,8 @@ impl Scanner {
                 }
             }
 
-            '"' => {
-                let mut s = String::new();
-                let mut terminated = false;
-                while let Some(next_c) = self.peek() {
-                    if next_c == '"' {
-                        self.advance();
-                        terminated = true;
-                        break;
-                    } else if next_c == '\n' {
-                        break;
-                    } else if next_c == '\\' {
-                        self.advance(); // consume '\'
-                        if let Some(esc) = self.advance() {
-                            match esc {
-                                'n' => s.push('\n'),
-                                't' => s.push('\t'),
-                                'r' => s.push('\r'),
-                                '\\' => s.push('\\'),
-                                '"' => s.push('"'),
-                                '\'' => s.push('\''),
-                                '0' => s.push('\0'),
-                                'a' => s.push('\x07'),
-                                'b' => s.push('\x08'),
-                                'f' => s.push('\x0C'),
-                                'v' => s.push('\x0B'),
-                                other => {
-                                    s.push('\\');
-                                    s.push(other);
-                                }
-                            }
-                        }
-                    } else {
-                        s.push(self.advance().unwrap());
-                    }
-                }
-                if terminated {
-                    TokenKind::String(s.clone())
-                } else {
-                    TokenKind::Error(format!(
-                        "Unterminated string literal starting at line {}",
-                        start_line
-                    ))
-                }
-            }
-
-            '\'' => {
-                // Opening quote already consumed (it was `c`).
-                let inner = match self.advance() {
-                    Some('\\') => match self.advance() {
-                        Some('n') => '\n',
-                        Some('t') => '\t',
-                        Some('r') => '\r',
-                        Some('\\') => '\\',
-                        Some('\'') => '\'',
-                        Some('"') => '"',
-                        Some('0') => '\0',
-                        Some('a') => '\x07',
-                        Some('b') => '\x08',
-                        Some('f') => '\x0C',
-                        Some('v') => '\x0B',
-                        Some(c) => c,
-                        None => '\0',
-                    },
-                    Some(c) => c,
-                    None => '\0',
-                };
-
-                if self.peek() == Some('\'') {
-                    self.advance(); // consume closing quote
-                    if inner.is_ascii() {
-                        TokenKind::Char(inner)
-                    } else {
-                        TokenKind::UChar(inner as u32)
-                    }
-                } else {
-                    TokenKind::Error(format!(
-                        "Invalid char literal starting at line {}: expected closing '\''",
-                        start_line
-                    ))
-                }
-            }
+            '"' => self.scan_string_literal(start_line, false),
+            '\'' => self.scan_char_literal(start_line, false),
 
             // comments
             '/' => {
@@ -557,8 +709,31 @@ impl Scanner {
                 }
             }
             '%' => TokenKind::Mod,
-            '{' => TokenKind::LBrace,
-            '}' => TokenKind::RBrace,
+            '{' => {
+                if self.template_tag_pending {
+                    self.template_tag_pending = false;
+                    self.template_stack.push(1);
+                    self.in_template = true;
+                } else if self.at_f_pending {
+                    self.at_f_pending = false;
+                    self.code_brace_stack.push(1);
+                } else if !self.code_brace_stack.is_empty() {
+                    *self.code_brace_stack.last_mut().unwrap() += 1;
+                }
+                TokenKind::LBrace
+            }
+            '}' => {
+                if let Some(top) = self.code_brace_stack.last_mut() {
+                    *top -= 1;
+                    if *top == 0 {
+                        self.code_brace_stack.pop();
+                        if !self.template_stack.is_empty() {
+                            self.in_template = true;
+                        }
+                    }
+                }
+                TokenKind::RBrace
+            }
             '[' => TokenKind::LBracket,
             ']' => TokenKind::RBracket,
             '(' => TokenKind::LParen,

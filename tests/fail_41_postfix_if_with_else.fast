@@ -1,4 +1,5 @@
 // Negative test: Postfix if with else must fail
+import std::fmt;
 
 fn main() -> int32 {
     println("hello") if (true) else println("world");

@@ -374,6 +374,7 @@ impl BaseType {
             "float64" => BaseType::Float(Size::S64),
             "float128" => BaseType::Float(Size::S128),
             "char" => BaseType::Char,
+            "uchar" => BaseType::UChar,
             "bool" => BaseType::Bool,
             "void" => BaseType::Void,
             "type" => BaseType::Type(Box::new(BaseType::Unknown)),
@@ -973,6 +974,7 @@ pub enum HandleMethods {
     Share,
     IsDone,
     Default,
+    Extension,
     NotFound,
 }
 impl HandleMethods {
@@ -1031,6 +1033,7 @@ impl HandleMethods {
             "is_done" => HandleMethods::IsDone,
             // "exit" => HandleMethods::Exit,
             "default" => HandleMethods::Default,
+            "extension" => HandleMethods::Extension,
             _ => HandleMethods::NotFound,
         }
     }
@@ -1091,6 +1094,7 @@ impl HandleMethods {
             HandleMethods::Yield => "yield",
             HandleMethods::Call => "call",
             HandleMethods::Default => "default",
+            HandleMethods::Extension => "extension",
             HandleMethods::NotFound => "not_found",
         }
     }
@@ -1101,6 +1105,7 @@ pub enum Expr {
     LiteralUInt(u128),
     LiteralFloat(f64),
     LiteralString(String),
+    LiteralUString(String),
     LiteralBool(bool),
     LiteralChar(char),
     LiteralUChar(u32),
@@ -1199,7 +1204,27 @@ pub enum Expr {
         statements: Vec<Stmt>,
         final_expr: Option<Box<Expr>>,
     },
+    ForeignBlock {
+        kind: ForeignKind,
+        chunks: Vec<ForeignChunk>,
+    },
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ForeignKind {
+    Html,
+    Json,
+    Safe,
+    Raw,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ForeignChunk {
+    Static(String),
+    Interpolation(Box<Expr>),
+    Statements(Vec<Stmt>),
+}
+
 impl Expr {
     pub fn as_str(&self) -> String {
         match self {
@@ -1207,6 +1232,7 @@ impl Expr {
             Expr::LiteralUInt(u) => u.to_string(),
             Expr::LiteralFloat(f) => f.to_string(),
             Expr::LiteralString(s) => format!("\"{}\"", s),
+            Expr::LiteralUString(s) => format!("u\"{}\"", s),
             Expr::LiteralChar(c) => format!("'{}'", c),
             Expr::LiteralUChar(c) => format!("U'\\U{:08X}'", c),
             Expr::LiteralBool(val) => {
@@ -1301,6 +1327,7 @@ impl Expr {
                 let f = final_expr.as_ref().map(|e| e.as_str()).unwrap_or_default();
                 format!("{{ ...; {} }}", f)
             }
+            Expr::ForeignBlock { kind, .. } => format!("{:?}Block", kind),
             Expr::QuestionMark(inner) => format!("{}?", inner.as_str()),
             _ => unreachable!(),
         }
@@ -1316,6 +1343,10 @@ pub fn type_from_expr(expr: &Expr) -> BaseType {
         Expr::LiteralString(s) => BaseType::Array {
             base_type: Box::new(BaseType::Char),
             size: Box::new(Some(Expr::LiteralInt(s.len() as i128))),
+        },
+        Expr::LiteralUString(s) => BaseType::Array {
+            base_type: Box::new(BaseType::UChar),
+            size: Box::new(Some(Expr::LiteralInt(s.chars().count() as i128))),
         },
         Expr::LiteralChar(_) => BaseType::Char,
         Expr::LiteralUChar(_) => BaseType::UChar,
@@ -1614,6 +1645,7 @@ pub enum Stmt {
         is_array: bool,
     },
     UsingStmt(String),
+    SetNamespace(String),
 }
 
 /// Loop/while body representation:

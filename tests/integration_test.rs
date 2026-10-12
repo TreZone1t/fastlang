@@ -13,9 +13,171 @@ fn run_all_examples() {
     run_directory_tests(Path::new("examples"), "cpp");
 }
 #[test]
-#[ignore] // Run explicitly with: cargo test run_cranelift_aot_tests -- --ignored
 fn run_cranelift_aot_tests() {
     run_directory_tests(Path::new("tests"), "cranelift");
+}
+
+#[test]
+fn test_project_system_cli() {
+    let fast_bin = env!("CARGO_BIN_EXE_fast_lang");
+    let test_dir = std::path::PathBuf::from("target/test_projects");
+    let _ = fs::remove_dir_all(&test_dir);
+    fs::create_dir_all(&test_dir).unwrap();
+
+    let app_name = "sample_app";
+    let app_dir = test_dir.join(app_name);
+
+    // 1. Test 'fast new'
+    let status_new = Command::new(fast_bin)
+        .current_dir(&test_dir)
+        .arg("new")
+        .arg(app_name)
+        .arg("-y")
+        .status()
+        .expect("failed to run fast new");
+    assert!(status_new.success(), "fast new failed");
+    assert!(app_dir.join("Fast.toml").exists(), "Fast.toml should exist");
+    assert!(
+        app_dir.join("src/main.fast").exists(),
+        "src/main.fast should exist"
+    );
+
+    assert!(
+        !app_dir.join("tests").exists(),
+        "bin project should not have tests/ folder"
+    );
+
+    // 2. Test 'fast run'
+    let output_run = Command::new(fast_bin)
+        .current_dir(&app_dir)
+        .arg("run")
+        .output()
+        .expect("failed to run fast run");
+    assert!(
+        output_run.status.success(),
+        "fast run failed: {}",
+        String::from_utf8_lossy(&output_run.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output_run.stdout);
+    assert!(
+        stdout.contains("Hello from sample_app!"),
+        "Unexpected output: {}",
+        stdout
+    );
+
+    // Verify on-demand std: only types, error, and imported fmt are generated
+    assert!(app_dir.join("build/lib/std_types.hpp").exists(), "std_types.hpp should exist");
+    assert!(app_dir.join("build/lib/std_error.hpp").exists(), "std_error.hpp should exist");
+    assert!(app_dir.join("build/lib/std_fmt.hpp").exists(), "std_fmt.hpp should exist");
+    assert!(!app_dir.join("build/lib/std_io.hpp").exists(), "std_io.hpp must NOT be generated if unimported");
+    assert!(!app_dir.join("build/lib/std_mem.hpp").exists(), "std_mem.hpp must NOT be generated if unimported");
+    assert!(!app_dir.join("build/lib/std_string.hpp").exists(), "std_string.hpp must NOT be generated if unimported");
+    assert!(!app_dir.join("build/lib/std_range.hpp").exists(), "std_range.hpp must NOT be generated if unimported");
+
+    // 3. Test 'fast run <script>'
+    let toml_path = app_dir.join("Fast.toml");
+    let toml_content = fs::read_to_string(&toml_path).unwrap();
+    let updated_toml = toml_content.replace("[scripts]", "[scripts]\ncheck_version = \"echo FAST_SCRIPT_WORKS\"");
+    fs::write(&toml_path, updated_toml).unwrap();
+
+    let output_script = Command::new(fast_bin)
+        .current_dir(&app_dir)
+        .arg("run")
+        .arg("check_version")
+        .output()
+        .expect("failed to run script");
+    assert!(output_script.status.success(), "custom script failed");
+    let script_out = String::from_utf8_lossy(&output_script.stdout);
+    assert!(
+        script_out.contains("FAST_SCRIPT_WORKS"),
+        "Script output should contain FAST_SCRIPT_WORKS: {}",
+        script_out
+    );
+
+    // 4. Test 'fast test' on bin project (should gracefully report no tests directory)
+    let output_test = Command::new(fast_bin)
+        .current_dir(&app_dir)
+        .arg("test")
+        .output()
+        .expect("failed to run fast test");
+    assert!(output_test.status.success(), "fast test failed");
+    let test_out = String::from_utf8_lossy(&output_test.stdout);
+    assert!(
+        test_out.contains("No tests directory found"),
+        "Expected no tests notice: {}",
+        test_out
+    );
+
+    // 5. Test 'fast clean'
+    let status_clean = Command::new(fast_bin)
+        .current_dir(&app_dir)
+        .arg("clean")
+        .status()
+        .expect("failed to run fast clean");
+    assert!(status_clean.success(), "fast clean failed");
+    assert!(
+        !app_dir.join("build").exists(),
+        "build/ should be removed after clean"
+    );
+
+    // 5. Test 'fast new' library/module
+    let lib_name = "sample_lib";
+    let lib_dir = test_dir.join(lib_name);
+    let status_lib_new = Command::new(fast_bin)
+        .current_dir(&test_dir)
+        .arg("new")
+        .arg(lib_name)
+        .arg("--type")
+        .arg("lib")
+        .arg("-y")
+        .status()
+        .expect("failed to run fast new lib");
+    assert!(status_lib_new.success(), "fast new lib failed");
+    assert!(
+        lib_dir.join("src/lib.fast").exists(),
+        "src/lib.fast should exist"
+    );
+    assert!(
+        lib_dir.join("tests/test_basic.fast").exists(),
+        "library should scaffold test harness"
+    );
+
+    // 6. Test 'fast build' on library
+    let status_lib_build = Command::new(fast_bin)
+        .current_dir(&lib_dir)
+        .arg("build")
+        .status()
+        .expect("failed to run fast build on lib");
+    assert!(status_lib_build.success(), "fast build on lib failed");
+    assert!(
+        lib_dir.join("build/sample_lib.hpp").exists(),
+        "sample_lib.hpp should exist"
+    );
+    assert!(
+        lib_dir.join("build/sample_lib.o").exists(),
+        "sample_lib.o should exist"
+    );
+
+    // 7. Test 'fast test' on library
+    let output_lib_test = Command::new(fast_bin)
+        .current_dir(&lib_dir)
+        .arg("test")
+        .output()
+        .expect("failed to run fast test on lib");
+    assert!(output_lib_test.status.success(), "fast test on lib failed");
+    let lib_test_out = String::from_utf8_lossy(&output_lib_test.stdout);
+    assert!(
+        lib_test_out.contains("PASSED"),
+        "Tests did not pass: {}",
+        lib_test_out
+    );
+    assert!(
+        !lib_dir.join("build/test_bin").exists(),
+        "test_bin directory should NOT exist"
+    );
+
+    // Cleanup
+    let _ = fs::remove_dir_all(&test_dir);
 }
 
 fn run_directory_tests(test_dir: &Path, backend: &str) {
@@ -56,6 +218,12 @@ fn run_directory_tests(test_dir: &Path, backend: &str) {
 
             chunk_handles.push(thread::spawn(move || {
                 let filename = path.file_name().unwrap().to_str().unwrap().to_string();
+                if let Ok(filter) = std::env::var("FASTLANG_FILTER") {
+                    if !filter.is_empty() && !filename.contains(&filter) {
+                        return;
+                    }
+                }
+                println!("--> Starting test: {}", filename);
                 let should_fail = filename.starts_with("fail_")
                     || filename.contains("_fail_")
                     || filename.contains("fail");
@@ -72,8 +240,12 @@ fn run_directory_tests(test_dir: &Path, backend: &str) {
                     format!("{}", base_name)
                 });
                 let build_cpp = build_dir.join(format!("{}.cpp", base_name));
+                let build_o = build_dir.join(format!("{}.o", base_name));
+                let build_ir = build_dir.join(format!("{}.ir", base_name));
                 let _ = fs::remove_file(&build_exe);
                 let _ = fs::remove_file(&build_cpp);
+                let _ = fs::remove_file(&build_o);
+                let _ = fs::remove_file(&build_ir);
 
                 let mut cmd = Command::new(env!("CARGO_BIN_EXE_fast_lang"));
                 cmd.arg(path.to_str().unwrap());
@@ -91,7 +263,7 @@ fn run_directory_tests(test_dir: &Path, backend: &str) {
                     if output.status.success() {
                         local_log.push_str(&format!(
                             "
-❌ FAILED: Test {} was expected to fail but succeeded!
+ FAILED: Test {} was expected to fail but succeeded!
 Stdout: {}
 ",
                             filename,
@@ -100,7 +272,7 @@ Stdout: {}
                         is_success = false;
                     } else {
                         local_log.push_str(&format!(
-                            "✅ PASSED (Expected Failure): {}
+                            " PASSED (Expected Failure): {}
 ",
                             filename
                         ));
@@ -111,7 +283,7 @@ Stdout: {}
                         let stdout = String::from_utf8_lossy(&output.stdout);
                         local_log.push_str(&format!(
                             "
-❌ FAILED (Unexpected Failure): {}
+ FAILED (Unexpected Failure): {}
 Stdout:
 {}
 Stderr:
@@ -126,6 +298,7 @@ Stderr:
                         let content = fs::read_to_string(&path).unwrap();
                         let mut expected_lines = Vec::new();
                         let mut input_lines = Vec::new();
+                        let mut manual_run = false;
                         let mut in_block_comment = false;
                         for line in content.lines() {
                             let trimmed = line.trim();
@@ -139,6 +312,9 @@ Stderr:
                             if in_block_comment {
                                 continue;
                             }
+                            if line.contains("// MANUAL_RUN") {
+                                manual_run = true;
+                            }
                             if let Some(idx) = line.find("// EXPECT:") {
                                 expected_lines.push(line[idx + 10..].trim().to_string());
                             }
@@ -149,12 +325,16 @@ Stderr:
 
                         if !build_exe.exists() {
                             local_log.push_str(&format!(
-                                "
-❌ FAILED (Executable Not Found): {} (expected {:?})
-",
+                                "\n FAILED (Executable Not Found): {} (expected {:?})\n",
                                 filename, build_exe
                             ));
                             is_success = false;
+                        } else if manual_run {
+                            local_log.push_str(&format!(
+                                " PASSED (Compilation Verified / Manual Run Server): {}\n",
+                                filename
+                            ));
+                            is_success = true;
                         } else {
                             let app_output = if !input_lines.is_empty() {
                                 use std::io::Write;
@@ -183,7 +363,7 @@ Stderr:
                                 let app_stdout = String::from_utf8_lossy(&app_output.stdout);
                                 local_log.push_str(&format!(
                                     "
-❌ FAILED (Execution Error): {} exited with code {:?}
+ FAILED (Execution Error): {} exited with code {:?}
 Stdout:
 {}
 Stderr:
@@ -213,7 +393,7 @@ Stderr:
                                 if expected_idx < expected_lines.len() {
                                     local_log.push_str(&format!(
                                         "
-❌ FAILED (Output Mismatch): {}
+ FAILED (Output Mismatch): {}
 Expected to find: '{}'
 Actual Output:
 {}
@@ -223,14 +403,14 @@ Actual Output:
                                     is_success = false;
                                 } else {
                                     local_log.push_str(&format!(
-                                        "✅ PASSED: {}
+                                        " PASSED: {}
 ",
                                         filename
                                     ));
                                 }
                             } else {
                                 local_log.push_str(&format!(
-                                    "✅ PASSED: {}
+                                    " PASSED: {}
 ",
                                     filename
                                 ));
@@ -241,6 +421,8 @@ Actual Output:
 
                 let _ = fs::remove_file(&build_exe); // Cleanup
                 let _ = fs::remove_file(&build_cpp); // Cleanup
+                let _ = fs::remove_file(&build_o); // Cleanup
+                let _ = fs::remove_file(&build_ir); // Cleanup
 
                 let mut logs_lock = logs_arc.lock().unwrap();
                 logs_lock.push_str(&local_log);

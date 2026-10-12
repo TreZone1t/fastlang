@@ -577,7 +577,9 @@ impl SemanticAnalyzer {
                         for s in stmts {
                             self.visit_statement(s)?;
                         }
-                        self.active_flags.retain(|f| f != "+has_break");
+                        if let Some(pos) = self.active_flags.iter().rposition(|f| f == "+has_break") {
+                            self.active_flags.remove(pos);
+                        }
                     }
                     EitherBlock::External(expr) => {
                         self.visit_expression(expr)?;
@@ -598,7 +600,9 @@ impl SemanticAnalyzer {
                         for s in stmts {
                             self.visit_statement(s)?;
                         }
-                        self.active_flags.retain(|f| f != "+has_break");
+                        if let Some(pos) = self.active_flags.iter().rposition(|f| f == "+has_break") {
+                            self.active_flags.remove(pos);
+                        }
                         self.leave_scope();
                     }
                     EitherBlock::External(expr) => {
@@ -619,7 +623,9 @@ impl SemanticAnalyzer {
                         for s in stmts {
                             self.visit_statement(s)?;
                         }
-                        self.active_flags.retain(|f| f != "+has_break");
+                        if let Some(pos) = self.active_flags.iter().rposition(|f| f == "+has_break") {
+                            self.active_flags.remove(pos);
+                        }
                         self.leave_scope();
                     }
                     EitherBlock::External(expr) => {
@@ -645,7 +651,9 @@ impl SemanticAnalyzer {
                         for s in stmts {
                             self.visit_statement(s)?;
                         }
-                        self.active_flags.retain(|f| f != "+has_break");
+                        if let Some(pos) = self.active_flags.iter().rposition(|f| f == "+has_break") {
+                            self.active_flags.remove(pos);
+                        }
                         self.leave_scope();
                     }
                     EitherBlock::External(expr) => {
@@ -666,7 +674,9 @@ impl SemanticAnalyzer {
                     }
                     self.visit_statement(s)?;
                 }
-                self.active_flags.retain(|f| f != "+has_break");
+                if let Some(pos) = self.active_flags.iter().rposition(|f| f == "+has_break") {
+                    self.active_flags.remove(pos);
+                }
                 self.leave_scope();
             }
 
@@ -758,7 +768,9 @@ impl SemanticAnalyzer {
                         for s in stmts {
                             self.visit_statement(s)?;
                         }
-                        self.active_flags.retain(|f| f != "+has_break");
+                        if let Some(pos) = self.active_flags.iter().rposition(|f| f == "+has_break") {
+                            self.active_flags.remove(pos);
+                        }
                         self.leave_scope();
                     }
                     EitherBlock::External(expr) => {
@@ -782,7 +794,13 @@ impl SemanticAnalyzer {
                 }
                 if let Some(expected_type) = &self.active_return_type.clone() {
                     let expected_str = expected_type.as_str();
-                    if actual_type != "unknown"
+                    let is_main = self.current_context.as_deref() == Some("main");
+                    let main_allow = is_main
+                        && (actual_type == "void"
+                            || ((expected_str == "void" || expected_str == "int" || expected_str == "int32")
+                                && (actual_type == "int" || actual_type == "int32" || actual_type == "void")));
+                    if !main_allow
+                        && actual_type != "unknown"
                         && expected_str != "unknown"
                         && !self.types_are_compatible(&expected_str, &actual_type)
                     {
@@ -920,7 +938,8 @@ impl SemanticAnalyzer {
                         }
                     }
                 }
-                if let Some(bp) = self.current_env.borrow().lookup_blueprint(name) {
+                let bp_opt = self.current_env.borrow().lookup_blueprint(name);
+                if let Some(bp) = bp_opt {
                     if !bp.variants.is_empty() {
                         for v in &bp.variants {
                             let var_symbol = SymbolInfo {
@@ -929,7 +948,7 @@ impl SemanticAnalyzer {
                                     type_node: BaseType::from_str(name),
                                     editability: Editability::NotEditable,
                                     is_array: false,
-                                },
+                                    },
                                 visibility: Visibility::Public,
                                 dependencies: vec![],
                                 is_used: false,
@@ -944,8 +963,25 @@ impl SemanticAnalyzer {
                         }
                     }
                 }
+                let ns_env_opt = self.current_env.borrow().lookup_namespace(name);
+                if let Some(ns_env) = ns_env_opt {
+                    let (symbols, blueprints) = {
+                        let borrowed = ns_env.borrow();
+                        (borrowed.symbols.clone(), borrowed.blueprints.clone())
+                    };
+                    for (sym_name, sym_info) in symbols {
+                        self.current_env
+                            .borrow_mut()
+                            .define_or_update(sym_name, sym_info);
+                    }
+                    for (bp_name, bp_data) in blueprints {
+                        self.current_env
+                            .borrow_mut()
+                            .define_blueprint(bp_name, bp_data);
+                    }
+                }
             }
-
+            Stmt::SetNamespace(_) => {}
             _ => {}
         }
         Ok(())

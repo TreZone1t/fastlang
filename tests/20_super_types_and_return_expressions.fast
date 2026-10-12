@@ -1,4 +1,5 @@
 // Test 20: Super-types (number, function, object) and return type expressions
+import std::fmt;
 
 number::int32 a = 10;
 number::float64 b = 20.5;

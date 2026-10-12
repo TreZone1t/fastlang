@@ -1,0 +1,501 @@
+// FastLang Standard Library: HTTP Server and Response Engine
+import std::net;
+import std::thread;
+import std::types;
+import std::error;
+import std::fmt;
+
+import std::io;
+
+set http;
+
+public class HttpRequest -> {
+    public -> {
+        str http_method = "GET";
+        str path = "/";
+        str body = "";
+
+        fn form(key: str) -> str {
+            str target = key + "=";
+            int32 idx = -1;
+            if (this.body.len >= target.len) {
+                for (int32 i = 0; i <= this.body.len - target.len; i = i + 1) {
+                    bool matched = true;
+                    for (int32 j = 0; j < target.len; j = j + 1) {
+                        if (this.body[i + j] != target[j]) {
+                            matched = false;
+                            break;
+                        }
+                    }
+                    if (matched && (i == 0 || this.body[i - 1] == '&')) {
+                        idx = i + target.len;
+                        break;
+                    }
+                }
+            }
+            if (idx == -1) {
+                return "";
+            }
+            int32 end_idx = this.body.len;
+            for (int32 i = idx; i < this.body.len; i = i + 1) {
+                if (this.body[i] == '&' || this.body[i] == '\r' || this.body[i] == '\n') {
+                    end_idx = i;
+                    break;
+                }
+            }
+            int32 val_len = end_idx - idx;
+            char val[] = new char[](val_len);
+            for (int32 i = 0; i < val_len; i = i + 1) {
+                char c = this.body[idx + i];
+                if (c == '+') {
+                    val[i] = ' ';
+                } else {
+                    val[i] = c;
+                }
+            }
+            return val;
+        }
+
+        fn query(key: str) -> str {
+            int32 q_pos = -1;
+            for (int32 i = 0; i < this.path.len; i = i + 1) {
+                if (this.path[i] == '?') {
+                    q_pos = i;
+                    break;
+                }
+            }
+            if (q_pos == -1) {
+                return "";
+            }
+            str target = key + "=";
+            int32 start_pos = q_pos + 1;
+            int32 idx = -1;
+            if (this.path.len - start_pos >= target.len) {
+                for (int32 i = start_pos; i <= this.path.len - target.len; i = i + 1) {
+                    bool matched = true;
+                    for (int32 j = 0; j < target.len; j = j + 1) {
+                        if (this.path[i + j] != target[j]) {
+                            matched = false;
+                            break;
+                        }
+                    }
+                    if (matched && (i == start_pos || this.path[i - 1] == '&')) {
+                        idx = i + target.len;
+                        break;
+                    }
+                }
+            }
+            if (idx == -1) {
+                return "";
+            }
+            int32 end_idx = this.path.len;
+            for (int32 i = idx; i < this.path.len; i = i + 1) {
+                if (this.path[i] == '&' || this.path[i] == ' ' || this.path[i] == '\r' || this.path[i] == '\n') {
+                    end_idx = i;
+                    break;
+                }
+            }
+            int32 val_len = end_idx - idx;
+            char val[] = new char[](val_len);
+            for (int32 i = 0; i < val_len; i = i + 1) {
+                char c = this.path[idx + i];
+                if (c == '+') {
+                    val[i] = ' ';
+                } else {
+                    val[i] = c;
+                }
+            }
+            return val;
+        }
+
+        fn route_path() -> str {
+            int32 q_pos = -1;
+            for (int32 i = 0; i < this.path.len; i = i + 1) {
+                if (this.path[i] == '?') {
+                    q_pos = i;
+                    break;
+                }
+            }
+            if (q_pos == -1) {
+                return this.path;
+            }
+            char clean[] = new char[](q_pos);
+            for (int32 i = 0; i < q_pos; i = i + 1) {
+                clean[i] = this.path[i];
+            }
+            return clean;
+        }
+    }
+}
+
+fn _inject_fastreact_script(html: str) -> str {
+    str tag = "</head>";
+    int32 pos = -1;
+    if (html.len >= tag.len) {
+        for (int32 i = 0; i <= html.len - tag.len; i = i + 1) {
+            bool matched = true;
+            for (int32 j = 0; j < tag.len; j = j + 1) {
+                if (html[i + j] != tag[j]) {
+                    matched = false;
+                    break;
+                }
+            }
+            if (matched) {
+                pos = i;
+                break;
+            }
+        }
+    }
+    if (pos == -1) {
+        return html;
+    }
+    str needle = "htmx";
+    bool has_htmx = false;
+    if (html.len >= needle.len) {
+        for (int32 i = 0; i <= html.len - needle.len; i = i + 1) {
+            bool m = true;
+            for (int32 j = 0; j < needle.len; j = j + 1) {
+                if (html[i + j] != needle[j]) {
+                    m = false;
+                    break;
+                }
+            }
+            if (m) {
+                has_htmx = true;
+                break;
+            }
+        }
+    }
+    if (has_htmx) {
+        return html;
+    }
+    str script = "<script src=\"https://unpkg.com/htmx.org@1.9.10\"></script>\n";
+    char pre[] = new char[](pos);
+    for (int32 i = 0; i < pos; i = i + 1) {
+        pre[i] = html[i];
+    }
+    int32 post_len = html.len - pos;
+    char post[] = new char[](post_len);
+    for (int32 i = 0; i < post_len; i = i + 1) {
+        post[i] = html[pos + i];
+    }
+    return pre + script + post;
+}
+
+public class WebAction -> {
+    public -> {
+        str target = "";
+        str swap = "outerHTML";
+        HtmlDocument content = @html {};
+
+        fn render() -> str {
+            return this.content.render();
+        }
+    }
+}
+
+public fn action(target: str, swap: str, content: HtmlDocument) -> WebAction {
+    WebAction act = new WebAction();
+    act.target = target;
+    act.swap = swap;
+    act.content = content;
+    return act;
+}
+
+public fn action(target: str, content: HtmlDocument) -> WebAction {
+    WebAction act = new WebAction();
+    act.target = target;
+    act.swap = "outerHTML";
+    act.content = content;
+    return act;
+}
+
+public class HttpResponse -> {
+    public -> {
+        int32 client_fd = -1;
+
+        fn send(content: str, content_type: str := "text/plain") -> void {
+            if (this.client_fd != -1) {
+                str header = "HTTP/1.1 200 OK\r\nContent-Type: " + content_type + "\r\nContent-Length: " + content.len + "\r\nConnection: close\r\n\r\n";
+                str full_response = header + content;
+                net::write(this.client_fd, full_response, full_response.len);
+                net::close(this.client_fd);
+                this.client_fd = -1;
+            }
+        }
+
+        fn redirect(location: str) -> void {
+            if (this.client_fd != -1) {
+                str full_response = "HTTP/1.1 302 Found\r\nLocation: " + location + "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                net::write(this.client_fd, full_response, full_response.len);
+                net::close(this.client_fd);
+                this.client_fd = -1;
+            }
+        }
+
+        fn send_u(content: uchar[], content_type: str := "text/html; charset=utf-8") -> void {
+            str utf8_content = io::to_utf8(content);
+            this.send(utf8_content, content_type);
+        }
+
+        fn send_html(doc: HtmlDocument) -> void {
+            this.send(_inject_fastreact_script(doc.render()), "text/html; charset=utf-8");
+        }
+
+        fn send_page(doc: HtmlDocument) -> void {
+            this.send(_inject_fastreact_script(doc.render()), "text/html; charset=utf-8");
+        }
+
+        fn send_component(comp: HtmlDocument) -> void {
+            this.send(comp.render(), "text/html; charset=utf-8");
+        }
+
+        fn send_action(act: WebAction) -> void {
+            if (this.client_fd != -1) {
+                str body = act.render();
+                str headers = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n";
+                if (act.target.len > 0) {
+                    headers = headers + "HX-Retarget: " + act.target + "\r\n";
+                }
+                if (act.swap.len > 0) {
+                    headers = headers + "HX-Reswap: " + act.swap + "\r\n";
+                }
+                headers = headers + "Content-Length: " + body.len + "\r\nConnection: close\r\n\r\n";
+                str full_response = headers + body;
+                net::write(this.client_fd, full_response, full_response.len);
+                net::close(this.client_fd);
+                this.client_fd = -1;
+            }
+        }
+
+        fn send_json(doc: JsonDocument) -> void {
+            this.send(doc.as_str(), "application/json");
+        }
+
+        fn send_doc(doc: DocumentType) -> void {
+            str ct = "text/plain";
+            str ext = doc.extension();
+            if (ext == "html") {
+                ct = "text/html; charset=utf-8";
+            } else if (ext == "json") {
+                ct = "application/json";
+            }
+            this.send(doc.as_str(), ct);
+        }
+    }
+}
+
+
+fn _internal_parse_request(raw: str) -> HttpRequest {
+    HttpRequest req = new HttpRequest();
+    if (raw.len == 0) {
+        return req;
+    }
+    int32 space1 = -1;
+    for (int32 i = 0; i < raw.len; i = i + 1) {
+        if (raw[i] == ' ') {
+            space1 = i;
+            break;
+        }
+    }
+    if (space1 != -1) {
+        char m[] = new char[](space1);
+        for (int32 i = 0; i < space1; i = i + 1) {
+            m[i] = raw[i];
+        }
+        req.http_method = m;
+        int32 space2 = -1;
+        for (int32 i = space1 + 1; i < raw.len; i = i + 1) {
+            if (raw[i] == ' ' || raw[i] == '\r' || raw[i] == '\n') {
+                space2 = i;
+                break;
+            }
+        }
+        if (space2 != -1) {
+            int32 p_len = space2 - (space1 + 1);
+            char p[] = new char[](p_len);
+            for (int32 i = 0; i < p_len; i = i + 1) {
+                p[i] = raw[space1 + 1 + i];
+            }
+            req.path = p;
+        }
+    }
+
+    int32 body_start = -1;
+    if (raw.len >= 4) {
+        for (int32 i = 0; i <= raw.len - 4; i = i + 1) {
+            if (raw[i] == '\r' && raw[i + 1] == '\n' && raw[i + 2] == '\r' && raw[i + 3] == '\n') {
+                body_start = i + 4;
+                break;
+            }
+        }
+    }
+    if (body_start == -1 && raw.len >= 2) {
+        for (int32 i = 0; i <= raw.len - 2; i = i + 1) {
+            if (raw[i] == '\n' && raw[i + 1] == '\n') {
+                body_start = i + 2;
+                break;
+            }
+        }
+    }
+    if (body_start != -1 && body_start < raw.len) {
+        int32 b_len = raw.len - body_start;
+        char b[] = new char[](b_len);
+        for (int32 i = 0; i < b_len; i = i + 1) {
+            b[i] = raw[body_start + i];
+        }
+        req.body = b;
+    }
+
+    return req;
+}
+
+
+public class HttpServer -> {
+    public -> {
+        int32 port = 8080;
+        int32 server_fd = -1;
+
+        fn bind(p: int32) -> void {
+            this.port = p;
+            this.server_fd = net::listen(p);
+        }
+
+        fn accept_request() -> HttpResponse {
+            int32 client = net::accept(this.server_fd);
+            HttpResponse res = new HttpResponse();
+            res.client_fd = client;
+            return res;
+        }
+
+        fn read_request(res: HttpResponse) -> HttpRequest {
+            char buf[] = new char[](4096);
+            int32 n = net::read(res.client_fd, buf, 4096);
+            if (n <= 0) {
+                HttpRequest empty_req = new HttpRequest();
+                return empty_req;
+            }
+            char raw[] = new char[](n);
+            for (int32 i = 0; i < n; i = i + 1) {
+                raw[i] = buf[i];
+            }
+            return _internal_parse_request(raw);
+        }
+
+        fn close() -> void {
+            if (this.server_fd != -1) {
+                net::close(this.server_fd);
+                this.server_fd = -1;
+            }
+        }
+    }
+    constructor -> {
+        init() -> {
+            this.port = 8080;
+            this.server_fd = -1;
+        }
+        init(p: int32) -> {
+            this.port = p;
+            this.server_fd = net::listen(p);
+        }
+    }
+    handle -> {
+        fn drop() -> void {
+            this.close();
+        }
+    }
+}
+
+public fn parse_request(raw: str) -> HttpRequest {
+    return _internal_parse_request(raw);
+}
+
+public fn serve_once(server: HttpServer, handler: auto) -> void {
+    HttpResponse res = server.accept_request();
+    if (res.client_fd != -1) {
+        HttpRequest req = server.read_request(res);
+        handler(req, res);
+    }
+}
+
+public fn serve_threaded(server: HttpServer, handler: auto) -> void {
+    HttpResponse res = server.accept_request();
+    if (res.client_fd != -1) {
+        thread::spawn(fn _() -> void {
+            HttpRequest req = server.read_request(res);
+            handler(req, res);
+        });
+    }
+}
+
+public class Server -> {
+    public -> {
+        int32 port = 8080;
+        int32 max_routes = 64;
+        int32 route_count = 0;
+        str route_methods[64];
+        str route_paths[64];
+        Fn<(HttpRequest, HttpResponse), void> route_handlers[64];
+
+        fn get(path: str, h: Fn<(HttpRequest, HttpResponse), void>) -> void {
+            if (this.route_count < this.max_routes) {
+                this.route_methods[this.route_count] = "GET";
+                this.route_paths[this.route_count] = path;
+                this.route_handlers[this.route_count] = h;
+                this.route_count = this.route_count + 1;
+            }
+        }
+
+        fn post(path: str, h: Fn<(HttpRequest, HttpResponse), void>) -> void {
+            if (this.route_count < this.max_routes) {
+                this.route_methods[this.route_count] = "POST";
+                this.route_paths[this.route_count] = path;
+                this.route_handlers[this.route_count] = h;
+                this.route_count = this.route_count + 1;
+            }
+        }
+
+        fn dispatch(req: HttpRequest, res: HttpResponse) -> bool {
+            str clean_path = req.route_path();
+            for (int32 i = 0; i < this.route_count; i = i + 1) {
+                if (this.route_methods[i] == req.http_method && (this.route_paths[i] == req.path || this.route_paths[i] == clean_path)) {
+                    auto h = this.route_handlers[i];
+                    h(req, res);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        fn listen(lmd :fn<() -> void> ,p:= 8080) -> void {
+            this.port = p;
+            HttpServer http_server = new HttpServer(p);
+            lmd();
+            while (true) {
+                HttpResponse res = http_server.accept_request();
+                if (res.client_fd != -1) {
+                    HttpRequest req = http_server.read_request(res);
+                    bool matched = this.dispatch(req, res);
+                    if (!matched) {
+                        res.send("404 Not Found", "text/plain");
+                    }
+                }
+            }
+        }
+
+        fn step(http_server: HttpServer) -> bool {
+            HttpResponse res = http_server.accept_request();
+            if (res.client_fd != -1) {
+                HttpRequest req = http_server.read_request(res);
+                bool matched = this.dispatch(req, res);
+                if (!matched) {
+                    res.send("404 Not Found", "text/plain");
+                }
+                return true;
+            }
+            return false;
+        }
+    }
+}
+
+

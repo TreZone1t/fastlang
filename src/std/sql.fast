@@ -1,0 +1,193 @@
+// FastLang Standard Library: Embedded SQLite Database Engine
+import std::error;
+import @c "clib/sql.h";
+@dependency {
+[dependency]
+sqlite3 = "3.36.0"
+}
+extern @c :: {
+    fn fast_sql_open(path: str) -> auto;
+    fn fast_sql_close(db: auto) -> void;
+    fn fast_sql_exec(db: auto, sql: str) -> int32;
+    fn fast_sql_errmsg(db: auto) -> str;
+    fn fast_sql_prepare(db: auto, sql: str) -> auto;
+    fn fast_sql_step(stmt: auto) -> int32;
+    fn fast_sql_reset(stmt: auto) -> int32;
+    fn fast_sql_finalize(stmt: auto) -> void;
+    fn fast_sql_bind_int(stmt: auto, index: int32, value: int32) -> int32;
+    fn fast_sql_bind_int64(stmt: auto, index: int32, value: int64) -> int32;
+    fn fast_sql_bind_double(stmt: auto, index: int32, value: float64) -> int32;
+    fn fast_sql_bind_text(stmt: auto, index: int32, text: str) -> int32;
+    fn fast_sql_bind_null(stmt: auto, index: int32) -> int32;
+    fn fast_sql_column_count(stmt: auto) -> int32;
+    fn fast_sql_column_name(stmt: auto, col: int32) -> str;
+    fn fast_sql_column_type(stmt: auto, col: int32) -> int32;
+    fn fast_sql_column_int(stmt: auto, col: int32) -> int32;
+    fn fast_sql_column_int64(stmt: auto, col: int32) -> int64;
+    fn fast_sql_column_double(stmt: auto, col: int32) -> float64;
+    fn fast_sql_column_text(stmt: auto, col: int32) -> str;
+    fn fast_sql_last_insert_rowid(db: auto) -> int64;
+    fn fast_sql_changes(db: auto) -> int32;
+}
+
+set sql;
+
+public class Statement -> {
+    public -> {
+        raw_ptr<void> stmt_handle = undefined;
+        bool is_valid = false;
+
+        fn step() -> bool {
+            if (!this.is_valid) {
+                return false;
+            }
+            int32 rc = @c::fast_sql_step(this.stmt_handle);
+            return rc == 100;
+        }
+
+        fn get_int(col: int32) -> int32 {
+            return @c::fast_sql_column_int(this.stmt_handle, col);
+        }
+
+        fn get_int64(col: int32) -> int64 {
+            return @c::fast_sql_column_int64(this.stmt_handle, col);
+        }
+
+        fn get_float(col: int32) -> float64 {
+            return @c::fast_sql_column_double(this.stmt_handle, col);
+        }
+
+        fn get_str(col: int32) -> str {
+            return @c::fast_sql_column_text(this.stmt_handle, col);
+        }
+
+        fn column_name(col: int32) -> str {
+            return @c::fast_sql_column_name(this.stmt_handle, col);
+        }
+
+        fn column_count() -> int32 {
+            return @c::fast_sql_column_count(this.stmt_handle);
+        }
+
+        fn column_type(col: int32) -> int32 {
+            return @c::fast_sql_column_type(this.stmt_handle, col);
+        }
+
+        fn bind_int(index: int32, value: int32) -> int32 {
+            return @c::fast_sql_bind_int(this.stmt_handle, index, value);
+        }
+
+        fn bind_int64(index: int32, value: int64) -> int32 {
+            return @c::fast_sql_bind_int64(this.stmt_handle, index, value);
+        }
+
+        fn bind_float(index: int32, value: float64) -> int32 {
+            return @c::fast_sql_bind_double(this.stmt_handle, index, value);
+        }
+
+        fn bind_str(index: int32, value: str) -> int32 {
+            return @c::fast_sql_bind_text(this.stmt_handle, index, value);
+        }
+
+        fn bind_null(index: int32) -> int32 {
+            return @c::fast_sql_bind_null(this.stmt_handle, index);
+        }
+
+        fn reset() -> int32 {
+            return @c::fast_sql_reset(this.stmt_handle);
+        }
+
+        fn finalize() -> void {
+            if (this.is_valid) {
+                @c::fast_sql_finalize(this.stmt_handle);
+                this.is_valid = false;
+            }
+        }
+    }
+
+    constructor -> {
+        init() -> {}
+        init(h: raw_ptr<void>) -> {
+            this.stmt_handle = h;
+            this.is_valid = true;
+        }
+    }
+
+    handle -> {
+        fn drop() -> void {
+            this.finalize();
+        }
+    }
+}
+
+public class Database -> {
+    public -> {
+        raw_ptr<void> db_handle = undefined;
+        bool is_open = false;
+
+        fn exec(sql_str: str) -> int32 {
+            if (!this.is_open) {
+                return -1;
+            }
+            return @c::fast_sql_exec(this.db_handle, sql_str);
+        }
+
+        fn prepare(sql_str: str) -> Statement {
+            if (!this.is_open) {
+                Statement invalid_stmt = new Statement();
+                return invalid_stmt;
+            }
+            raw_ptr<void> stmt_ptr = @c::fast_sql_prepare(this.db_handle, sql_str);
+            Statement stmt = new Statement(stmt_ptr);
+            return stmt;
+        }
+
+        fn errmsg() -> str {
+            if (!this.is_open) {
+                return "Database is not open";
+            }
+            return @c::fast_sql_errmsg(this.db_handle);
+        }
+
+        fn last_insert_rowid() -> int64 {
+            if (!this.is_open) {
+                return 0;
+            }
+            return @c::fast_sql_last_insert_rowid(this.db_handle);
+        }
+
+        fn changes() -> int32 {
+            if (!this.is_open) {
+                return 0;
+            }
+            return @c::fast_sql_changes(this.db_handle);
+        }
+
+        fn close() -> void {
+            if (this.is_open) {
+                @c::fast_sql_close(this.db_handle);
+                this.is_open = false;
+            }
+        }
+    }
+
+    constructor -> {
+        init() -> {}
+        init(path: str) -> {
+            raw_ptr<void> db_ptr = @c::fast_sql_open(path);
+            this.db_handle = db_ptr;
+            this.is_open = true;
+        }
+    }
+
+    handle -> {
+        fn drop() -> void {
+            this.close();
+        }
+    }
+}
+
+public fn open(path: str) -> Database {
+    Database db = new Database(path);
+    return db;
+}

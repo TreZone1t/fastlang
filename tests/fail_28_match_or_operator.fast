@@ -1,4 +1,5 @@
 // Negative Test: Pattern alternation in match only supports single pipe '|', '||' and 'or' are rejected.
+import std::fmt;
 fn main() -> int32 {
     int32 x = 5;
     match (x) -> {

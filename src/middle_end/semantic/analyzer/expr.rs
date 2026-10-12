@@ -974,6 +974,19 @@ impl SemanticAnalyzer {
                             }
                         }
                     }
+                    if name.starts_with("@sys::") {
+                        let member = name.strip_prefix("@sys::").unwrap();
+                        match member {
+                            "alloc" => return Ok("auto".to_string()),
+                            "free" | "exit" => return Ok("void".to_string()),
+                            "open" | "close" => return Ok("int32".to_string()),
+                            "read" | "write" => return Ok("usize".to_string()),
+                            _ => return Ok("auto".to_string()),
+                        }
+                    }
+                    if name.starts_with("@c::") || name.starts_with("@cpp::") {
+                        return Ok("auto".to_string());
+                    }
                     if name.starts_with("@compile::") {
                         let member = name
                             .strip_prefix("@compile::")
@@ -1940,6 +1953,27 @@ impl SemanticAnalyzer {
                 };
                 self.leave_scope();
                 res
+            }
+            Expr::LiteralUString(_) => Ok("array<uchar>".to_string()),
+            Expr::ForeignBlock { kind, chunks } => {
+                for chunk in chunks {
+                    match chunk {
+                        ForeignChunk::Static(_) => {}
+                        ForeignChunk::Interpolation(e) => {
+                            self.visit_expression(e)?;
+                        }
+                        ForeignChunk::Statements(stmts) => {
+                            for s in stmts {
+                                self.visit_statement(s)?;
+                            }
+                        }
+                    }
+                }
+                match kind {
+                    ForeignKind::Html => Ok("HtmlDocument".to_string()),
+                    ForeignKind::Json => Ok("JsonDocument".to_string()),
+                    ForeignKind::Safe | ForeignKind::Raw => Ok("array<char>".to_string()),
+                }
             }
         }
     }

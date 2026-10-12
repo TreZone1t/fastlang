@@ -17,6 +17,16 @@ impl Parser {
         }
         Ok(())
     }
+    pub(crate) fn parse_return_type(&mut self) -> Result<BaseType, String> {
+        if matches!(self.peek().kind, TokenKind::Identifier(_))
+            && self.peek_ahead(1).map(|t| &t.kind) == Some(&TokenKind::LParen)
+        {
+            let expr = self.parse_expression()?;
+            Ok(BaseType::TypeExpr(Box::new(expr)))
+        } else {
+            self.parse_type()
+        }
+    }
 
     pub(crate) fn parse_type(&mut self) -> Result<BaseType, String> {
         let mut base_type = self.parse_base_type()?;
@@ -334,7 +344,13 @@ impl Parser {
                     if let TokenKind::Identifier(id) = &self.peek().kind {
                         name = Some(id.clone());
                         self.advance();
-                    } else if matches!(self.peek().kind, TokenKind::Fn | TokenKind::TypeFn | TokenKind::TypeMethod | TokenKind::TypeLambda) {
+                    } else if matches!(
+                        self.peek().kind,
+                        TokenKind::Fn
+                            | TokenKind::TypeFn
+                            | TokenKind::TypeMethod
+                            | TokenKind::TypeLambda
+                    ) {
                         let sub_kind = match self.peek().kind {
                             TokenKind::TypeMethod => "method",
                             TokenKind::TypeLambda => "lambda",
@@ -501,10 +517,6 @@ impl Parser {
                 }
             }
             TokenKind::Identifier(n) => {
-                if n == "typeof" && self.peek_ahead(1).map(|t| &t.kind) == Some(&TokenKind::LParen) {
-                    let expr = self.parse_expression()?;
-                    return Ok(BaseType::TypeExpr(Box::new(expr)));
-                }
                 self.advance();
                 if self.current_generics.contains(&n) {
                     return Ok(BaseType::GenericParam(n));
@@ -707,6 +719,14 @@ impl Parser {
                 }
             }
 
+            if let Expr::LiteralUString(ref mut s1) = lhs {
+                if let TokenKind::UString(ref s2) = self.peek().kind {
+                    s1.push_str(s2);
+                    self.advance();
+                    continue;
+                }
+            }
+
             break;
         }
 
@@ -751,6 +771,12 @@ impl Parser {
                 self.advance();
 
                 Ok(Expr::LiteralString(val.to_string()))
+            }
+            TokenKind::UString(s) => {
+                let val = s.clone();
+                self.advance();
+
+                Ok(Expr::LiteralUString(val.to_string()))
             }
             TokenKind::Char(c) => {
                 let val = *c;
@@ -811,8 +837,8 @@ impl Parser {
                 let mut params = Vec::new();
                 if self.peek().kind != TokenKind::RParen {
                     loop {
-                        let p = self.parse_single_param()?;
-                        params.push(p);
+                        let p_list = self.parse_params_entry()?;
+                        params.extend(p_list);
                         if self.peek().kind == TokenKind::Comma {
                             self.advance();
                         } else {
@@ -852,7 +878,10 @@ impl Parser {
                 let condition = if self.peek().kind == TokenKind::LParen {
                     self.advance();
                     let c = self.parse_expression()?;
-                    self.consume(TokenKind::RParen, "Expected ')' after condition in if expression")?;
+                    self.consume(
+                        TokenKind::RParen,
+                        "Expected ')' after condition in if expression",
+                    )?;
                     c
                 } else {
                     self.parse_expression()?
@@ -864,7 +893,10 @@ impl Parser {
                     self.parse_expression()?
                 };
 
-                self.consume(TokenKind::Else, "Syntax Error: 'else' is mandatory in if expression")?;
+                self.consume(
+                    TokenKind::Else,
+                    "Syntax Error: 'else' is mandatory in if expression",
+                )?;
 
                 let else_branch = if self.peek().kind == TokenKind::LBrace {
                     self.parse_expression_block()?
@@ -894,6 +926,20 @@ impl Parser {
                 }
             }
             TokenKind::LabelName(name) => {
+                if matches!(name.as_str(), "@html" | "@json" | "@safe" | "@raw")
+                    && self.peek_ahead(1).map(|t| &t.kind) == Some(&TokenKind::LBrace)
+                {
+                    let kind = match name.as_str() {
+                        "@html" => ForeignKind::Html,
+                        "@json" => ForeignKind::Json,
+                        "@safe" => ForeignKind::Safe,
+                        "@raw" => ForeignKind::Raw,
+                        _ => unreachable!(),
+                    };
+                    self.advance(); // consume label
+                    self.consume(TokenKind::LBrace, "Expected '{' to start foreign block")?;
+                    return self.parse_foreign_block(kind);
+                }
                 let val: String = name.clone();
                 self.advance();
                 Ok(Expr::Identifier(val))
@@ -1181,6 +1227,18 @@ impl Parser {
         if self.peek().kind != TokenKind::LBrace {
             return false;
         }
+        if self.current > 0 {
+            let prev = &self.tokens[self.current - 1].kind;
+            match prev {
+                TokenKind::Identifier(name) => {
+                    if self.var_metadata.contains_key(name) {
+                        return false;
+                    }
+                }
+                TokenKind::Greater => {}
+                _ => return false,
+            }
+        }
         let idx = self.current + 1;
         if idx < self.tokens.len() {
             if self.tokens[idx].kind == TokenKind::RBrace
@@ -1458,7 +1516,11 @@ impl Parser {
 
                 let namespace = if let Expr::Identifier(n) = lhs {
                     n
-                } else if let Expr::NamespaceAccess { namespace: prev_ns, property: prev_prop } = lhs {
+                } else if let Expr::NamespaceAccess {
+                    namespace: prev_ns,
+                    property: prev_prop,
+                } = lhs
+                {
                     format!("{}::{}", prev_ns, prev_prop.as_str())
                 } else {
                     return Err(
@@ -1666,8 +1728,8 @@ impl Parser {
         self.consume(TokenKind::LParen, "Expected '(' at start of lambda")?;
         let mut params = Vec::new();
         while !self.is_at_end() && self.peek().kind != TokenKind::RParen {
-            let p = self.parse_single_param()?;
-            params.push(p);
+            let p_list = self.parse_params_entry()?;
+            params.extend(p_list);
             if self.peek().kind == TokenKind::Comma {
                 self.advance();
             } else if self.peek().kind != TokenKind::RParen {
@@ -1730,5 +1792,63 @@ impl Parser {
             statements: stmts,
             final_expr,
         })
+    }
+
+    pub(crate) fn parse_foreign_block(&mut self, kind: ForeignKind) -> Result<Expr, String> {
+        let mut chunks = Vec::new();
+
+        while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+            match self.peek().kind.clone() {
+                TokenKind::TemplateText(text) => {
+                    self.advance();
+                    chunks.push(ForeignChunk::Static(text));
+                }
+                TokenKind::LabelName(lbl) if lbl == "@f" => {
+                    self.advance(); // consume '@f'
+                    self.consume(TokenKind::LBrace, "Expected '{' after '@f'")?;
+
+                    let is_stmt = matches!(
+                        self.peek().kind,
+                        TokenKind::For
+                            | TokenKind::While
+                            | TokenKind::Do
+                            | TokenKind::Loop
+                            | TokenKind::Set
+                            | TokenKind::Del
+                    ) || self.is_var_decl_start();
+
+                    if is_stmt {
+                        let mut stmts = Vec::new();
+                        while !self.is_at_end() && self.peek().kind != TokenKind::RBrace {
+                            if let Some(s) = self.parse_statement(ScopeType::Block)? {
+                                stmts.push(s);
+                            }
+                        }
+                        self.consume(
+                            TokenKind::RBrace,
+                            "Expected '}' to close '@f' interpolation block",
+                        )?;
+                        chunks.push(ForeignChunk::Statements(stmts));
+                    } else {
+                        let expr = self.parse_expression()?;
+                        if self.peek().kind == TokenKind::SemiColon {
+                            self.advance();
+                        }
+                        self.consume(
+                            TokenKind::RBrace,
+                            "Expected '}' to close '@f' interpolation block",
+                        )?;
+                        chunks.push(ForeignChunk::Interpolation(Box::new(expr)));
+                    }
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+
+        self.consume(TokenKind::RBrace, "Expected '}' to close foreign block")?;
+
+        Ok(Expr::ForeignBlock { kind, chunks })
     }
 }

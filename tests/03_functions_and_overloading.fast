@@ -1,5 +1,6 @@
 // Comprehensive Suite 03: Functions, Overloading, Recursion, Default Parameters, and IIFE
 import std;
+import std::fmt;
 
 fn add_vals(a: int32, b: int32) -> int32 {
     return a + b;
@@ -12,7 +13,6 @@ fn add_vals(a: float64, b: float64) -> float64 {
 fn compute(val: int32, factor := 2) -> int32 {
     return val * factor;
 }
-
 fn factorial(n: int32) -> int32 {
     if (n <= 1) {
         return 1;
@@ -210,7 +210,15 @@ fn test_implicit_returns() -> void {
     Result<int32> err_res = choose_implicit(false);
     println("implicit err: ", err_res.is_Err()); // EXPECT: implicit err: true
 }
-
+fn test_isolated_blocks() -> void {
+    int32 x = 10;
+    {
+        int32 y = 20;
+        println("inner block y: ", y);
+    }
+    // println("outer block y: ", y); // This line would cause an error since y is out of scope
+    println("outer block x: ", x); // EXPECT: outer block x: 10
+}
 fn main() -> int32 {
     test_overloading_and_defaults();
     test_recursion();
@@ -220,6 +228,7 @@ fn main() -> int32 {
     test_namespaces();
     test_result();
     test_implicit_returns();
+    test_isolated_blocks();
     println("ALL 03_FUNCTIONS TESTS PASSED"); // EXPECT: ALL 03_FUNCTIONS TESTS PASSED
     return 0;
 }

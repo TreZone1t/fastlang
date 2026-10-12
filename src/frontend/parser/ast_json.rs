@@ -287,6 +287,7 @@ pub fn expr_to_json(expr: &Expr) -> Value {
         Expr::LiteralUInt(v) => json!({ "type": "LiteralUInt", "value": v.to_string() }),
         Expr::LiteralFloat(v) => json!({ "type": "LiteralFloat", "value": v }),
         Expr::LiteralString(v) => json!({ "type": "LiteralString", "value": v }),
+        Expr::LiteralUString(v) => json!({ "type": "LiteralUString", "value": v }),
         Expr::LiteralChar(v) => json!({ "type": "LiteralChar", "value": v }),
         Expr::LiteralUChar(v) => json!({ "type": "LiteralUChar", "value": v }),
         Expr::LiteralBool(v) => json!({ "type": "LiteralBool", "value": v }),
@@ -350,6 +351,10 @@ pub fn expr_to_json(expr: &Expr) -> Value {
         Expr::QuestionMark(inner) => json!({
             "type": "QuestionMark",
             "operand": expr_to_json(inner)
+        }),
+        Expr::ForeignBlock { kind, .. } => json!({
+            "type": "ForeignBlock",
+            "kind": format!("{:?}", kind)
         }),
         _ => json!({ "type": "OtherExpr" }),
     }

@@ -55,6 +55,20 @@ impl CompilerIntrinsics {
             return_type: "T",
             description: "Compile-time random numeric constant generator",
         },
+        IntrinsicSignature {
+            name: "backend",
+            min_args: 0,
+            max_args: 0,
+            return_type: "Backend",
+            description: "Compile-time backend detection",
+        },
+        IntrinsicSignature {
+            name: "system",
+            min_args: 0,
+            max_args: 0,
+            return_type: "System",
+            description: "Compile-time host system detection",
+        },
     ];
 
     pub const TYPE_PROPERTIES: &'static [&'static str] = &[

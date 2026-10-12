@@ -29,6 +29,8 @@ pub struct BlueprintData {
     pub params: Vec<Param>,
     pub variants: Vec<EnumVariant>,
     pub is_class: bool,
+    pub private_fields: HashSet<String>,
+    pub private_methods: HashSet<String>,
 }
 
 impl BlueprintData {
@@ -44,6 +46,8 @@ impl BlueprintData {
             params: Vec::new(),
             variants: Vec::new(),
             is_class: false,
+            private_fields: HashSet::new(),
+            private_methods: HashSet::new(),
         }
     }
 
@@ -200,6 +204,8 @@ impl BlueprintData {
             params: self.params.clone(),
             variants: self.variants.clone(),
             is_class: self.is_class,
+            private_fields: self.private_fields.clone(),
+            private_methods: self.private_methods.clone(),
         }
     }
 }
@@ -448,6 +454,8 @@ impl Environment {
                 && matches!(info.kind, SymbolKind::Function { .. }))
                 || (matches!(existing.kind, SymbolKind::Micro { .. })
                 && matches!(info.kind, SymbolKind::Micro { .. }))
+                || (matches!(existing.kind, SymbolKind::Blueprint)
+                && matches!(info.kind, SymbolKind::Blueprint))
             {
                 self.symbols.insert(name, info);
                 return Ok(());
@@ -515,6 +523,24 @@ impl Environment {
         self.blueprints.insert(name, data);
     }
 
+    pub fn mutate_blueprint<F, R>(&mut self, name: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut BlueprintData) -> R,
+    {
+        let clean = Self::extract_blueprint_name(name).unwrap_or(name);
+        let base = clean.split('<').next().unwrap_or(clean).trim();
+        if let Some(bp) = self.blueprints.get_mut(base) {
+            return Some(f(bp));
+        }
+        if let Some(bp) = self.blueprints.get_mut(name) {
+            return Some(f(bp));
+        }
+        if let Some(ref parent) = self.parent {
+            return parent.borrow_mut().mutate_blueprint(name, f);
+        }
+        None
+    }
+
     pub fn resolve_type_alias(&self, name: &str) -> Option<BaseType> {
         if let Some(info) = self.symbols.get(name) {
             if let SymbolKind::Variable { type_node, .. } = &info.kind {
@@ -558,6 +584,17 @@ impl Environment {
         }
         if let Some(bp) = self.blueprints.get(name) {
             return Some(bp.clone());
+        }
+        if base.contains("::") {
+            let parts: Vec<&str> = base.split("::").collect();
+            if parts.len() >= 2 {
+                if let Some(ns_env) = self.lookup_namespace(parts[0]) {
+                    let sub_name = parts[1..].join("::");
+                    if let Some(bp) = ns_env.borrow().lookup_blueprint(&sub_name) {
+                        return Some(bp);
+                    }
+                }
+            }
         }
         if let Some(aliased) = self.resolve_type_alias(base).or_else(|| self.resolve_type_alias(name)) {
             let target_name = match &aliased {

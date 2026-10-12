@@ -1,4 +1,5 @@
 // Test 93: Mixed branch calling compile-time throw branch
+import std::fmt;
 
 blueprint NonPrintable = {
     int32 x;

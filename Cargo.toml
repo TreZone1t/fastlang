@@ -1,6 +1,6 @@
 [package]
 name = "fast_lang"
-version = "0.1.5-stable"
+version = "0.1.6-gamma"
 edition = "2021"
 
 [dependencies]
@@ -15,3 +15,4 @@ cranelift-object = "0.134.3"
 cranelift-frontend = "0.134.3"
 cranelift-codegen = "0.134.3"
 cranelift-native = "0.134.3"
+toml = "1.1.7"

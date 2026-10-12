@@ -1,4 +1,5 @@
 // Test 87: Nested labels should be rejected with Syntax Error
+import std::fmt;
 
 machine BadMachine -> {
     @outer -> {

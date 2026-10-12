@@ -1,4 +1,5 @@
 // Comprehensive Suite 08: Memory Management, Smart Pointers, Del, and Drop Handles
+import std::fmt;
 
 class Resource -> {
     public -> {

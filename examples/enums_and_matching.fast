@@ -1,5 +1,6 @@
 // FastLang Example: Enums, Using, and Pattern Matching (.fast)
 import std;
+import std::fmt;
 
 enum Status {
     Idle,

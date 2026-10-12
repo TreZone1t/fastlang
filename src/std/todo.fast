@@ -1631,3 +1631,281 @@ fn i_do_something(state : int32) -> Result<int32> {
      }
  }
 }
+
+// @compile inline if
+int x = if @compile (true) 100 else 200 ; 
+// @sys
+@sys :: {
+    set alloc(usize) -> auto;
+    set free(auto) -> void;
+    set write(auto, usize) -> void;
+    set read(auto, usize) -> void;
+    set print(auto) -> void;
+    set println(auto) -> void;
+}
+// new @compile method to now the backend
+enum Backend {
+    Cpp,
+    Cranelift,
+}
+enum System {
+    Linux,
+    Windows,
+    MacOS,
+}
+@compile :: {
+    set backend() -> Backend;
+    // we may add a way to new the system
+    set system() -> System;
+}
+// remove old syntax @compile -> {}
+extern @c :: {
+    fn fast_alloc(usize) -> auto;
+    fn fast_free(auto) -> void;
+    fn fast_write(auto, usize) -> void;
+    fn fast_read(auto, usize) -> void;
+    fn fast_print(auto) -> void;
+    fn fast_println(auto) -> void;
+}
+method alloc(s : usize) -> auto {
+    if(@compile::backend() == Backend::Cpp) {
+        return @c::fast_alloc(s);
+    }else if(@compile::backend() == Backend::Cranelift) {
+        return @sys::alloc(s);
+    }
+}
+
+// we will make a new sys for web
+// we
+fn i_make_html() -> {
+    return @html {
+        <html>
+            <head>
+                <title>Hello, world!</title>
+            </head>
+            <body>
+                <h1>Hello, world!</h1>
+            </body>
+        </html>
+    };
+}
+// we also can do json
+fn i_make_json() -> {
+    return @json {
+        {
+            "name": "John",
+            "age": 30,
+            "city": "New York"
+        }
+    };
+}
+// we will add way to pass a data to the @html and @json blocks
+// we will pass the data in the () at the end of the block like the compile validation block
+fn i_make_html(msg := "hello") -> {
+    return @html {
+        <html>
+            <head>
+                <title>@f{msg}</title>
+            </head>
+            <body>
+                <h1>@f{msg}</h1>
+            </body>
+        </html>
+    }(msg);
+}
+// we need to have our file system using (.yaml , .json or .toml) we will choose one of them 
+// we will use .toml it will be the only one we will support for now at least
+@toml {
+    [package]
+    name = "fast_lang"
+    version = "0.1.5"
+    description = "FastLang is a programming language that compiles to C++ and WebAssembly."
+    authors = ["Trezone"]
+    license = "MIT"
+    repository = "https://github.com/Dell-Tech-Solutions/fast_lang"
+    ...
+    main = "src/main.fast"
+    ...
+ [scripts]
+   build = "fastlang src/main.fast"
+ [dependencies]
+    fast_lang = "0.1.5"
+   colored = "2.0.0"
+}
+
+
+// default params need to change
+// we set a default regard the size so we need to allow as (casting)
+// ex :
+fn add_with_d(a : int64 , b := 10 as int64)
+// that also will allow that 
+fn char_int(a:char , b := 0x65 as char)
+// we will also add a way to cast char[] into int32 and int64
+int x = "1234" as int32; // or
+int y = input("input a number") as int32;
+
+
+
+
+
+//numberfy
+method numberfy(s : char[]) -> num {
+    int32 result = 0;
+    for (int32 i = 0; i < s.len; i = i + 1) {
+        result = result * 10 + (s[i] - '0');
+    }
+    return result;
+}
+// !!!!!
+// a bug
+// the compile block (@compile validation block) work three times (the cause is we call it in the analyzer also not only in the interpreter) so we need to fix that
+// !!!!!
+// we need to support or and in if condition //!!!!!
+// we need to support fmt:: 
+
+
+//TODO:
+// the file 
+//  first we need to allow this 
+HtmlDocument page = @html {
+    <div class="container">
+        <h1>Hello, @f{name}!</h1>
+        <p>Count is @f{count}</p>
+    </div>
+};
+// or 
+page := @html {
+    <div class="container">
+        <h1>Hello, @f{name}!</h1>
+        <p>Count is @f{count}</p>
+    </div>
+};
+// with i mean we added a new handle called extinction and the object will used allowed to use the selected language foreign scope
+// 2 :
+// the fn that will open a file will return a document object with the right version or the right extension
+// so we can do this
+doc := io::open("tests/test_json_doc.json"); // doc type is a JsonDocument
+unsupported := io::open("tests/test_json_doc.yaml"); // unsupported type is a Document and we will rewrite the extension to .yaml
+// we can do this by having a hashmap for the supported extensions and a fn to extract the extension we 
+set .::{};
+set io::{};
+
+
+blueprint document {
+    char content[];
+    char ext[] = "txt";
+}
+impl document {
+    fn as_str() -> str {
+        return this.content;
+    }
+    fn set_content(c: str) -> void {
+        this.content = c;
+    }
+}
+enum DocumentType -> {
+    Html(document),
+    Json(document),
+    Raw(document),
+}
+
+Document x = Document::Html({
+    content = "<> Hello, world! </>";
+    ext = "html";
+});
+x.as_str();
+impl Document {};
+impl Document::Html {};
+
+
+// the way we a new way to set the type of the params
+// in this ex :
+fn i_hard_coded(a : int32 , b : int32 , c : float64) -> void {
+    println(a); // the type of a is int32
+    println(b); // the type of b is int32
+    println(c); // the type of c is float64
+}
+// why we cannot do that ? (like what we did in the var destructuring)
+fn i_easy_coded((a, b): int32 , c : float64) -> void {
+    println(a); // the type of a is int32
+    println(b); // the type of b is int32
+    println(c); // the type of c is float64
+}
+fn i_easy_default_coded((a, b) := 0 as int8 , c : float64) -> void {
+    println(a); // the type of a is int8
+    println(b); // the type of b is int8
+    println(c); // the type of c is float64
+}
+
+// we need to fix that 
+// so when you passing a fn you need to set the type of the params but why we cannot skip the unused params
+app.get("/" , fn(_, res: HttpResponse) -> void {
+    res.send_html(@html {
+        <html>
+            <head>
+                <title>Hello, world!</title>
+            </head>
+            <body>
+                <h1>Hello, world!</h1>
+            </body>
+        </html>
+    });
+});
+// also we need to use function in the params to also accept methods and lambdas
+app.get("/",(_,res:HttpResponse) -> void { //method
+    res.send_html(@html {
+        <html>
+            <head>
+                <title>Hello, world!</title>
+            </head>
+            <body>
+                <h1>Hello, world!</h1>
+            </body>
+        </html>
+    });
+});
+app.get("/",|_,res:HttpResponse|res.send_html(@html { //lambda
+    <html>
+        <head>
+            <title>Hello, world!</title>
+        </head>
+        <body>
+            <h1>Hello, world!</h1>
+        </body>
+    </html>
+}));
+set fast = @toml{
+    [dependencies]
+    sqlite3 = "3.36.0"
+}
+set deps = @toml{
+    [dependencies]
+    sqlite3 = "3.36.0"
+}
+@include {
+    [dependency]
+    sqlite3 = "3.36.0"
+}
+@add fast || deps {
+    [dependency]
+    sqlite3 = "3.36.0"
+}
+
+// i think we can make unique type by the share feature
+blueprint Id {
+    int32 counter = 0;
+} 
+impl handle for id {
+    fn share() -> void {
+        this.counter = this.counter + 1;
+    }
+}
+blueprint unique<T> -> {
+    raw_ptr<T> ptr = undefined;
+    raw_ptr<Id> id_counter = undefined;
+    int32 id = 0;
+    type inner = T;
+    share id_counter if (this.ptr != other.ptr && this.inner == other.inner) then {
+        this.id = id_counter.counter;
+    };
+}

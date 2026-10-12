@@ -45,6 +45,7 @@ pub struct SemanticAnalyzer {
     pub class_hierarchy: HashMap<String, String>,
     pub debug_errors: bool,
     pub accumulated_errors: Vec<String>,
+    pub target_backend: String,
 }
 
 
@@ -63,6 +64,7 @@ impl SemanticAnalyzer {
             dependency_graph: HashMap::new(),
             current_context: None,
             current_file: String::new(),
+            target_backend: "cpp".to_string(),
             source_code: None,
             fn_overloads: HashMap::new(),
             heap_allocated_vars: HashSet::new(),
@@ -245,6 +247,11 @@ impl SemanticAnalyzer {
                             queue.push(derived_method);
                         }
                     }
+                }
+                // Also reach bare symbol if qualified (e.g. fmt::println -> println)
+                let bare_sym = method_name;
+                if reachable.insert(bare_sym.to_string()) {
+                    queue.push(bare_sym.to_string());
                 }
             } else {
                 // curr is a top-level symbol or type name

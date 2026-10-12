@@ -1,4 +1,5 @@
 // Test 17: Legal Handle Access Operator (-.) and Iteration Handles
+import std::fmt;
 class CustomPrinter -> {
     public -> {
         str name = "FastPrinter";

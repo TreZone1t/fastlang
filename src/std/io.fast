@@ -1,35 +1,147 @@
-// FastLang Standard Library: I/O (print, println, input)
+// FastLang Standard Library: Layered File System I/O
+import std::types;
 import std::error;
 import @c "clib/io.h";
 
-extern @c {
-    fn fast_print<...T>(...args: ...T) -> void;
-    fn fast_println<...T>(...args: ...T) -> void;
-    fn fast_input(prompt: str) -> str;
+extern @c :: {
+    fn fast_open(path: str, flags: int32, mode: int32) -> int32;
+    fn fast_close(fd: int32) -> int32;
+    fn fast_read(fd: int32, buf: auto, count: usize) -> usize;
+    fn fast_write(fd: int32, buf: auto, count: usize) -> usize;
+    fn fast_read_all(path: str) -> str;
+    fn fast_read_all_u(path: str) -> uchar[];
+    fn fast_uchar_to_utf8(u: auto) -> str;
 }
 
-public fn input(prompt := "") -> str {
-    return fast_input(prompt);
+public @sys :: {
+    set open(str, int32, int32) -> int32;
+    set close(int32) -> int32;
+    set read(int32, auto, usize) -> usize;
+    set write(int32, auto, usize) -> usize;
+    set read_all(str) -> str;
 }
 
-public fn print<...T>(...args: ...T) -> void {
-    @compile {
-        for arg in args {
-            if (!typeof(arg).printable) {
-                @compile::throw new Error("Argument type is not printable");
-            }
+set io;
+
+// Layer 1: Low-level syscalls
+public fn sys_open(path: str, flags: int32 := 0, mode: int32 := 0) -> int32 {
+    if (@compile::backend() == Backend::Cpp) {
+        return @c::fast_open(path, flags, mode);
+    } else {
+        return @sys::open(path, flags, mode);
+    }
+}
+
+public fn c_open(path: str, flags: int32 := 0, mode: int32 := 0) -> int32 {
+    return sys_open(path, flags, mode);
+}
+
+public fn sys_close(fd: int32) -> int32 {
+    if (@compile::backend() == Backend::Cpp) {
+        return @c::fast_close(fd);
+    } else {
+        return @sys::close(fd);
+    }
+}
+
+public fn close(fd: int32) -> int32 {
+    return sys_close(fd);
+}
+
+public fn sys_read(fd: int32, buf: auto, count: usize) -> usize {
+    if (@compile::backend() == Backend::Cpp) {
+        return @c::fast_read(fd, buf, count);
+    } else {
+        return @sys::read(fd, buf, count);
+    }
+}
+
+public fn read(fd: int32, buf: auto, count: usize) -> usize {
+    return sys_read(fd, buf, count);
+}
+
+public fn sys_write(fd: int32, buf: auto, count: usize) -> usize {
+    if (@compile::backend() == Backend::Cpp) {
+        return @c::fast_write(fd, buf, count);
+    } else {
+        return @sys::write(fd, buf, count);
+    }
+}
+
+public fn write(fd: int32, buf: auto, count: usize) -> usize {
+    return sys_write(fd, buf, count);
+}
+
+public fn sys_read_all(path: str) -> str {
+    if (@compile::backend() == Backend::Cpp) {
+        return @c::fast_read_all(path);
+    } else {
+        return @sys::read_all(path);
+    }
+}
+
+public fn read_all(path: str) -> str {
+    return sys_read_all(path);
+}
+
+public fn read_all_u(path: str) -> uchar[] {
+    return @c::fast_read_all_u(path);
+}
+
+public fn to_utf8(u: uchar[]) -> str {
+    return @c::fast_uchar_to_utf8(u);
+}
+
+// Layer 2: High-level DocumentType open with Unicode support & extension extraction
+public fn open(path: str) -> DocumentType {
+    uchar ucontent[] = read_all_u(path);
+    str content = read_all(path);
+    int32 dot_idx = -1;
+    for (int32 i = 0; i < path.len; i = i + 1) {
+        if (path[i] == '.') {
+            dot_idx = i;
         }
-    }(args);
-    fast_print(...args);
+    }
+
+    if (dot_idx != -1 && dot_idx + 1 < path.len) {
+        int32 ext_len = path.len - (dot_idx + 1);
+        char ext[] = new char[](ext_len);
+        for (int32 k = 0; k < ext_len; k = k + 1) {
+            ext[k] = path[dot_idx + 1 + k];
+        }
+
+        if (ext == "json") {
+            JsonDocument j = new JsonDocument();
+            j.set_content(content);
+            j.set_ucontent(ucontent);
+            j.set_extension("json");
+            return DocumentType::Json(j);
+        } else if (ext == "html" || ext == "htm") {
+            HtmlDocument h = new HtmlDocument();
+            h.set_content(content);
+            h.set_ucontent(ucontent);
+            h.set_extension("html");
+            return DocumentType::Html(h);
+        } else {
+            Document d = new Document();
+            d.set_content(content);
+            d.set_ucontent(ucontent);
+            d.set_extension(ext);
+            return DocumentType::Raw(d);
+        }
+    }
+
+    Document d = new Document();
+    d.set_content(content);
+    d.set_ucontent(ucontent);
+    return DocumentType::Raw(d);
 }
 
-public fn println<...T>(...args: ...T) -> void {
-    @compile {
-        for arg in args {
-            if (!typeof(arg).printable) {
-                @compile::throw new Error("Argument type is not printable");
-            }
-        }
-    }(args);
-    fast_println(...args);
+public fn open(path: str, flags: int32, mode: int32 := 0) -> int32 {
+    return sys_open(path, flags, mode);
 }
+
+public fn open_document(path: str) -> DocumentType {
+    return open(path);
+}
+

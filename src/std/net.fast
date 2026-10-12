@@ -1,0 +1,73 @@
+// FastLang Standard Library: Low-level Network Sockets
+import std::error;
+import @c "clib/net.h";
+
+extern @c :: {
+    fn fast_net_listen(port: int32) -> int32;
+    fn fast_net_connect(host: str, port: int32) -> int32;
+    fn fast_net_accept(server_fd: int32) -> int32;
+    fn fast_net_read(fd: int32, buf: auto, max_len: int32) -> int32;
+    fn fast_net_write(fd: int32, buf: auto, len: int32) -> int32;
+    fn fast_net_close(fd: int32) -> void;
+}
+
+public @sys :: {
+    set net_listen(int32) -> int32;
+    set net_connect(str, int32) -> int32;
+    set net_accept(int32) -> int32;
+    set net_read(int32, auto, int32) -> int32;
+    set net_write(int32, auto, int32) -> int32;
+    set net_close(int32) -> void;
+}
+
+set net;
+
+public fn listen(port: int32) -> int32 {
+        if (@compile::backend() == Backend::Cpp) {
+            return @c::fast_net_listen(port);
+        } else {
+            return @sys::net_listen(port);
+        }
+    }
+
+    public fn connect(host: str, port: int32) -> int32 {
+        if (@compile::backend() == Backend::Cpp) {
+            return @c::fast_net_connect(host, port);
+        } else {
+            return @sys::net_connect(host, port);
+        }
+    }
+
+    public fn accept(server_fd: int32) -> int32 {
+        if (@compile::backend() == Backend::Cpp) {
+            return @c::fast_net_accept(server_fd);
+        } else {
+            return @sys::net_accept(server_fd);
+        }
+    }
+
+    public fn read(fd: int32, buf: auto, max_len: int32) -> int32 {
+        if (@compile::backend() == Backend::Cpp) {
+            return @c::fast_net_read(fd, buf, max_len);
+        } else {
+            return @sys::net_read(fd, buf, max_len);
+        }
+    }
+
+    public fn write(fd: int32, buf: auto, len: int32) -> int32 {
+        if (@compile::backend() == Backend::Cpp) {
+            return @c::fast_net_write(fd, buf, len);
+        } else {
+            return @sys::net_write(fd, buf, len);
+        }
+    }
+
+    public fn close(fd: int32) -> int32 {
+        if (@compile::backend() == Backend::Cpp) {
+            @c::fast_net_close(fd);
+            return 0;
+        } else {
+            @sys::net_close(fd);
+            return 0;
+        }
+    }

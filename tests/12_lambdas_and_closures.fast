@@ -1,4 +1,5 @@
 // Comprehensive Suite 12: Single-line Pipe Lambdas, Arrow Syntax, Inferred Parameters, and Higher-Order Functions
+import std::fmt;
 
 fn apply_op(x: int32, y: int32, op: ref<Fn<(int32, int32), int32>>) -> int32 {
     return op(x, y);

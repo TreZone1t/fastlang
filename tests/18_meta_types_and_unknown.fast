@@ -1,5 +1,6 @@
 // Test 18: Meta-types (function & object) and unknown return type inference
 import std;
+import std::fmt;
 
 class User -> {
     public -> {

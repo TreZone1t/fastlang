@@ -138,6 +138,14 @@ impl Parser {
                         continue;
                     }
                 }
+
+                return Err(format!(
+                    "Syntax Error: Duplicate or misplaced section '{:?}' in class '{}' at line {}, column {}",
+                    t,
+                    name,
+                    self.peek().line,
+                    self.peek().column
+                ));
             } else {
                 print!(
                     "DEBUG: Invalid field found : {} , that is not allow in the array typed scope to use it \n\t - use custom typed scope with enable some setting it will work if it valid",
@@ -159,6 +167,32 @@ impl Parser {
         }
 
         meta.handles = used_handles.clone();
+        for decl in public_block
+            .iter()
+            .chain(private_block.iter())
+            .chain(static_block.iter())
+        {
+            match decl {
+                Decl::VarDecl { name, type_node, .. } => {
+                    meta.fields.insert(name.clone(), type_node.clone());
+                }
+                Decl::DestructureDecl { assignments, type_node, .. } => {
+                    for (name, _) in assignments {
+                        meta.fields.insert(name.clone(), type_node.clone());
+                    }
+                }
+                Decl::FnDecl { name, generics, params, return_type, .. } => {
+                    meta.methods.insert(name.clone(), FnType {
+                        name: name.clone(),
+                        generics: generics.clone(),
+                        params: params.clone(),
+                        return_type: return_type.clone(),
+                        mode: ExecutionMode::Runtime,
+                    });
+                }
+                _ => {}
+            }
+        }
         for hdl in &handle_block {
             if let Decl::FnDecl { name, generics, params, return_type, .. } = hdl {
                 meta.handle_signatures.insert(name.clone(), FnType {

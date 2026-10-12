@@ -1,4 +1,5 @@
 // Comprehensive Suite 09: Scopes, State Machines, Labels, Goto, and Lifecycle Handles
+import std::fmt;
 
 machine CounterMachine -> {
     @init -> {

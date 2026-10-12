@@ -1,4 +1,5 @@
 // Comprehensive Suite 02: Control Flow, Conditions, While, Do-While, For-In, and Custom Iterators
+import std::fmt;
 
 blueprint NumberListIter -> {
     int32 items[];
@@ -62,7 +63,7 @@ fn check_score(score: int32) -> int32 {
     return result;
 }
 */
-@compile {
+@compile :: {
     fn check_score(score: int32) -> int32 {
         if (score >= 90) {
             return 1;

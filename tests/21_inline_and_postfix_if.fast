@@ -1,4 +1,5 @@
 // Test 21: Inline If Expressions, Postfix If Statements, and Variant Blueprints
+import std::fmt;
 
 fn test_inline_if() -> void {
     auto a = if (10 > 5) 100 else 200;

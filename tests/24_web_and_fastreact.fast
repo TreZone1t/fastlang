@@ -1,0 +1,352 @@
+// EXPECT: --- Testing Element-wise Array Cast & Numberfy ---
+// EXPECT: Array cast to float64 passed: 10, 40
+// EXPECT: All numberfy tests passed successfully
+// EXPECT: Default param with widening passed: 15, 25
+// EXPECT: --- Testing Document, HtmlDocument, JsonDocument, and Foreign Scopes ---
+// EXPECT: Doc: Standard Doc content
+// EXPECT: Safe block passed
+// EXPECT: HTML block passed
+// EXPECT: JSON block passed: name=Hakim, role=founder
+// EXPECT: Nested foreign scope passed.
+// EXPECT: --- Testing FastReact Reactive HTML Directives ---
+// EXPECT: onclick, target, and swap translated successfully
+// EXPECT: onsubmit translated successfully
+// EXPECT: live translated to hx-trigger debounce successfully
+// EXPECT: Automatic script injection verified in <head>
+// EXPECT: --- Testing HttpRequest Query & Route Path ---
+// EXPECT: req.route_path matched: /search
+// EXPECT: req.query matched key: calculator
+// EXPECT: req.query matched faculty: Engineering
+// EXPECT: --- Testing WebAction Protocol ---
+// EXPECT: WebAction action created: target=#results swap=outerHTML
+// EXPECT: --- Testing Native Threads and Mutex ---
+// EXPECT: Main locked mutex
+// EXPECT: Main unlocked mutex
+// EXPECT: Worker thread executing
+// EXPECT: Worker thread completed and joined
+// EXPECT: --- Testing HTTP Server and Network Sockets ---
+// EXPECT: Server received request: GET /api/info
+// EXPECT: Client successfully received HTTP response
+// EXPECT: HTTP Server test passed successfully
+// EXPECT: ALL 24_WEB_AND_FASTREACT TESTS PASSED
+import std::fmt;
+import std::types;
+import std::io;
+import std::net;
+import std::http;
+import std::thread;
+
+using http;
+using thread;
+
+fn contains_str(haystack: str, needle: str) -> bool {
+    if (needle.len == 0) {
+        return true;
+    }
+    if (haystack.len < needle.len) {
+        return false;
+    }
+    for (int32 i = 0; i <= haystack.len - needle.len; i = i + 1) {
+        bool m = true;
+        for (int32 j = 0; j < needle.len; j = j + 1) {
+            if (haystack[i + j] != needle[j]) {
+                m = false;
+                break;
+            }
+        }
+        if (m) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn add_with_default(a: int64, b := 10 as int64) -> int64 {
+    return a + b;
+}
+
+fn test_casts_and_numberfy() -> void {
+    println("--- Testing Element-wise Array Cast & Numberfy ---");
+    int32 original[] = [10, 20, 30, 40];
+    float64 floats[] = original as float64;
+    
+    if (floats.len != 4) {
+        throw new Error("Floats length mismatch");
+    }
+    if (floats[0] != 10.0 || floats[1] != 20.0 || floats[2] != 30.0 || floats[3] != 40.0) {
+        throw new Error("Floats values mismatch");
+    }
+    println("Array cast to float64 passed: " + floats[0] + ", " + floats[3]);
+
+    int32 val1 = numberfy("1234");
+    if (val1 != 1234) {
+        throw new Error("Failed numberfy positive int");
+    }
+
+    int32 val2 = numberfy("-500");
+    if (val2 != -500) {
+        throw new Error("Failed numberfy negative int");
+    }
+
+    float64 val_float = numberfy("3.14");
+    if (val_float < 3.13 || val_float > 3.15) {
+        throw new Error("Failed numberfy float");
+    }
+
+    int32 hex1 = numberfy("0x1F");
+    if (hex1 != 31) {
+        throw new Error("Failed numberfy 0x hex");
+    }
+
+    int32 hex2 = numberfy("#FF");
+    if (hex2 != 255) {
+        throw new Error("Failed numberfy # hex");
+    }
+
+    println("All numberfy tests passed successfully");
+
+    int64 r1 = add_with_default(5);
+    int64 r2 = add_with_default(5, 20);
+    println("Default param with widening passed: " + r1 + ", " + r2);
+}
+
+fn test_documents_and_foreign_scopes() -> void {
+    println("--- Testing Document, HtmlDocument, JsonDocument, and Foreign Scopes ---");
+    Document doc = new Document();
+    doc.set_content("Standard Doc content");
+    println("Doc: " + doc.as_str());
+
+    str safe_str = @safe {
+        Safe content <without> "escaping" and symbols.
+    };
+    if (safe_str.len == 0) {
+        throw new Error("Safe string is empty");
+    }
+    println("Safe block passed");
+
+    str user_name = "Hakim";
+    int32 count = 7;
+    HtmlDocument html_page = @html {
+        <div class="user-card">
+            <h1>Welcome @f{user_name}</h1>
+            <p>Notifications: @f{count}</p>
+        </div>
+    };
+    str rendered_html = html_page.render();
+    if (rendered_html.len == 0) {
+        throw new Error("HTML render failed");
+    }
+    println("HTML block passed");
+
+    JsonDocument json_data = @json {
+        {
+            "name": "@f{user_name}",
+            "role": "founder",
+            "score": @f{count}
+        }
+    };
+    str parsed_role = json_data["role"];
+    str parsed_name = json_data["name"];
+    if (parsed_role != "founder" || parsed_name != "Hakim") {
+        throw new Error("JSON document index access mismatch");
+    }
+    println("JSON block passed: name=" + parsed_name + ", role=" + parsed_role);
+
+    HtmlDocument nested_page = @html {
+        <article>
+            @f{
+                @json {
+                    {"type": "nested_spec", "valid": true}
+                }
+            }
+        </article>
+    };
+    if (nested_page.as_str().len == 0) {
+        throw new Error("Nested foreign scope failed");
+    }
+    println("Nested foreign scope passed.");
+}
+
+blueprint ItemComponent -> {
+    str title = "Scientific Calculator";
+    str faculty = "Engineering";
+    int32 price = 350;
+}
+
+impl ItemComponent -> {
+    fn render() -> HtmlDocument {
+        return @html {
+            <div id="item-card" class="card">
+                <h3>@f{this.title}</h3>
+                <p>Faculty: @f{this.faculty}</p>
+                <p>Price: @f{this.price} EGP</p>
+                <button onclick="/item/mark_sold" target="#item-card" swap="outerHTML">
+                    Mark as SOLD
+                </button>
+            </div>
+        };
+    }
+}
+
+fn test_fastreact_directives() -> void {
+    println("--- Testing FastReact Reactive HTML Directives ---");
+    ItemComponent item = new ItemComponent();
+    HtmlDocument doc = item.render();
+    str rendered = doc.render();
+
+    if (!contains_str(rendered, "hx-post=\"/item/mark_sold\"")) {
+        throw new Error("Expected hx-post translation from onclick");
+    }
+    if (!contains_str(rendered, "hx-target=\"#item-card\"")) {
+        throw new Error("Expected hx-target translation from target");
+    }
+    if (!contains_str(rendered, "hx-swap=\"outerHTML\"")) {
+        throw new Error("Expected hx-swap translation from swap");
+    }
+    println("onclick, target, and swap translated successfully");
+
+    HtmlDocument form_doc = @html {
+        <form onsubmit="/items/add" target="#item-grid" swap="append">
+            <input type="text" name="title">
+            <button type="submit">Add Item</button>
+        </form>
+    };
+    str form_rendered = form_doc.render();
+    if (!contains_str(form_rendered, "hx-post=\"/items/add\"")) {
+        throw new Error("Expected onsubmit to translate to hx-post");
+    }
+    if (!contains_str(form_rendered, "hx-swap=\"beforeend\"")) {
+        throw new Error("Expected swap='append' to translate to hx-swap='beforeend'");
+    }
+    println("onsubmit translated successfully");
+
+    HtmlDocument live_doc = @html {
+        <input type="text" name="search" live="300ms" onclick="/search" target="#results">
+    };
+    str live_rendered = live_doc.render();
+    if (!contains_str(live_rendered, "hx-trigger=\"keyup changed delay:300ms\"")) {
+        throw new Error("Expected live='300ms' to translate to hx-trigger");
+    }
+    println("live translated to hx-trigger debounce successfully");
+
+    HtmlDocument full_page = @html {
+        <html>
+            <head>
+                <title>DeBDe Platform</title>
+            </head>
+            <body>
+                <h1>DeBDe Student Tool Exchange</h1>
+            </body>
+        </html>
+    };
+    str injected = _inject_fastreact_script(full_page.render());
+    if (!contains_str(injected, "<script src=\"https://unpkg.com/htmx.org")) {
+        throw new Error("Expected automatic script injection before </head>");
+    }
+    println("Automatic script injection verified in <head>");
+}
+
+fn test_http_query_and_route() -> void {
+    println("--- Testing HttpRequest Query & Route Path ---");
+    HttpRequest req = parse_request("GET /search?q=calculator&faculty=Engineering HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+    str r_path = req.route_path();
+    if (r_path != "/search") {
+        throw new Error("Expected route_path to be /search, got: " + r_path);
+    }
+    println("req.route_path matched: " + r_path);
+
+    str q_val = req.query("q");
+    if (q_val != "calculator") {
+        throw new Error("Expected query 'q' to be calculator, got: " + q_val);
+    }
+    println("req.query matched key: " + q_val);
+
+    str fac_val = req.query("faculty");
+    if (fac_val != "Engineering") {
+        throw new Error("Expected query 'faculty' to be Engineering, got: " + fac_val);
+    }
+    println("req.query matched faculty: " + fac_val);
+}
+
+fn test_web_action() -> void {
+    println("--- Testing WebAction Protocol ---");
+    HtmlDocument content = @html {
+        <div id="results"><p>Found 1 item</p></div>
+    };
+    WebAction act = action("#results", "outerHTML", content);
+    if (act.target != "#results") {
+        throw new Error("WebAction target mismatch");
+    }
+    if (act.swap != "outerHTML") {
+        throw new Error("WebAction swap mismatch");
+    }
+    println("WebAction action created: target=" + act.target + " swap=" + act.swap);
+}
+
+fn test_threads_and_mutex() -> void {
+    println("--- Testing Native Threads and Mutex ---");
+    Mutex m = new Mutex();
+    m.lock();
+    println("Main locked mutex");
+    m.unlock();
+    println("Main unlocked mutex");
+
+    Thread t1 = thread::spawn(fn _() -> void {
+        println("Worker thread executing");
+        thread::sleep(5);
+        thread::thread_yield();
+    });
+    t1.join();
+    println("Worker thread completed and joined");
+}
+
+fn test_http_server_and_client() -> void {
+    println("--- Testing HTTP Server and Network Sockets ---");
+    int32 port = 9348;
+    HttpServer server = new HttpServer(port);
+
+    Thread client_thread = thread::spawn(fn _() -> void {
+        thread::sleep(50);
+        int32 client_fd = net::connect("127.0.0.1", 9348);
+        if (client_fd < 0) {
+            throw new Error("Client failed to connect to HTTP server");
+        }
+        str req = "GET /api/info HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        net::write(client_fd, req, req.len);
+
+        char resp_buf[] = new char[](1024);
+        int32 n = net::read(client_fd, resp_buf, 1024);
+        if (n <= 0) {
+            throw new Error("Client read 0 bytes from HTTP response");
+        }
+        net::close(client_fd);
+        println("Client successfully received HTTP response");
+    });
+
+    http::serve_once(server, fn _(req: HttpRequest, res: HttpResponse) -> void {
+        println("Server received request: " + req.http_method + " " + req.path);
+        if (req.path != "/api/info") {
+            throw new Error("Unexpected request path: " + req.path);
+        }
+        res.send_json(@json {
+            {"framework": "FastLang", "version": 1}
+        });
+    });
+
+    client_thread.join();
+    server.close();
+    println("HTTP Server test passed successfully");
+}
+
+fn main() -> int32 {
+    test_casts_and_numberfy();
+    test_documents_and_foreign_scopes();
+    test_fastreact_directives();
+    test_http_query_and_route();
+    test_web_action();
+    test_threads_and_mutex();
+    test_http_server_and_client();
+    println("ALL 24_WEB_AND_FASTREACT TESTS PASSED");
+    return 0;
+}

@@ -59,7 +59,8 @@ pub fn apply_reassign_op(cur: &Expr, op: &str, rhs: &Expr) -> Option<Expr> {
 }
 
 pub fn is_known_type_name(s: &str) -> bool {
-    let base = s.split('<').next().unwrap_or(s);
+    let clean = s.trim_end_matches("[]").trim();
+    let base = clean.split('<').next().unwrap_or(clean);
     matches!(
         base,
         "int8"
@@ -202,7 +203,11 @@ fn substitute_this_in_expr(expr: &Expr, replacement: &Expr) -> Expr {
             operator: operator.clone(),
             operand: Box::new(substitute_this_in_expr(operand, replacement)),
         },
-        Expr::BinaryOp { left, operator, right } => Expr::BinaryOp {
+        Expr::BinaryOp {
+            left,
+            operator,
+            right,
+        } => Expr::BinaryOp {
             left: Box::new(substitute_this_in_expr(left, replacement)),
             operator: operator.clone(),
             right: Box::new(substitute_this_in_expr(right, replacement)),
@@ -217,7 +222,9 @@ fn expr_contains_this(expr: &Expr) -> bool {
         Expr::PropertyAccess { object, .. } => expr_contains_this(object),
         Expr::UnaryOp { operand, .. } => expr_contains_this(operand),
         Expr::BinaryOp { left, right, .. } => expr_contains_this(left) || expr_contains_this(right),
-        Expr::Call { callee, args, .. } => expr_contains_this(callee) || args.iter().any(expr_contains_this),
+        Expr::Call { callee, args, .. } => {
+            expr_contains_this(callee) || args.iter().any(expr_contains_this)
+        }
         _ => false,
     }
 }
@@ -233,6 +240,7 @@ pub struct Interpreter {
     pub in_function_body: bool,
     pub current_switch_type: Option<String>,
     pub current_type: Option<String>,
+    pub target_backend: String,
 }
 
 impl Interpreter {
@@ -248,6 +256,7 @@ impl Interpreter {
             in_function_body: false,
             current_switch_type: None,
             current_type: None,
+            target_backend: "cpp".to_string(),
         }
     }
 
@@ -255,6 +264,8 @@ impl Interpreter {
         let clean = strip_type_wrapper(name);
         let base_name = if clean.contains('<') {
             clean.split('<').next().unwrap_or(clean)
+        } else if clean.ends_with("[]") {
+            "array"
         } else {
             clean
         };
@@ -476,7 +487,9 @@ impl Interpreter {
 
                 if let Some(var_name) = var_name {
                     for elem in elements {
-                        self.env.define(var_name.clone(), elem);
+                        self.env.define(var_name.clone(), elem.clone());
+                        let elem_ty = self.get_expr_type(&elem);
+                        self.var_types.insert(var_name.clone(), elem_ty);
                         match body {
                             EitherBlock::Inline(stmts) => {
                                 for s in stmts {
@@ -649,7 +662,10 @@ impl Interpreter {
                 let is_type_reflection = matches!(obj_val, Expr::LiteralString(ref s) if s.starts_with("type<"))
                     || (!type_name.is_empty() && is_known_type_name(&type_name));
                 if !is_type_reflection {
-                    return Err("PropertyAccess on non-type cannot be evaluated at compile time".to_string());
+                    return Err(
+                        "PropertyAccess on non-type cannot be evaluated at compile time"
+                            .to_string(),
+                    );
                 }
                 let ft = self.get_fast_type(&type_name);
                 match property.as_str() {
@@ -669,7 +685,8 @@ impl Interpreter {
                         if matches!(obj_val, Expr::LiteralString(ref s) if s.starts_with("type<")) {
                             Ok(Expr::LiteralString(ft.as_str()))
                         } else {
-                            Err("as_str only supported on type reflection in comptime eval".to_string())
+                            Err("as_str only supported on type reflection in comptime eval"
+                                .to_string())
                         }
                     }
                     "size" => Ok(Expr::LiteralInt(ft.size() as i128)),
@@ -907,118 +924,140 @@ impl Interpreter {
                     if is_type_reflection {
                         let ft = self.get_fast_type(&type_name);
                         match property.as_str() {
-                        "is_primitive" => return Ok(Expr::LiteralBool(ft.is_primitive())),
-                        "is_pointer" => return Ok(Expr::LiteralBool(ft.is_pointer())),
-                        "is_array" => return Ok(Expr::LiteralBool(ft.is_array())),
-                        "printable" | "is_printable" => {
-                            return Ok(Expr::LiteralBool(ft.printable()))
-                        }
-                        "throwable" | "is_throwable" => {
-                            return Ok(Expr::LiteralBool(ft.throwable()))
-                        }
-                        "shareable" | "is_shareable" => {
-                            return Ok(Expr::LiteralBool(ft.shareable()))
-                        }
-                        "copyable" | "is_copyable" => return Ok(Expr::LiteralBool(ft.copyable())),
-                        "castable" | "is_castable" => return Ok(Expr::LiteralBool(ft.castable())),
-                        "is_constant" | "is_const" => {
-                            return Ok(Expr::LiteralBool(ft.is_constant()))
-                        }
-                        "is_runtime" => return Ok(Expr::LiteralBool(ft.is_runtime())),
-                        "is_comptime" => return Ok(Expr::LiteralBool(ft.is_comptime())),
-                        "is_undefined" => return Ok(Expr::LiteralBool(ft.is_undefined())),
-                        "has_handle" => {
-                            if let Some(arg) = args.first() {
-                                let evaled = self.eval_expr(arg).unwrap_or_else(|_| arg.clone());
-                                let s1 = self.extract_type_or_name(&evaled);
-                                let s2 = args.get(1).map(|a| {
-                                    let v = self.eval_expr(a).unwrap_or_else(|_| a.clone());
-                                    self.extract_type_or_name(&v)
-                                });
-                                return Ok(Expr::LiteralBool(ft.has_handle_query(&s1, s2.as_deref())));
+                            "is_primitive" => return Ok(Expr::LiteralBool(ft.is_primitive())),
+                            "is_pointer" => return Ok(Expr::LiteralBool(ft.is_pointer())),
+                            "is_array" => return Ok(Expr::LiteralBool(ft.is_array())),
+                            "printable" | "is_printable" => {
+                                return Ok(Expr::LiteralBool(ft.printable()))
                             }
-                            return Ok(Expr::LiteralBool(false));
-                        }
-                        "has_method" => {
-                            if let Some(arg) = args.first() {
-                                let evaled = self.eval_expr(arg).unwrap_or_else(|_| arg.clone());
-                                let s1 = self.extract_type_or_name(&evaled);
-                                let s2 = args.get(1).map(|a| {
-                                    let v = self.eval_expr(a).unwrap_or_else(|_| a.clone());
-                                    self.extract_type_or_name(&v)
-                                });
-                                return Ok(Expr::LiteralBool(ft.has_method_query(&s1, s2.as_deref())));
+                            "throwable" | "is_throwable" => {
+                                return Ok(Expr::LiteralBool(ft.throwable()))
                             }
-                            return Ok(Expr::LiteralBool(false));
-                        }
-                        "has_field" => {
-                            if let Some(arg) = args.first() {
-                                let evaled = self.eval_expr(arg).unwrap_or_else(|_| arg.clone());
-                                let s1 = self.extract_type_or_name(&evaled);
-                                let s2 = args.get(1).map(|a| {
-                                    let v = self.eval_expr(a).unwrap_or_else(|_| a.clone());
-                                    self.extract_type_or_name(&v)
-                                });
-                                return Ok(Expr::LiteralBool(ft.has_field_query(&s1, s2.as_deref())));
+                            "shareable" | "is_shareable" => {
+                                return Ok(Expr::LiteralBool(ft.shareable()))
                             }
-                            return Ok(Expr::LiteralBool(false));
-                        }
-                        "as_str" => {
-                            if matches!(obj_val, Expr::LiteralString(ref s) if s.starts_with("type<")) {
-                                return Ok(Expr::LiteralString(ft.as_str()));
-                            } else if is_literal(&obj_val) {
-                                return Ok(Expr::LiteralString(self.format_expr_for_print(&obj_val)));
-                            } else {
-                                return Err("as_str only supported on literal or type in comptime eval".to_string());
+                            "copyable" | "is_copyable" => {
+                                return Ok(Expr::LiteralBool(ft.copyable()))
                             }
-                        }
-                        "size" => {
-                            if matches!(obj_val, Expr::LiteralString(ref s) if s.starts_with("type<")) {
-                                return Ok(Expr::LiteralInt(ft.size() as i128));
-                            } else {
-                                return Err("size method only supported on type reflection at compile time".to_string());
+                            "castable" | "is_castable" => {
+                                return Ok(Expr::LiteralBool(ft.castable()))
                             }
-                        }
-                        "default" => {
-                            if let Some(def) = self.default_for_type(&type_name) {
-                                return Ok(def);
-                            } else {
-                                return Ok(Expr::Default(Some(BaseType::from_str(&type_name))));
+                            "is_constant" | "is_const" => {
+                                return Ok(Expr::LiteralBool(ft.is_constant()))
                             }
-                        }
-                        "castable_to" => {
-                            if let Some(target_expr) = args.first() {
-                                let evaled = self
-                                    .eval_expr(target_expr)
-                                    .unwrap_or_else(|_| target_expr.clone());
-                                let target_name = match evaled {
-                                    Expr::LiteralString(s) => strip_type_wrapper(&s).to_string(),
-                                    Expr::Identifier(id) => {
-                                        if let Ok(Expr::LiteralString(s)) = self.env.get(&id) {
+                            "is_runtime" => return Ok(Expr::LiteralBool(ft.is_runtime())),
+                            "is_comptime" => return Ok(Expr::LiteralBool(ft.is_comptime())),
+                            "is_undefined" => return Ok(Expr::LiteralBool(ft.is_undefined())),
+                            "has_handle" => {
+                                if let Some(arg) = args.first() {
+                                    let evaled =
+                                        self.eval_expr(arg).unwrap_or_else(|_| arg.clone());
+                                    let s1 = self.extract_type_or_name(&evaled);
+                                    let s2 = args.get(1).map(|a| {
+                                        let v = self.eval_expr(a).unwrap_or_else(|_| a.clone());
+                                        self.extract_type_or_name(&v)
+                                    });
+                                    return Ok(Expr::LiteralBool(
+                                        ft.has_handle_query(&s1, s2.as_deref()),
+                                    ));
+                                }
+                                return Ok(Expr::LiteralBool(false));
+                            }
+                            "has_method" => {
+                                if let Some(arg) = args.first() {
+                                    let evaled =
+                                        self.eval_expr(arg).unwrap_or_else(|_| arg.clone());
+                                    let s1 = self.extract_type_or_name(&evaled);
+                                    let s2 = args.get(1).map(|a| {
+                                        let v = self.eval_expr(a).unwrap_or_else(|_| a.clone());
+                                        self.extract_type_or_name(&v)
+                                    });
+                                    return Ok(Expr::LiteralBool(
+                                        ft.has_method_query(&s1, s2.as_deref()),
+                                    ));
+                                }
+                                return Ok(Expr::LiteralBool(false));
+                            }
+                            "has_field" => {
+                                if let Some(arg) = args.first() {
+                                    let evaled =
+                                        self.eval_expr(arg).unwrap_or_else(|_| arg.clone());
+                                    let s1 = self.extract_type_or_name(&evaled);
+                                    let s2 = args.get(1).map(|a| {
+                                        let v = self.eval_expr(a).unwrap_or_else(|_| a.clone());
+                                        self.extract_type_or_name(&v)
+                                    });
+                                    return Ok(Expr::LiteralBool(
+                                        ft.has_field_query(&s1, s2.as_deref()),
+                                    ));
+                                }
+                                return Ok(Expr::LiteralBool(false));
+                            }
+                            "as_str" => {
+                                if matches!(obj_val, Expr::LiteralString(ref s) if s.starts_with("type<"))
+                                {
+                                    return Ok(Expr::LiteralString(ft.as_str()));
+                                } else if is_literal(&obj_val) {
+                                    return Ok(Expr::LiteralString(
+                                        self.format_expr_for_print(&obj_val),
+                                    ));
+                                } else {
+                                    return Err(
+                                        "as_str only supported on literal or type in comptime eval"
+                                            .to_string(),
+                                    );
+                                }
+                            }
+                            "size" => {
+                                if matches!(obj_val, Expr::LiteralString(ref s) if s.starts_with("type<"))
+                                {
+                                    return Ok(Expr::LiteralInt(ft.size() as i128));
+                                } else {
+                                    return Err("size method only supported on type reflection at compile time".to_string());
+                                }
+                            }
+                            "default" => {
+                                if let Some(def) = self.default_for_type(&type_name) {
+                                    return Ok(def);
+                                } else {
+                                    return Ok(Expr::Default(Some(BaseType::from_str(&type_name))));
+                                }
+                            }
+                            "castable_to" => {
+                                if let Some(target_expr) = args.first() {
+                                    let evaled = self
+                                        .eval_expr(target_expr)
+                                        .unwrap_or_else(|_| target_expr.clone());
+                                    let target_name = match evaled {
+                                        Expr::LiteralString(s) => {
                                             strip_type_wrapper(&s).to_string()
-                                        } else {
-                                            id
                                         }
-                                    }
-                                    _ => "".to_string(),
-                                };
-                                let target_ft = self.get_fast_type(&target_name);
-                                return Ok(Expr::LiteralBool(ft.castable_to(&target_ft)));
+                                        Expr::Identifier(id) => {
+                                            if let Ok(Expr::LiteralString(s)) = self.env.get(&id) {
+                                                strip_type_wrapper(&s).to_string()
+                                            } else {
+                                                id
+                                            }
+                                        }
+                                        _ => "".to_string(),
+                                    };
+                                    let target_ft = self.get_fast_type(&target_name);
+                                    return Ok(Expr::LiteralBool(ft.castable_to(&target_ft)));
+                                }
+                            }
+                            _ => {
+                                if let Some(method_name) = property.strip_prefix("has_") {
+                                    return Ok(Expr::LiteralBool(
+                                        ft.has_method(method_name)
+                                            || ft.has_handle(method_name)
+                                            || (method_name == "as_str"
+                                                && (ft.printable()
+                                                    || ft.has_method("as_str")
+                                                    || ft.has_handle("display"))),
+                                    ));
+                                }
                             }
                         }
-                        _ => {
-                            if let Some(method_name) = property.strip_prefix("has_") {
-                                return Ok(Expr::LiteralBool(
-                                    ft.has_method(method_name)
-                                        || ft.has_handle(method_name)
-                                        || (method_name == "as_str"
-                                            && (ft.printable()
-                                                || ft.has_method("as_str")
-                                                || ft.has_handle("display"))),
-                                ));
-                            }
-                        }
-                    }
                     }
                 }
 
@@ -1042,6 +1081,8 @@ impl Interpreter {
                         let t = self.fastlang_typeof(arg);
                         if t != "unknown" {
                             return Ok(Expr::LiteralString(format!("type<{}>", t)));
+                        } else {
+                            return Ok(Expr::LiteralString("type<unknown>".to_string()));
                         }
                     }
                     return Ok(expr.clone());
@@ -1092,7 +1133,9 @@ impl Interpreter {
 
                 if target_fn_name == "@compile::access" || target_fn_name == "access" {
                     if args.len() < 2 {
-                        return self.fastlang_throw("@compile::access requires at least 2 arguments: (target, prop)");
+                        return self.fastlang_throw(
+                            "@compile::access requires at least 2 arguments: (target, prop)",
+                        );
                     }
                     let target_expr = &args[0];
                     let prop_expr = &args[1];
@@ -1125,9 +1168,13 @@ impl Interpreter {
                             }
                             if let Some(ref expected) = expected_ty {
                                 if let Some(field_ty) = has_field {
-                                    let clean_actual = self.extract_clean_blueprint_name(&field_ty.as_str());
-                                    let clean_expected = self.extract_clean_blueprint_name(expected);
-                                    if clean_actual != clean_expected && field_ty.as_str() != *expected {
+                                    let clean_actual =
+                                        self.extract_clean_blueprint_name(&field_ty.as_str());
+                                    let clean_expected =
+                                        self.extract_clean_blueprint_name(expected);
+                                    if clean_actual != clean_expected
+                                        && field_ty.as_str() != *expected
+                                    {
                                         return self.fastlang_throw(&format!(
                                             "Member '{}' on type '{}' has type '{}', but expected '{}'",
                                             prop_name, clean_target, field_ty.as_str(), expected
@@ -1175,6 +1222,7 @@ impl Interpreter {
                         in_function_body: true,
                         current_switch_type: None,
                         current_type: self.current_type.clone(),
+                        target_backend: self.target_backend.clone(),
                     };
                     for (i, param) in params.iter().enumerate() {
                         if let Some(arg_val) = eval_args.get(i) {
@@ -1228,6 +1276,7 @@ impl Interpreter {
                             in_function_body: true,
                             current_switch_type: None,
                             current_type: self.current_type.clone(),
+                            target_backend: self.target_backend.clone(),
                         };
                         for (g_name, g_type) in &generic_map {
                             func_interp.env.define(
@@ -1243,9 +1292,18 @@ impl Interpreter {
                                     .define(param.name.clone(), Expr::ArrayLiteral(rest));
                                 break;
                             }
-                            if let Some(arg_val) = eval_args.get(i) {
-                                func_interp.env.define(param.name.clone(), arg_val.clone());
-                                let arg_t = self.get_expr_type(arg_val);
+                            let arg_val = if let Some(val) = eval_args.get(i) {
+                                Some(val.clone())
+                            } else if let Some(ref def) = param.default_value {
+                                let folded =
+                                    func_interp.eval_expr(def).unwrap_or_else(|_| def.clone());
+                                Some(folded)
+                            } else {
+                                None
+                            };
+                            if let Some(val) = arg_val {
+                                func_interp.env.define(param.name.clone(), val.clone());
+                                let arg_t = func_interp.get_expr_type(&val);
                                 func_interp.var_types.insert(param.name.clone(), arg_t);
                             }
                         }
@@ -1503,7 +1561,10 @@ impl Interpreter {
             }
         }
         let base = clean.split('<').next().unwrap_or(clean);
-        base.trim_end_matches('*').trim_end_matches('&').trim().to_string()
+        base.trim_end_matches('*')
+            .trim_end_matches('&')
+            .trim()
+            .to_string()
     }
 
     pub fn substitute_generics_in_type_str(
@@ -1590,7 +1651,11 @@ impl Interpreter {
                                 }
                             }
                         }
-                        Stmt::ExpressionStmt(Expr::BinaryOp { left, operator, right }) if operator == "=" => {
+                        Stmt::ExpressionStmt(Expr::BinaryOp {
+                            left,
+                            operator,
+                            right,
+                        }) if operator == "=" => {
                             if let Expr::Identifier(field_name) = &**left {
                                 if field_name == "name" {
                                     name_opt = Some(self.extract_string_from_expr(right));
@@ -1737,10 +1802,7 @@ impl Interpreter {
                         self.functions.insert(name, (generics, params, body));
                     }
                     Decl::MicroDecl {
-                        name,
-                        params,
-                        body,
-                        ..
+                        name, params, body, ..
                     } => {
                         self.micros.insert(name, (params, body));
                     }
@@ -1760,8 +1822,14 @@ impl Interpreter {
                                 ..
                             } = m
                             {
-                                self.functions.insert(name.clone(), (generics.clone(), params.clone(), body.clone()));
-                                self.functions.insert(format!("{}::{}", clean_target, name), (generics, params, body));
+                                self.functions.insert(
+                                    name.clone(),
+                                    (generics.clone(), params.clone(), body.clone()),
+                                );
+                                self.functions.insert(
+                                    format!("{}::{}", clean_target, name),
+                                    (generics, params, body),
+                                );
                             }
                         }
                         for h in handle_block {
@@ -1773,8 +1841,14 @@ impl Interpreter {
                                 ..
                             } = h
                             {
-                                self.functions.insert(name.clone(), (generics.clone(), params.clone(), body.clone()));
-                                self.functions.insert(format!("{}::{}", clean_target, name), (generics, params, body));
+                                self.functions.insert(
+                                    name.clone(),
+                                    (generics.clone(), params.clone(), body.clone()),
+                                );
+                                self.functions.insert(
+                                    format!("{}::{}", clean_target, name),
+                                    (generics, params, body),
+                                );
                             }
                         }
                     }
@@ -1858,8 +1932,7 @@ impl Interpreter {
                                         format!("{}::{}", name, m_name),
                                         (params.clone(), body.clone()),
                                     );
-                                    self.micros
-                                        .insert(m_name.clone(), (params, body));
+                                    self.micros.insert(m_name.clone(), (params, body));
                                 }
                                 _ => {}
                             }
@@ -1916,6 +1989,87 @@ impl Interpreter {
         current
     }
 
+    pub fn infer_iterable_element_type(&mut self, iterable_type: &str, iterable: &Expr) -> String {
+        let clean_iter = self.extract_clean_blueprint_name(iterable_type);
+        if iterable_type.starts_with("array<") && iterable_type.ends_with('>') {
+            let inner = &iterable_type[6..iterable_type.len() - 1];
+            return self.resolve_type_str(inner.trim());
+        }
+        if iterable_type.ends_with("[]") {
+            let inner = &iterable_type[..iterable_type.len() - 2];
+            return self.resolve_type_str(inner.trim());
+        }
+        if iterable_type == "array" {
+            if let Expr::ArrayLiteral(elements) = iterable {
+                if let Some(first) = elements.first() {
+                    let t = self.get_expr_type(first);
+                    if t != "unknown" {
+                        return t;
+                    }
+                }
+            }
+        }
+        if let Some(ref env_rc) = self.current_env.clone() {
+            let env = env_rc.borrow();
+            if let Some(bp) = env.lookup_blueprint(&clean_iter) {
+                // Check for iter() method or handle
+                if let Some(iter_sig) = bp
+                    .methods
+                    .get("iter")
+                    .or_else(|| bp.handle_signatures.get("iter"))
+                {
+                    let cursor_type = iter_sig.return_type.as_str();
+                    let substituted_cursor = self.substitute_generics_in_type_str(
+                        &cursor_type,
+                        &bp.generics,
+                        iterable_type,
+                    );
+                    let clean_cursor = self.extract_clean_blueprint_name(&substituted_cursor);
+                    if let Some(cursor_bp) = env.lookup_blueprint(&clean_cursor) {
+                        if let Some(next_sig) = cursor_bp
+                            .methods
+                            .get("next")
+                            .or_else(|| cursor_bp.handle_signatures.get("next"))
+                        {
+                            let ret = next_sig.return_type.as_str();
+                            let sub_ret = self.substitute_generics_in_type_str(
+                                &ret,
+                                &cursor_bp.generics,
+                                &substituted_cursor,
+                            );
+                            return self.resolve_type_str(&sub_ret);
+                        }
+                    }
+                }
+                // Check for direct next() method or handle
+                if let Some(next_sig) = bp
+                    .methods
+                    .get("next")
+                    .or_else(|| bp.handle_signatures.get("next"))
+                {
+                    let ret = next_sig.return_type.as_str();
+                    let sub_ret =
+                        self.substitute_generics_in_type_str(&ret, &bp.generics, iterable_type);
+                    return self.resolve_type_str(&sub_ret);
+                }
+            }
+        }
+        // Fallback if iterable_type has generic parameter (e.g. List<int32>)
+        if iterable_type.contains('<') && iterable_type.ends_with('>') {
+            let start = iterable_type.find('<').unwrap() + 1;
+            let end = iterable_type.rfind('>').unwrap();
+            let inner = iterable_type[start..end]
+                .split(',')
+                .next()
+                .unwrap_or("")
+                .trim();
+            if !inner.is_empty() {
+                return self.resolve_type_str(inner);
+            }
+        }
+        "unknown".to_string()
+    }
+
     pub fn extract_type_string(&mut self, expr: &Expr) -> Option<String> {
         match expr {
             Expr::LiteralString(s) if s.starts_with("type<") && s.ends_with('>') => {
@@ -1925,6 +2079,11 @@ impl Interpreter {
                 args.first().map(|a| self.get_expr_type(a))
             }
             Expr::Identifier(id) => {
+                if let Ok(Expr::LiteralString(s)) = self.env.get(id) {
+                    if s.starts_with("type<") && s.ends_with('>') {
+                        return Some(strip_type_wrapper(&s).to_string());
+                    }
+                }
                 if let Some(t) = self.var_types.get(id) {
                     if t == "type" || t.starts_with("type<") {
                         if let Ok(Expr::LiteralString(s)) = self.env.get(id) {
@@ -1937,6 +2096,7 @@ impl Interpreter {
                     }
                     None
                 } else if is_known_type_name(id)
+                    || id.ends_with("[]")
                     || (id.contains('<') && id.ends_with('>'))
                     || (self.current_env.is_some() && {
                         let base = id.split('<').next().unwrap_or(id);
@@ -1971,6 +2131,7 @@ impl Interpreter {
                 strip_type_wrapper(s).to_string()
             }
             Expr::LiteralString(_) => "array<char>".to_string(),
+            Expr::LiteralUString(_) => "array<uchar>".to_string(),
             Expr::LiteralBool(_) => "bool".to_string(),
             Expr::LiteralChar(_) => "char".to_string(),
             Expr::LiteralUChar(_) => "uchar".to_string(),
@@ -2040,19 +2201,87 @@ impl Interpreter {
                     if let Some(bp) = env.lookup_blueprint(&clean_obj) {
                         if let Some(ft) = bp.fields.get(property) {
                             let ft_str = ft.as_str();
-                            let substituted = self.substitute_generics_in_type_str(&ft_str, &bp.generics, &obj_type);
+                            let substituted = self.substitute_generics_in_type_str(
+                                &ft_str,
+                                &bp.generics,
+                                &obj_type,
+                            );
                             return self.resolve_type_str(&substituted);
                         }
-                        if let Some(sig) = bp.methods.get(property).or_else(|| bp.handle_signatures.get(property)) {
+                        if let Some(sig) = bp
+                            .methods
+                            .get(property)
+                            .or_else(|| bp.handle_signatures.get(property))
+                        {
                             let ret_str = sig.return_type.as_str();
-                            let substituted = self.substitute_generics_in_type_str(&ret_str, &bp.generics, &obj_type);
+                            let substituted = self.substitute_generics_in_type_str(
+                                &ret_str,
+                                &bp.generics,
+                                &obj_type,
+                            );
                             return self.resolve_type_str(&substituted);
                         }
                     }
                 }
                 "unknown".to_string()
             }
-            Expr::ArrayLiteral(_) => "array".to_string(),
+            Expr::ArrayLiteral(elements) => {
+                if let Some(first) = elements.first() {
+                    let elem_t = self.get_expr_type(first);
+                    if elem_t != "unknown" {
+                        format!("array<{}>", elem_t)
+                    } else {
+                        "array".to_string()
+                    }
+                } else {
+                    "array".to_string()
+                }
+            }
+            Expr::Instantiate { target, .. } => match &**target {
+                Expr::Identifier(id) => id.clone(),
+                _ => self.get_expr_type(target),
+            },
+            Expr::New { type_node, .. } => type_node.as_str(),
+            Expr::Cast { target_type, .. } => target_type.as_str(),
+            Expr::IfExpr {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let t = self.get_expr_type(then_branch);
+                if t != "unknown" {
+                    t
+                } else {
+                    self.get_expr_type(else_branch)
+                }
+            }
+            Expr::Call { callee, .. } => {
+                let fn_name = match &**callee {
+                    Expr::Identifier(id) => id.as_str(),
+                    Expr::PropertyAccess { property, .. } => property.as_str(),
+                    Expr::NamespaceAccess { property, .. } => {
+                        if let Expr::Identifier(p) = &**property {
+                            p.as_str()
+                        } else {
+                            ""
+                        }
+                    }
+                    _ => "",
+                };
+                if let Some(sigs) = self.fn_overloads.get(fn_name) {
+                    if let Some(sig) = sigs.first() {
+                        return self.resolve_type_str(&sig.return_type.as_str());
+                    }
+                }
+                if let Some(ref env_rc) = self.current_env {
+                    if let Some(info) = env_rc.borrow().lookup(fn_name) {
+                        if let SymbolKind::Function { return_type, .. } = &info.kind {
+                            return self.resolve_type_str(&return_type.as_str());
+                        }
+                    }
+                }
+                "unknown".to_string()
+            }
             _ => "unknown".to_string(),
         };
         self.resolve_type_str(&raw)
@@ -2104,12 +2333,27 @@ pub fn is_compile_condition(expr: &Expr) -> bool {
                 }
             }
             if let Expr::Identifier(id) = &**callee {
-                if id == "typeof" || id == "sizeof" || id.starts_with("@compile::") {
+                if id == "typeof" || id == "sizeof" {
+                    return true;
+                }
+                if id.starts_with("@compile::") {
+                    if id == "@compile::backend" || id == "@compile::system" {
+                        return false;
+                    }
                     return true;
                 }
             }
-            if let Expr::NamespaceAccess { namespace, .. } = &**callee {
+            if let Expr::NamespaceAccess {
+                namespace,
+                property,
+            } = &**callee
+            {
                 if namespace == "@compile" {
+                    if let Expr::Identifier(p) = &**property {
+                        if p == "backend" || p == "system" {
+                            return false;
+                        }
+                    }
                     return true;
                 }
             }
@@ -2149,6 +2393,7 @@ pub fn substitute_expr(expr: &Expr, param_map: &HashMap<String, Expr>) -> Expr {
         Expr::LiteralUInt(u) => Expr::LiteralUInt(*u),
         Expr::LiteralFloat(f) => Expr::LiteralFloat(*f),
         Expr::LiteralString(s) => Expr::LiteralString(s.clone()),
+        Expr::LiteralUString(s) => Expr::LiteralUString(s.clone()),
         Expr::LiteralBool(b) => Expr::LiteralBool(*b),
         Expr::LiteralChar(c) => Expr::LiteralChar(*c),
         Expr::LiteralUChar(c) => Expr::LiteralUChar(*c),
@@ -2158,17 +2403,33 @@ pub fn substitute_expr(expr: &Expr, param_map: &HashMap<String, Expr>) -> Expr {
         Expr::This => Expr::This,
         Expr::Global => Expr::Global,
         Expr::Default(d) => Expr::Default(d.clone()),
-        Expr::ArrayLiteral(elems) => Expr::ArrayLiteral(elems.iter().map(|e| substitute_expr(e, param_map)).collect()),
+        Expr::ArrayLiteral(elems) => Expr::ArrayLiteral(
+            elems
+                .iter()
+                .map(|e| substitute_expr(e, param_map))
+                .collect(),
+        ),
         Expr::Spread(e) => Expr::Spread(Box::new(substitute_expr(e, param_map))),
-        Expr::ObjectLiteral(stmts) => Expr::ObjectLiteral(stmts.iter().map(|s| substitute_stmt(s, param_map)).collect()),
+        Expr::ObjectLiteral(stmts) => Expr::ObjectLiteral(
+            stmts
+                .iter()
+                .map(|s| substitute_stmt(s, param_map))
+                .collect(),
+        ),
         Expr::Instantiate { target, args } => Expr::Instantiate {
             target: Box::new(substitute_expr(target, param_map)),
             args: args.iter().map(|a| substitute_expr(a, param_map)).collect(),
         },
-        Expr::ArrayAllocate { type_node, size, length } => Expr::ArrayAllocate {
+        Expr::ArrayAllocate {
+            type_node,
+            size,
+            length,
+        } => Expr::ArrayAllocate {
             type_node: type_node.clone(),
             size: Box::new(substitute_expr(size, param_map)),
-            length: length.as_ref().map(|l| Box::new(substitute_expr(l, param_map))),
+            length: length
+                .as_ref()
+                .map(|l| Box::new(substitute_expr(l, param_map))),
         },
         Expr::New { type_node, target } => Expr::New {
             type_node: type_node.clone(),
@@ -2178,15 +2439,25 @@ pub fn substitute_expr(expr: &Expr, param_map: &HashMap<String, Expr>) -> Expr {
             operator: operator.clone(),
             operand: Box::new(substitute_expr(operand, param_map)),
         },
-        Expr::Cast { expr: inner, target_type } => Expr::Cast {
+        Expr::Cast {
+            expr: inner,
+            target_type,
+        } => Expr::Cast {
             expr: Box::new(substitute_expr(inner, param_map)),
             target_type: target_type.clone(),
         },
         Expr::IndexAccess { object, indices } => Expr::IndexAccess {
             object: Box::new(substitute_expr(object, param_map)),
-            indices: indices.iter().map(|i| substitute_expr(i, param_map)).collect(),
+            indices: indices
+                .iter()
+                .map(|i| substitute_expr(i, param_map))
+                .collect(),
         },
-        Expr::Call { callee, generics, args } => Expr::Call {
+        Expr::Call {
+            callee,
+            generics,
+            args,
+        } => Expr::Call {
             callee: Box::new(substitute_expr(callee, param_map)),
             generics: generics.clone(),
             args: args.iter().map(|a| substitute_expr(a, param_map)).collect(),
@@ -2199,16 +2470,27 @@ pub fn substitute_expr(expr: &Expr, param_map: &HashMap<String, Expr>) -> Expr {
             object: Box::new(substitute_expr(object, param_map)),
             property: property.clone(),
         },
-        Expr::HandleCall { object, handle_name, args } => Expr::HandleCall {
+        Expr::HandleCall {
+            object,
+            handle_name,
+            args,
+        } => Expr::HandleCall {
             object: Box::new(substitute_expr(object, param_map)),
             handle_name: handle_name.clone(),
             args: args.iter().map(|a| substitute_expr(a, param_map)).collect(),
         },
-        Expr::NamespaceAccess { namespace, property } => Expr::NamespaceAccess {
+        Expr::NamespaceAccess {
+            namespace,
+            property,
+        } => Expr::NamespaceAccess {
             namespace: namespace.clone(),
             property: Box::new(substitute_expr(property, param_map)),
         },
-        Expr::BinaryOp { left, operator, right } => Expr::BinaryOp {
+        Expr::BinaryOp {
+            left,
+            operator,
+            right,
+        } => Expr::BinaryOp {
             left: Box::new(substitute_expr(left, param_map)),
             operator: operator.clone(),
             right: Box::new(substitute_expr(right, param_map)),
@@ -2221,27 +2503,68 @@ pub fn substitute_expr(expr: &Expr, param_map: &HashMap<String, Expr>) -> Expr {
             left: Box::new(substitute_expr(left, param_map)),
             operator: operator.clone(),
         },
-        Expr::Lambda { params, return_type, body } => Expr::Lambda {
+        Expr::Lambda {
+            params,
+            return_type,
+            body,
+        } => Expr::Lambda {
             params: params.clone(),
             return_type: return_type.clone(),
             body: body.iter().map(|s| substitute_stmt(s, param_map)).collect(),
         },
-        Expr::IfExpr { condition, then_branch, else_branch } => Expr::IfExpr {
+        Expr::IfExpr {
+            condition,
+            then_branch,
+            else_branch,
+        } => Expr::IfExpr {
             condition: Box::new(substitute_expr(condition, param_map)),
             then_branch: Box::new(substitute_expr(then_branch, param_map)),
             else_branch: Box::new(substitute_expr(else_branch, param_map)),
         },
-        Expr::BlockExpr { statements, final_expr } => Expr::BlockExpr {
-            statements: statements.iter().map(|s| substitute_stmt(s, param_map)).collect(),
-            final_expr: final_expr.as_ref().map(|f| Box::new(substitute_expr(f, param_map))),
+        Expr::BlockExpr {
+            statements,
+            final_expr,
+        } => Expr::BlockExpr {
+            statements: statements
+                .iter()
+                .map(|s| substitute_stmt(s, param_map))
+                .collect(),
+            final_expr: final_expr
+                .as_ref()
+                .map(|f| Box::new(substitute_expr(f, param_map))),
         },
-        Expr::QuestionMark(inner) => Expr::QuestionMark(Box::new(substitute_expr(inner, param_map))),
+        Expr::QuestionMark(inner) => {
+            Expr::QuestionMark(Box::new(substitute_expr(inner, param_map)))
+        }
+        Expr::ForeignBlock { kind, chunks } => Expr::ForeignBlock {
+            kind: kind.clone(),
+            chunks: chunks
+                .iter()
+                .map(|c| match c {
+                    ForeignChunk::Static(s) => ForeignChunk::Static(s.clone()),
+                    ForeignChunk::Interpolation(e) => {
+                        ForeignChunk::Interpolation(Box::new(substitute_expr(e, param_map)))
+                    }
+                    ForeignChunk::Statements(stmts) => ForeignChunk::Statements(
+                        stmts.iter().map(|s| substitute_stmt(s, param_map)).collect(),
+                    ),
+                })
+                .collect(),
+        },
     }
 }
 
-pub fn substitute_either_block(block: &EitherBlock, param_map: &HashMap<String, Expr>) -> EitherBlock {
+pub fn substitute_either_block(
+    block: &EitherBlock,
+    param_map: &HashMap<String, Expr>,
+) -> EitherBlock {
     match block {
-        EitherBlock::Inline(stmts) => EitherBlock::Inline(stmts.iter().map(|s| substitute_stmt(s, param_map)).collect()),
+        EitherBlock::Inline(stmts) => EitherBlock::Inline(
+            stmts
+                .iter()
+                .map(|s| substitute_stmt(s, param_map))
+                .collect(),
+        ),
         EitherBlock::External(e) => EitherBlock::External(substitute_expr(e, param_map)),
     }
 }
@@ -2249,8 +2572,18 @@ pub fn substitute_either_block(block: &EitherBlock, param_map: &HashMap<String, 
 pub fn substitute_stmt(stmt: &Stmt, param_map: &HashMap<String, Expr>) -> Stmt {
     match stmt {
         Stmt::Declaration(decl) => Stmt::Declaration(decl.clone()),
-        Stmt::Block(stmts) => Stmt::Block(stmts.iter().map(|s| substitute_stmt(s, param_map)).collect()),
-        Stmt::ThisBlock(stmts) => Stmt::ThisBlock(stmts.iter().map(|s| substitute_stmt(s, param_map)).collect()),
+        Stmt::Block(stmts) => Stmt::Block(
+            stmts
+                .iter()
+                .map(|s| substitute_stmt(s, param_map))
+                .collect(),
+        ),
+        Stmt::ThisBlock(stmts) => Stmt::ThisBlock(
+            stmts
+                .iter()
+                .map(|s| substitute_stmt(s, param_map))
+                .collect(),
+        ),
         Stmt::CompileValidation { body, args } => Stmt::CompileValidation {
             body: body.iter().map(|s| substitute_stmt(s, param_map)).collect(),
             args: args.iter().map(|a| substitute_expr(a, param_map)).collect(),
@@ -2260,13 +2593,26 @@ pub fn substitute_stmt(stmt: &Stmt, param_map: &HashMap<String, Expr>) -> Stmt {
             set: substitute_expr(set, param_map),
             body: body.iter().map(|s| substitute_stmt(s, param_map)).collect(),
         },
-        Stmt::SwitchStmt { name, condition, cases } => Stmt::SwitchStmt {
+        Stmt::SwitchStmt {
+            name,
+            condition,
+            cases,
+        } => Stmt::SwitchStmt {
             name: name.clone(),
             condition: substitute_expr(condition, param_map),
-            cases: cases.iter().map(|s| substitute_stmt(s, param_map)).collect(),
+            cases: cases
+                .iter()
+                .map(|s| substitute_stmt(s, param_map))
+                .collect(),
         },
-        Stmt::ReturnStmt(opt_expr) => Stmt::ReturnStmt(opt_expr.as_ref().map(|e| substitute_expr(e, param_map))),
-        Stmt::ForIn { item_decl, iterable, body } => Stmt::ForIn {
+        Stmt::ReturnStmt(opt_expr) => {
+            Stmt::ReturnStmt(opt_expr.as_ref().map(|e| substitute_expr(e, param_map)))
+        }
+        Stmt::ForIn {
+            item_decl,
+            iterable,
+            body,
+        } => Stmt::ForIn {
             item_decl: Box::new(substitute_stmt(item_decl, param_map)),
             iterable: substitute_expr(iterable, param_map),
             body: body.iter().map(|s| substitute_stmt(s, param_map)).collect(),
@@ -2274,14 +2620,26 @@ pub fn substitute_stmt(stmt: &Stmt, param_map: &HashMap<String, Expr>) -> Stmt {
         Stmt::BreakStmt => Stmt::BreakStmt,
         Stmt::ContinueStmt => Stmt::ContinueStmt,
         Stmt::LeaveStmt => Stmt::LeaveStmt,
-        Stmt::YieldStmt(opt_expr) => Stmt::YieldStmt(opt_expr.as_ref().map(|e| substitute_expr(e, param_map))),
+        Stmt::YieldStmt(opt_expr) => {
+            Stmt::YieldStmt(opt_expr.as_ref().map(|e| substitute_expr(e, param_map)))
+        }
         Stmt::CallStmt(e) => Stmt::CallStmt(substitute_expr(e, param_map)),
         Stmt::ExpressionStmt(e) => Stmt::ExpressionStmt(substitute_expr(e, param_map)),
         Stmt::ThrowStmt(e) => Stmt::ThrowStmt(substitute_expr(e, param_map)),
-        Stmt::TryCatchStmt { try_block, catch_param, catch_block } => Stmt::TryCatchStmt {
-            try_block: try_block.iter().map(|s| substitute_stmt(s, param_map)).collect(),
+        Stmt::TryCatchStmt {
+            try_block,
+            catch_param,
+            catch_block,
+        } => Stmt::TryCatchStmt {
+            try_block: try_block
+                .iter()
+                .map(|s| substitute_stmt(s, param_map))
+                .collect(),
             catch_param: catch_param.clone(),
-            catch_block: catch_block.iter().map(|s| substitute_stmt(s, param_map)).collect(),
+            catch_block: catch_block
+                .iter()
+                .map(|s| substitute_stmt(s, param_map))
+                .collect(),
         },
         Stmt::ReassignStmt { target, op, value } => Stmt::ReassignStmt {
             target: substitute_expr(target, param_map),
@@ -2293,10 +2651,19 @@ pub fn substitute_stmt(stmt: &Stmt, param_map: &HashMap<String, Expr>) -> Stmt {
             value: substitute_expr(value, param_map),
         },
         Stmt::GotoStmt(e) => Stmt::GotoStmt(substitute_expr(e, param_map)),
-        Stmt::IfStmt { condition, then_block, else_block } => Stmt::IfStmt {
+        Stmt::IfStmt {
+            condition,
+            then_block,
+            else_block,
+        } => Stmt::IfStmt {
             condition: substitute_expr(condition, param_map),
-            then_block: then_block.iter().map(|s| substitute_stmt(s, param_map)).collect(),
-            else_block: else_block.as_ref().map(|eb| eb.iter().map(|s| substitute_stmt(s, param_map)).collect()),
+            then_block: then_block
+                .iter()
+                .map(|s| substitute_stmt(s, param_map))
+                .collect(),
+            else_block: else_block
+                .as_ref()
+                .map(|eb| eb.iter().map(|s| substitute_stmt(s, param_map)).collect()),
         },
         Stmt::LoopStmt { count, body } => Stmt::LoopStmt {
             count: count.as_ref().map(|c| substitute_expr(c, param_map)),
@@ -2310,13 +2677,26 @@ pub fn substitute_stmt(stmt: &Stmt, param_map: &HashMap<String, Expr>) -> Stmt {
             body: substitute_either_block(body, param_map),
             condition: substitute_expr(condition, param_map),
         },
-        Stmt::ForStmt { init, condition, increment, body } => Stmt::ForStmt {
-            init: init.as_ref().map(|i| Box::new(substitute_stmt(i, param_map))),
+        Stmt::ForStmt {
+            init,
+            condition,
+            increment,
+            body,
+        } => Stmt::ForStmt {
+            init: init
+                .as_ref()
+                .map(|i| Box::new(substitute_stmt(i, param_map))),
             condition: condition.as_ref().map(|c| substitute_expr(c, param_map)),
-            increment: increment.as_ref().map(|inc| Box::new(substitute_stmt(inc, param_map))),
+            increment: increment
+                .as_ref()
+                .map(|inc| Box::new(substitute_stmt(inc, param_map))),
             body: substitute_either_block(body, param_map),
         },
-        Stmt::ForInStmt { item, iterable, body } => Stmt::ForInStmt {
+        Stmt::ForInStmt {
+            item,
+            iterable,
+            body,
+        } => Stmt::ForInStmt {
             item: Box::new(substitute_stmt(item, param_map)),
             iterable: substitute_expr(iterable, param_map),
             body: substitute_either_block(body, param_map),
@@ -2326,6 +2706,42 @@ pub fn substitute_stmt(stmt: &Stmt, param_map: &HashMap<String, Expr>) -> Stmt {
             is_array: *is_array,
         },
         Stmt::UsingStmt(s) => Stmt::UsingStmt(s.clone()),
+        Stmt::SetNamespace(s) => Stmt::SetNamespace(s.clone()),
+    }
+}
+
+fn expr_references_params(expr: &Expr, params: &[Param], generics: &[BaseType]) -> bool {
+    match expr {
+        Expr::Identifier(id) => {
+            params.iter().any(|p| &p.name == id)
+                || generics.iter().any(|g| {
+                    let s = g.as_str();
+                    s == *id || format!("...{}", s) == *id
+                })
+        }
+        Expr::Call { callee, args, .. } => {
+            expr_references_params(callee, params, generics)
+                || args
+                    .iter()
+                    .any(|a| expr_references_params(a, params, generics))
+        }
+        Expr::PropertyAccess { object, .. } => expr_references_params(object, params, generics),
+        Expr::NamespaceAccess {
+            namespace: _,
+            property,
+        } => expr_references_params(property, params, generics),
+        Expr::UnaryOp { operand, .. } => expr_references_params(operand, params, generics),
+        Expr::BinaryOp { left, right, .. } => {
+            expr_references_params(left, params, generics)
+                || expr_references_params(right, params, generics)
+        }
+        Expr::IndexAccess { object, indices } => {
+            expr_references_params(object, params, generics)
+                || indices
+                    .iter()
+                    .any(|i| expr_references_params(i, params, generics))
+        }
+        _ => false,
     }
 }
 
@@ -2352,6 +2768,14 @@ impl Interpreter {
                 let mut raw_branches: Vec<(Option<Expr>, Vec<Stmt>)> = Vec::new();
 
                 if let Stmt::IfStmt { condition, .. } = s {
+                    if !expr_references_params(condition, params, generics) {
+                        let mut cond_clone = condition.clone();
+                        if self.fold_expr(&mut cond_clone).is_ok() {
+                            if matches!(cond_clone, Expr::LiteralBool(_)) {
+                                continue;
+                            }
+                        }
+                    }
                     if is_compile_condition(condition) {
                         let mut curr = s;
                         loop {
@@ -2380,11 +2804,16 @@ impl Interpreter {
                             }
                         }
                     }
-                } else if let Stmt::SwitchStmt { condition, cases, .. } = s {
-                    if is_compile_condition(condition) || cases.iter().any(|c| match c {
-                        Stmt::CaseStmt { option, .. } => is_compile_condition(option),
-                        _ => false,
-                    }) {
+                } else if let Stmt::SwitchStmt {
+                    condition, cases, ..
+                } = s
+                {
+                    if is_compile_condition(condition)
+                        || cases.iter().any(|c| match c {
+                            Stmt::CaseStmt { option, .. } => is_compile_condition(option),
+                            _ => false,
+                        })
+                    {
                         for c in cases {
                             if let Stmt::CaseStmt { option, body, .. } = c {
                                 if matches!(option, Expr::Identifier(ref id) if id == "void") {
@@ -2432,12 +2861,20 @@ impl Interpreter {
         None
     }
 
-    pub fn build_micro_param_map(&mut self, params: &[Param], args: &[Expr]) -> HashMap<String, Expr> {
+    pub fn build_micro_param_map(
+        &mut self,
+        params: &[Param],
+        args: &[Expr],
+    ) -> HashMap<String, Expr> {
         let mut map = HashMap::new();
         for (p, arg) in params.iter().zip(args.iter()) {
             let param_ty = p.type_node.as_str();
             let arg_ty = self.get_expr_type(arg);
-            let mapped = if param_ty != "unknown" && param_ty != "void" && arg_ty != "unknown" && param_ty != arg_ty {
+            let mapped = if param_ty != "unknown"
+                && param_ty != "void"
+                && arg_ty != "unknown"
+                && param_ty != arg_ty
+            {
                 Expr::Cast {
                     expr: Box::new(arg.clone()),
                     target_type: p.type_node.clone(),
@@ -2455,10 +2892,16 @@ impl Interpreter {
         for mut stmt in stmts.drain(..) {
             match &mut stmt {
                 Stmt::CompileValidation { body: _, args } => {
+                    if self.in_function_body {
+                        // Belongs to the containing function definition.
+                        // Do NOT execute or strip at declaration time; callers will evaluate it on each call.
+                        new_stmts.push(stmt);
+                        continue;
+                    }
                     for a in args.iter_mut() {
                         self.fold_expr(a)?;
                     }
-                    let mut all_literals = true;
+                    let all_literals = true;
                     for a in args.iter() {
                         let resolved = if let Expr::Identifier(id) = a {
                             self.env.get(id).unwrap_or_else(|_| a.clone())
@@ -2466,25 +2909,25 @@ impl Interpreter {
                             a.clone()
                         };
                         if !is_literal(&resolved) {
-                            all_literals = false;
-                            if !self.in_function_body {
-                                return Err(format!(
-                                    "Compile Error: Argument '{}' in @compile validation cannot be evaluated at compile time. Dynamic runtime values are rejected.",
-                                    self.format_expr_for_print(a)
-                                ));
-                            }
-                            break;
+                            return Err(format!(
+                                "Compile Error: Argument '{}' in @compile validation cannot be evaluated at compile time. Dynamic runtime values are rejected.",
+                                self.format_expr_for_print(a)
+                            ));
                         }
                     }
                     if all_literals {
                         self.eval_stmt(&stmt)?;
                     }
-                    // Compile-time validation block succeeded or deferred! Strip from AST so C++ codegen never sees it.
+                    // Compile-time validation block succeeded! Strip from top-level AST so C++ codegen never sees it.
                     continue;
                 }
                 Stmt::Declaration(decl) => {
-                    if let Decl::MicroDecl { name, params, body, .. } = decl {
-                        self.micros.insert(name.clone(), (params.clone(), body.clone()));
+                    if let Decl::MicroDecl {
+                        name, params, body, ..
+                    } = decl
+                    {
+                        self.micros
+                            .insert(name.clone(), (params.clone(), body.clone()));
                         // Micros are 100% compile-time pure AST replacements.
                         // Strip their declaration from the AST so C++ codegen never generates code for them!
                         continue;
@@ -2585,13 +3028,114 @@ impl Interpreter {
                     self.evaluate_either_block(body)?;
                     new_stmts.push(stmt);
                 }
-                Stmt::ForStmt { body, .. } => {
+                Stmt::ForStmt {
+                    init,
+                    condition,
+                    increment,
+                    body,
+                } => {
+                    let mut prev_vars = Vec::new();
+                    if let Some(i) = init {
+                        match &mut **i {
+                            Stmt::Declaration(Decl::VarDecl {
+                                name,
+                                type_node,
+                                value,
+                                ..
+                            }) => {
+                                self.fold_expr(value)?;
+                                let mut ty_name = self.resolve_type_str(&type_node.as_str());
+                                if (ty_name == "unknown" || ty_name == "auto")
+                                    && !matches!(value, Expr::LiteralVoid)
+                                {
+                                    let inferred = self.get_expr_type(value);
+                                    if inferred != "unknown" {
+                                        ty_name = inferred;
+                                    }
+                                }
+                                let prev = self.var_types.get(name).cloned();
+                                self.var_types.insert(name.clone(), ty_name);
+                                prev_vars.push((name.clone(), prev));
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(c) = condition {
+                        self.fold_expr(c)?;
+                    }
+                    if let Some(inc) = increment {
+                        match &mut **inc {
+                            Stmt::ReassignStmt { value, .. } => {
+                                self.fold_expr(value)?;
+                            }
+                            Stmt::ExpressionStmt(e) => {
+                                self.fold_expr(e)?;
+                            }
+                            _ => {}
+                        }
+                    }
                     self.evaluate_either_block(body)?;
+                    for (name, prev) in prev_vars {
+                        match prev {
+                            Some(t) => {
+                                self.var_types.insert(name, t);
+                            }
+                            None => {
+                                self.var_types.remove(&name);
+                            }
+                        }
+                    }
                     new_stmts.push(stmt);
                 }
-                Stmt::ForIn { iterable, body, .. } => {
+                Stmt::ForIn {
+                    item_decl,
+                    iterable,
+                    body,
+                } => {
                     self.fold_expr(iterable)?;
+                    let iterable_type = self.get_expr_type(iterable);
+                    let elem_type = self.infer_iterable_element_type(&iterable_type, iterable);
+
+                    let var_name = match &**item_decl {
+                        Stmt::Declaration(Decl::VarDecl {
+                            name, type_node, ..
+                        }) => {
+                            let ty_str = type_node.as_str();
+                            let final_ty =
+                                if ty_str != "auto" && ty_str != "unknown" && !ty_str.is_empty() {
+                                    self.resolve_type_str(&ty_str)
+                                } else {
+                                    elem_type.clone()
+                                };
+                            Some((name.clone(), final_ty))
+                        }
+                        Stmt::ExpressionStmt(Expr::Identifier(name)) => {
+                            Some((name.clone(), elem_type.clone()))
+                        }
+                        _ => None,
+                    };
+
+                    let prev_var = if let Some((ref name, ref ty)) = var_name {
+                        let prev = self.var_types.get(name).cloned();
+                        self.var_types.insert(name.clone(), ty.clone());
+                        Some((name.clone(), prev))
+                    } else {
+                        None
+                    };
+
                     self.evaluate_ast(body)?;
+
+                    if let Some((name, prev)) = prev_var {
+                        match prev {
+                            Some(t) => {
+                                self.var_types.insert(name, t);
+                            }
+                            None => {
+                                self.var_types.remove(&name);
+                            }
+                        }
+                    }
+
                     new_stmts.push(stmt);
                 }
                 Stmt::CaseStmt { option, set, body } => {
@@ -2631,16 +3175,26 @@ impl Interpreter {
                     }
                     new_stmts.push(stmt);
                 }
-                Stmt::SwitchStmt { condition, cases, .. } => {
+                Stmt::SwitchStmt {
+                    condition, cases, ..
+                } => {
                     self.fold_expr(condition)?;
                     let cond_type = self.get_expr_type(condition);
                     let prev_switch_type = self.current_switch_type.take();
-                    self.current_switch_type = if cond_type != "unknown" { Some(cond_type) } else { None };
+                    self.current_switch_type = if cond_type != "unknown" {
+                        Some(cond_type)
+                    } else {
+                        None
+                    };
                     self.evaluate_ast(cases)?;
                     self.current_switch_type = prev_switch_type;
                     new_stmts.push(stmt);
                 }
-                Stmt::TryCatchStmt { try_block, catch_block, .. } => {
+                Stmt::TryCatchStmt {
+                    try_block,
+                    catch_block,
+                    ..
+                } => {
                     self.evaluate_ast(try_block)?;
                     self.evaluate_ast(catch_block)?;
                     new_stmts.push(stmt);
@@ -2655,7 +3209,10 @@ impl Interpreter {
                     let micro_info = if let Expr::Call { callee, args, .. } = e {
                         let m_name = match &**callee {
                             Expr::Identifier(id) => Some(id.clone()),
-                            Expr::NamespaceAccess { namespace, property } => {
+                            Expr::NamespaceAccess {
+                                namespace,
+                                property,
+                            } => {
                                 if let Expr::Identifier(p) = &**property {
                                     Some(format!("{}::{}", namespace, p))
                                 } else {
@@ -2665,13 +3222,17 @@ impl Interpreter {
                             _ => None,
                         };
                         if let Some(ref name) = m_name {
-                            self.micros.get(name).cloned().or_else(|| {
-                                if let Some(short) = name.split("::").last() {
-                                    self.micros.get(short).cloned()
-                                } else {
-                                    None
-                                }
-                            }).map(|(params, body)| (params, args.clone(), body))
+                            self.micros
+                                .get(name)
+                                .cloned()
+                                .or_else(|| {
+                                    if let Some(short) = name.split("::").last() {
+                                        self.micros.get(short).cloned()
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .map(|(params, body)| (params, args.clone(), body))
                         } else {
                             None
                         }
@@ -2694,6 +3255,9 @@ impl Interpreter {
                     }
 
                     self.fold_expr(e)?;
+                    if matches!(e, Expr::LiteralVoid) {
+                        continue;
+                    }
                     new_stmts.push(stmt);
                 }
                 Stmt::DoWhileStmt { body, condition } => {
@@ -2701,9 +3265,111 @@ impl Interpreter {
                     self.evaluate_either_block(body)?;
                     new_stmts.push(stmt);
                 }
-                Stmt::ForInStmt { item: _, iterable, body } => {
+                Stmt::ForInStmt {
+                    item,
+                    iterable,
+                    body,
+                } => {
                     self.fold_expr(iterable)?;
+                    let iterable_type = self.get_expr_type(iterable);
+                    let elem_type = self.infer_iterable_element_type(&iterable_type, iterable);
+
+                    let var_name = match &**item {
+                        Stmt::Declaration(Decl::VarDecl {
+                            name, type_node, ..
+                        }) => {
+                            let ty_str = type_node.as_str();
+                            let final_ty =
+                                if ty_str != "auto" && ty_str != "unknown" && !ty_str.is_empty() {
+                                    self.resolve_type_str(&ty_str)
+                                } else {
+                                    elem_type.clone()
+                                };
+                            Some((name.clone(), final_ty))
+                        }
+                        Stmt::ExpressionStmt(Expr::Identifier(name)) => {
+                            Some((name.clone(), elem_type.clone()))
+                        }
+                        _ => None,
+                    };
+
+                    let prev_var = if let Some((ref name, ref ty)) = var_name {
+                        let prev = self.var_types.get(name).cloned();
+                        self.var_types.insert(name.clone(), ty.clone());
+                        Some((name.clone(), prev))
+                    } else {
+                        None
+                    };
+
                     self.evaluate_either_block(body)?;
+
+                    if let Some((name, prev)) = prev_var {
+                        match prev {
+                            Some(t) => {
+                                self.var_types.insert(name, t);
+                            }
+                            None => {
+                                self.var_types.remove(&name);
+                            }
+                        }
+                    }
+
+                    new_stmts.push(stmt);
+                }
+                _ => {
+                    new_stmts.push(stmt);
+                }
+            }
+        }
+        *stmts = new_stmts;
+        Ok(())
+    }
+
+    pub fn prune_static_branches(
+        &mut self,
+        stmts: &mut Vec<Stmt>,
+        params: &[Param],
+        generics: &[BaseType],
+    ) -> Result<(), String> {
+        let mut new_stmts = Vec::with_capacity(stmts.len());
+        for mut stmt in stmts.drain(..) {
+            match &mut stmt {
+                Stmt::IfStmt {
+                    condition,
+                    then_block,
+                    else_block,
+                } => {
+                    if !expr_references_params(condition, params, generics) {
+                        let mut cond_clone = condition.clone();
+                        if self.fold_expr(&mut cond_clone).is_ok() {
+                            if let Expr::LiteralBool(b) = cond_clone {
+                                if b {
+                                    self.prune_static_branches(then_block, params, generics)?;
+                                    new_stmts.append(then_block);
+                                } else if let Some(eb) = else_block {
+                                    self.prune_static_branches(eb, params, generics)?;
+                                    new_stmts.append(eb);
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                    self.prune_static_branches(then_block, params, generics)?;
+                    if let Some(eb) = else_block {
+                        self.prune_static_branches(eb, params, generics)?;
+                    }
+                    new_stmts.push(stmt);
+                }
+                Stmt::WhileStmt { body, .. } => {
+                    if let EitherBlock::Inline(b) = body {
+                        self.prune_static_branches(b, params, generics)?;
+                    }
+                    new_stmts.push(stmt);
+                }
+                Stmt::LoopStmt { body, .. } => {
+                    if let EitherBlock::Inline(b) = body {
+                        self.prune_static_branches(b, params, generics)?;
+                    }
                     new_stmts.push(stmt);
                 }
                 _ => {
@@ -2724,7 +3390,15 @@ impl Interpreter {
                 ..
             } => {
                 self.fold_expr(value)?;
-                let ty_name = self.resolve_type_str(&type_node.as_str());
+                let mut ty_name = self.resolve_type_str(&type_node.as_str());
+                if (ty_name == "unknown" || ty_name == "auto")
+                    && !matches!(value, Expr::LiteralVoid)
+                {
+                    let inferred = self.get_expr_type(value);
+                    if inferred != "unknown" {
+                        ty_name = inferred;
+                    }
+                }
                 self.var_types.insert(name.clone(), ty_name.clone());
                 if is_literal(value) {
                     self.env.define(name.clone(), value.clone());
@@ -2737,6 +3411,35 @@ impl Interpreter {
                             self.env.define(name.clone(), value.clone());
                         }
                     }
+                }
+            }
+            Decl::DestructureDecl {
+                type_node,
+                assignments,
+                ..
+            } => {
+                for (name, val) in assignments {
+                    self.fold_expr(val)?;
+                    let mut ty_name = self.resolve_type_str(&type_node.as_str());
+                    if (ty_name == "unknown" || ty_name == "auto")
+                        && !matches!(val, Expr::LiteralVoid)
+                    {
+                        let inferred = self.get_expr_type(val);
+                        if inferred != "unknown" {
+                            ty_name = inferred;
+                        }
+                    }
+                    self.var_types.insert(name.clone(), ty_name.clone());
+                    if is_literal(val) {
+                        self.env.define(name.clone(), val.clone());
+                    }
+                }
+            }
+            Decl::ObjectDestructureDecl { fields, rhs, .. } => {
+                self.fold_expr(rhs)?;
+                for (ty, name) in fields {
+                    let ty_name = self.resolve_type_str(&ty.as_str());
+                    self.var_types.insert(name.clone(), ty_name);
                 }
             }
             Decl::ArrayDecl {
@@ -2756,19 +3459,31 @@ impl Interpreter {
                 name,
                 generics,
                 params,
+                return_type,
                 body,
                 ..
             } => {
-                self.functions.insert(
-                    name.clone(),
-                    (generics.clone(), params.clone(), body.clone()),
-                );
+                if let BaseType::TypeExpr(_) = return_type {
+                    if let Some(sigs) = self.fn_overloads.get(name) {
+                        if let Some(sig) = sigs.first() {
+                            if !matches!(sig.return_type, BaseType::TypeExpr(_)) {
+                                *return_type = sig.return_type.clone();
+                            }
+                        }
+                    }
+                }
                 let prev_in_func = self.in_function_body;
                 self.in_function_body = true;
                 if generics.is_empty() {
                     self.evaluate_ast(body)?;
+                } else {
+                    self.prune_static_branches(body, params, generics)?;
                 }
                 self.in_function_body = prev_in_func;
+                self.functions.insert(
+                    name.clone(),
+                    (generics.clone(), params.clone(), body.clone()),
+                );
             }
             Decl::ClassDecl {
                 name,
@@ -3033,7 +3748,10 @@ impl Interpreter {
                 let target_opt: Option<&Expr> = match ret_expr {
                     Expr::Call { callee, args, .. } => {
                         let is_compile_access = match &**callee {
-                            Expr::NamespaceAccess { namespace, property } => {
+                            Expr::NamespaceAccess {
+                                namespace,
+                                property,
+                            } => {
                                 namespace == "@compile"
                                     && matches!(&**property, Expr::Identifier(p) if p == "access")
                             }
@@ -3065,10 +3783,12 @@ impl Interpreter {
                             || target_bp.methods.contains_key(prop_name)
                             || target_bp.handle_signatures.contains_key(prop_name);
                         if !has_member {
-                            return self.fastlang_throw(&format!(
-                                "Member '{}' not found on type '{}'",
-                                prop_name, clean_target
-                            )).map(|_| None);
+                            return self
+                                .fastlang_throw(&format!(
+                                    "Member '{}' not found on type '{}'",
+                                    prop_name, clean_target
+                                ))
+                                .map(|_| None);
                         }
                     }
                     return Ok(Some(Expr::PropertyAccess {
@@ -3102,15 +3822,28 @@ impl Interpreter {
                 self.fold_expr(right)?;
 
                 if operator == "->" || operator == "=>" {
-                    let handle_name = if operator == "->" { "arrow" } else { "fat_arrow" };
+                    let handle_name = if operator == "->" {
+                        "arrow"
+                    } else {
+                        "fat_arrow"
+                    };
                     if let Expr::Identifier(prop_name) = &**right {
-                        if let Some(expanded) = self.try_expand_access_handle(left, prop_name, handle_name)? {
+                        if let Some(expanded) =
+                            self.try_expand_access_handle(left, prop_name, handle_name)?
+                        {
                             *expr = expanded;
                             return self.fold_expr(expr);
                         }
-                    } else if let Expr::Call { callee, generics, args } = &**right {
+                    } else if let Expr::Call {
+                        callee,
+                        generics,
+                        args,
+                    } = &**right
+                    {
                         if let Expr::Identifier(prop_name) = &**callee {
-                            if let Some(expanded) = self.try_expand_access_handle(left, prop_name, handle_name)? {
+                            if let Some(expanded) =
+                                self.try_expand_access_handle(left, prop_name, handle_name)?
+                            {
                                 *expr = Expr::Call {
                                     callee: Box::new(expanded),
                                     generics: generics.clone(),
@@ -3119,6 +3852,48 @@ impl Interpreter {
                                 return self.fold_expr(expr);
                             }
                         }
+                    }
+                }
+
+                // Namespace / Enum comparison, e.g. Backend::Cpp == Backend::Cpp
+                if operator == "==" || operator == "!=" {
+                    let extract_ns = |e: &Expr| -> Option<(String, String)> {
+                        match e {
+                            Expr::NamespaceAccess {
+                                namespace,
+                                property,
+                            } => {
+                                if let Expr::Identifier(p) = &**property {
+                                    Some((namespace.clone(), p.clone()))
+                                } else {
+                                    None
+                                }
+                            }
+                            _ => None,
+                        }
+                    };
+                    if let (Some((l_ns, l_prop)), Some((r_ns, r_prop))) =
+                        (extract_ns(left), extract_ns(right))
+                    {
+                        if l_ns == r_ns {
+                            let eq = l_prop == r_prop;
+                            let res = if operator == "==" { eq } else { !eq };
+                            *expr = Expr::LiteralBool(res);
+                            return Ok(());
+                        }
+                    }
+                }
+
+                if operator == "&&" {
+                    if let (Expr::LiteralBool(l), Expr::LiteralBool(r)) = (&**left, &**right) {
+                        *expr = Expr::LiteralBool(*l && *r);
+                        return Ok(());
+                    }
+                }
+                if operator == "||" {
+                    if let (Expr::LiteralBool(l), Expr::LiteralBool(r)) = (&**left, &**right) {
+                        *expr = Expr::LiteralBool(*l || *r);
+                        return Ok(());
                     }
                 }
 
@@ -3166,7 +3941,9 @@ impl Interpreter {
                     self.fold_expr(a)?;
                 }
                 if args.is_empty() {
-                    if let Some(expanded) = self.try_expand_access_handle(object, handle_name, "handle_access")? {
+                    if let Some(expanded) =
+                        self.try_expand_access_handle(object, handle_name, "handle_access")?
+                    {
                         *expr = expanded;
                         return self.fold_expr(expr);
                     }
@@ -3176,10 +3953,41 @@ impl Interpreter {
                 namespace,
                 property,
             } => {
+                if namespace == "@compile" {
+                    if let Expr::Identifier(prop_name) = &**property {
+                        if prop_name == "backend" {
+                            let variant = if self.target_backend == "cranelift" {
+                                "Cranelift"
+                            } else {
+                                "Cpp"
+                            };
+                            *expr = Expr::NamespaceAccess {
+                                namespace: "Backend".to_string(),
+                                property: Box::new(Expr::Identifier(variant.to_string())),
+                            };
+                            return Ok(());
+                        } else if prop_name == "system" {
+                            let variant = if cfg!(target_os = "windows") {
+                                "Windows"
+                            } else if cfg!(target_os = "macos") {
+                                "MacOS"
+                            } else {
+                                "Linux"
+                            };
+                            *expr = Expr::NamespaceAccess {
+                                namespace: "System".to_string(),
+                                property: Box::new(Expr::Identifier(variant.to_string())),
+                            };
+                            return Ok(());
+                        }
+                    }
+                }
                 self.fold_expr(property)?;
                 if let Expr::Identifier(prop_name) = &**property {
                     let obj_expr = Expr::Identifier(namespace.clone());
-                    if let Some(expanded) = self.try_expand_access_handle(&obj_expr, prop_name, "namespace_access")? {
+                    if let Some(expanded) =
+                        self.try_expand_access_handle(&obj_expr, prop_name, "namespace_access")?
+                    {
                         *expr = expanded;
                         return self.fold_expr(expr);
                     }
@@ -3190,6 +3998,84 @@ impl Interpreter {
                 target_type,
             } => {
                 self.fold_expr(inner)?;
+
+                // Execute @compile validation block from cast handle if defined (e.g. array::cast)
+                let inner_type = self.get_expr_type(inner);
+                let (base_name, elem_type) = if inner_type.ends_with("[]") {
+                    (
+                        "array".to_string(),
+                        inner_type[..inner_type.len() - 2].trim().to_string(),
+                    )
+                } else if inner_type.starts_with("array<") && inner_type.ends_with('>') {
+                    (
+                        "array".to_string(),
+                        inner_type["array<".len()..inner_type.len() - 1]
+                            .trim()
+                            .to_string(),
+                    )
+                } else {
+                    (
+                        self.extract_clean_blueprint_name(&inner_type),
+                        inner_type.clone(),
+                    )
+                };
+
+                if elem_type != "unknown"
+                    && elem_type != "T"
+                    && !matches!(target_type, BaseType::GenericParam(_))
+                {
+                    let cast_fn_key = format!("{}::cast", base_name);
+                    let found_fn = self.functions.get(&cast_fn_key).cloned().or_else(|| {
+                        if base_name == "array" {
+                            self.functions.get("cast").cloned()
+                        } else {
+                            None
+                        }
+                    });
+
+                    if let Some((_fn_generics, _params, body)) = found_fn {
+                        for stmt in &body {
+                            if let Stmt::CompileValidation { body: val_body, .. } = stmt {
+                                let mut val_interp = Interpreter {
+                                    env: InterpreterEnv::with_parent(self.env.clone()),
+                                    functions: self.functions.clone(),
+                                    micros: self.micros.clone(),
+                                    var_types: self.var_types.clone(),
+                                    current_env: self.current_env.clone(),
+                                    fn_overloads: self.fn_overloads.clone(),
+                                    split_functions: self.split_functions.clone(),
+                                    in_function_body: true,
+                                    current_switch_type: None,
+                                    current_type: self.current_type.clone(),
+                                    target_backend: self.target_backend.clone(),
+                                };
+
+                                if base_name == "array" {
+                                    val_interp.env.define(
+                                        "T".to_string(),
+                                        Expr::LiteralString(format!("type<{}>", elem_type)),
+                                    );
+                                    val_interp
+                                        .var_types
+                                        .insert("T".to_string(), "type".to_string());
+                                }
+                                val_interp.env.define(
+                                    "Target".to_string(),
+                                    Expr::LiteralString(format!("type<{}>", target_type.as_str())),
+                                );
+                                val_interp
+                                    .var_types
+                                    .insert("Target".to_string(), "type".to_string());
+                                val_interp.env.define("this".to_string(), (**inner).clone());
+
+                                for s in val_body {
+                                    val_interp.eval_stmt(s)?;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 let resolved = if let Expr::Identifier(id) = &**inner {
                     self.env.get(id).unwrap_or_else(|_| *inner.clone())
                 } else {
@@ -3203,7 +4089,9 @@ impl Interpreter {
             }
             Expr::PropertyAccess { object, property } => {
                 self.fold_expr(object)?;
-                if let Some(expanded) = self.try_expand_access_handle(object, property, "property_access")? {
+                if let Some(expanded) =
+                    self.try_expand_access_handle(object, property, "property_access")?
+                {
                     *expr = expanded;
                     return self.fold_expr(expr);
                 }
@@ -3260,11 +4148,50 @@ impl Interpreter {
                     self.fold_expr(a)?;
                 }
 
+                if let Expr::NamespaceAccess {
+                    namespace,
+                    property,
+                } = &**callee
+                {
+                    if namespace == "@compile" {
+                        if let Expr::Identifier(prop_name) = &**property {
+                            if prop_name == "backend" {
+                                let variant = if self.target_backend == "cranelift" {
+                                    "Cranelift"
+                                } else {
+                                    "Cpp"
+                                };
+                                *expr = Expr::NamespaceAccess {
+                                    namespace: "Backend".to_string(),
+                                    property: Box::new(Expr::Identifier(variant.to_string())),
+                                };
+                                return Ok(());
+                            } else if prop_name == "system" {
+                                let variant = if cfg!(target_os = "windows") {
+                                    "Windows"
+                                } else if cfg!(target_os = "macos") {
+                                    "MacOS"
+                                } else {
+                                    "Linux"
+                                };
+                                *expr = Expr::NamespaceAccess {
+                                    namespace: "System".to_string(),
+                                    property: Box::new(Expr::Identifier(variant.to_string())),
+                                };
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+
                 // Expand micro calls in expression contexts
                 let micro_info = {
                     let m_name = match &**callee {
                         Expr::Identifier(id) => Some(id.clone()),
-                        Expr::NamespaceAccess { namespace, property } => {
+                        Expr::NamespaceAccess {
+                            namespace,
+                            property,
+                        } => {
                             if let Expr::Identifier(p) = &**property {
                                 Some(format!("{}::{}", namespace, p))
                             } else {
@@ -3379,7 +4306,8 @@ impl Interpreter {
                                         let v = self.eval_expr(a).unwrap_or_else(|_| a.clone());
                                         self.extract_type_or_name(&v)
                                     });
-                                    *expr = Expr::LiteralBool(ft.has_handle_query(&s1, s2.as_deref()));
+                                    *expr =
+                                        Expr::LiteralBool(ft.has_handle_query(&s1, s2.as_deref()));
                                     return Ok(());
                                 }
                                 *expr = Expr::LiteralBool(false);
@@ -3395,7 +4323,8 @@ impl Interpreter {
                                         let v = self.eval_expr(a).unwrap_or_else(|_| a.clone());
                                         self.extract_type_or_name(&v)
                                     });
-                                    *expr = Expr::LiteralBool(ft.has_method_query(&s1, s2.as_deref()));
+                                    *expr =
+                                        Expr::LiteralBool(ft.has_method_query(&s1, s2.as_deref()));
                                     return Ok(());
                                 }
                                 *expr = Expr::LiteralBool(false);
@@ -3411,7 +4340,8 @@ impl Interpreter {
                                         let v = self.eval_expr(a).unwrap_or_else(|_| a.clone());
                                         self.extract_type_or_name(&v)
                                     });
-                                    *expr = Expr::LiteralBool(ft.has_field_query(&s1, s2.as_deref()));
+                                    *expr =
+                                        Expr::LiteralBool(ft.has_field_query(&s1, s2.as_deref()));
                                     return Ok(());
                                 }
                                 *expr = Expr::LiteralBool(false);
@@ -3481,37 +4411,6 @@ impl Interpreter {
                             return Ok(());
                         }
                     }
-                }
-
-                if fn_name == "print"
-                    && matches!(&**callee, Expr::NamespaceAccess { namespace, .. } if namespace == "@compile")
-                {
-                    let mut parts = Vec::new();
-                    for arg in args.iter() {
-                        let val = self.eval_expr(arg).unwrap_or_else(|_| arg.clone());
-                        if let Expr::ArrayLiteral(elems) = val {
-                            for elem in elems {
-                                parts.push(self.format_expr_for_print(&elem));
-                            }
-                        } else {
-                            parts.push(self.format_expr_for_print(&val));
-                        }
-                    }
-                    println!("{}", parts.join(" "));
-                    *expr = Expr::LiteralVoid;
-                    return Ok(());
-                }
-
-                if (fn_name == "throw"
-                    && matches!(&**callee, Expr::NamespaceAccess { namespace, .. } if namespace == "@compile"))
-                    || fn_name == "@compile::throw"
-                {
-                    let msg = if let Some(arg) = args.first() {
-                        self.extract_string_from_expr(arg)
-                    } else {
-                        "compile-time throw".to_string()
-                    };
-                    return self.fastlang_throw(&msg).map(|_| ());
                 }
 
                 if fn_name == "rand" {
@@ -3614,6 +4513,7 @@ impl Interpreter {
                         in_function_body: true,
                         current_switch_type: None,
                         current_type: self.current_type.clone(),
+                        target_backend: self.target_backend.clone(),
                     };
                     for (i, p) in params.iter().enumerate() {
                         if let Some(arg_val) = eval_args.get(i) {
@@ -3654,7 +4554,10 @@ impl Interpreter {
                 // Check if called function has a compile-time validation block (@compile { ... }(args))
                 let fn_candidates = match &**callee {
                     Expr::Identifier(id) => vec![id.clone()],
-                    Expr::NamespaceAccess { namespace, property } => {
+                    Expr::NamespaceAccess {
+                        namespace,
+                        property,
+                    } => {
                         if let Expr::Identifier(p) = &**property {
                             vec![format!("{}::{}", namespace, p), p.clone()]
                         } else {
@@ -3676,48 +4579,82 @@ impl Interpreter {
                     }
                 }
                 if let Some((fn_generics, params, body)) = found_fn {
-                    for stmt in &body {
-                        if let Stmt::CompileValidation { body: val_body, args: _ } = stmt {
-                            let mut eval_args = Vec::new();
-                            for a in args.iter() {
-                                eval_args.push(self.eval_expr(a).unwrap_or_else(|_| a.clone()));
-                            }
-                            let arg_types: Vec<String> =
-                                eval_args.iter().map(|a| self.fastlang_typeof(a)).collect();
-                            let generic_map =
-                                crate::middle_end::semantic::analyzer::resolve_call_generics(
-                                    &fn_generics,
-                                    &params,
-                                    generics,
-                                    &arg_types,
-                                );
-                            let mut val_interp = Interpreter {
-                                env: InterpreterEnv::with_parent(self.env.clone()),
-                                functions: self.functions.clone(),
-                                micros: self.micros.clone(),
-                                var_types: self.var_types.clone(),
-                                current_env: self.current_env.clone(),
-                                fn_overloads: self.fn_overloads.clone(),
-                                split_functions: self.split_functions.clone(),
-                                in_function_body: true,
-                                current_switch_type: None,
-                                current_type: self.current_type.clone(),
-                            };
-                            for (g_name, g_type) in &generic_map {
-                                val_interp.env.define(
-                                    g_name.clone(),
-                                    Expr::LiteralString(format!("type<{}>", g_type.as_str())),
-                                );
-                            }
-                            for (i, p) in params.iter().enumerate() {
-                                if let Some(arg_val) = eval_args.get(i) {
-                                    val_interp.env.define(p.name.clone(), arg_val.clone());
-                                    let arg_t = self.get_expr_type(arg_val);
-                                    val_interp.var_types.insert(p.name.clone(), arg_t);
+                    let is_fn_fully_compilable =
+                        crate::middle_end::semantic::analyzer::detect_execution_mode(&body)
+                            == ExecutionMode::FullyCompilable;
+                    if !is_fn_fully_compilable {
+                        for stmt in &body {
+                            if let Stmt::CompileValidation {
+                                body: val_body,
+                                args: _,
+                            } = stmt
+                            {
+                                let mut eval_args = Vec::new();
+                                for a in args.iter() {
+                                    eval_args.push(self.eval_expr(a).unwrap_or_else(|_| a.clone()));
                                 }
-                            }
-                            for s in val_body {
-                                val_interp.eval_stmt(s)?;
+                                let arg_types: Vec<String> =
+                                    eval_args.iter().map(|a| self.fastlang_typeof(a)).collect();
+                                let generic_map =
+                                    crate::middle_end::semantic::analyzer::resolve_call_generics(
+                                        &fn_generics,
+                                        &params,
+                                        generics,
+                                        &arg_types,
+                                    );
+                                let mut val_interp = Interpreter {
+                                    env: InterpreterEnv::with_parent(self.env.clone()),
+                                    functions: self.functions.clone(),
+                                    micros: self.micros.clone(),
+                                    var_types: self.var_types.clone(),
+                                    current_env: self.current_env.clone(),
+                                    fn_overloads: self.fn_overloads.clone(),
+                                    split_functions: self.split_functions.clone(),
+                                    in_function_body: true,
+                                    current_switch_type: None,
+                                    current_type: self.current_type.clone(),
+                                    target_backend: self.target_backend.clone(),
+                                };
+                                for (g_name, g_type) in &generic_map {
+                                    val_interp.env.define(
+                                        g_name.clone(),
+                                        Expr::LiteralString(format!("type<{}>", g_type.as_str())),
+                                    );
+                                }
+                                for (i, p) in params.iter().enumerate() {
+                                    if p.is_variadic {
+                                        let rest_args = if i < eval_args.len() {
+                                            eval_args[i..].to_vec()
+                                        } else {
+                                            Vec::new()
+                                        };
+                                        val_interp
+                                            .env
+                                            .define(p.name.clone(), Expr::ArrayLiteral(rest_args));
+                                        val_interp
+                                            .var_types
+                                            .insert(p.name.clone(), "array".to_string());
+                                        break;
+                                    }
+                                    let arg_val = if let Some(val) = eval_args.get(i) {
+                                        Some(val.clone())
+                                    } else if let Some(ref def) = p.default_value {
+                                        let folded = val_interp
+                                            .eval_expr(def)
+                                            .unwrap_or_else(|_| def.clone());
+                                        Some(folded)
+                                    } else {
+                                        None
+                                    };
+                                    if let Some(val) = arg_val {
+                                        val_interp.env.define(p.name.clone(), val.clone());
+                                        let arg_t = val_interp.get_expr_type(&val);
+                                        val_interp.var_types.insert(p.name.clone(), arg_t);
+                                    }
+                                }
+                                for s in val_body {
+                                    val_interp.eval_stmt(s)?;
+                                }
                             }
                         }
                     }
@@ -3725,15 +4662,30 @@ impl Interpreter {
 
                 // Evaluate via interpreter if compile-time function
                 let is_compilable = match &**callee {
-                    Expr::NamespaceAccess { namespace, .. } if namespace == "@compile" => true,
-                    Expr::Identifier(id) => {
-                        id.starts_with("@compile::") || {
-                            if let Some((_, _, body)) = self.functions.get(id) {
-                                crate::middle_end::semantic::analyzer::detect_execution_mode(body)
-                                    == ExecutionMode::FullyCompilable
+                    Expr::NamespaceAccess {
+                        namespace,
+                        property,
+                    } if namespace == "@compile" => {
+                        if let Expr::Identifier(p) = &**property {
+                            if p == "print" {
+                                !self.in_function_body
                             } else {
-                                false
+                                true
                             }
+                        } else {
+                            true
+                        }
+                    }
+                    Expr::Identifier(id) => {
+                        if id == "@compile::print" {
+                            !self.in_function_body
+                        } else if id.starts_with("@compile::") {
+                            true
+                        } else if let Some((_, _, body)) = self.functions.get(id) {
+                            crate::middle_end::semantic::analyzer::detect_execution_mode(body)
+                                == ExecutionMode::FullyCompilable
+                        } else {
+                            false
                         }
                     }
                     _ => false,
@@ -3745,7 +4697,9 @@ impl Interpreter {
                             if is_literal(&res)
                                 || matches!(
                                     &res,
-                                    Expr::UnaryOp { .. } | Expr::PropertyAccess { .. }
+                                    Expr::UnaryOp { .. }
+                                        | Expr::PropertyAccess { .. }
+                                        | Expr::LiteralVoid
                                 )
                             {
                                 *expr = res;
@@ -3761,6 +4715,26 @@ impl Interpreter {
             }
             Expr::QuestionMark(inner) => {
                 self.fold_expr(inner)?;
+            }
+            Expr::IfExpr {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.fold_expr(condition)?;
+                if let Expr::LiteralBool(b) = **condition {
+                    if b {
+                        self.fold_expr(then_branch)?;
+                        *expr = (**then_branch).clone();
+                    } else {
+                        self.fold_expr(else_branch)?;
+                        *expr = (**else_branch).clone();
+                    }
+                    return Ok(());
+                } else {
+                    self.fold_expr(then_branch)?;
+                    self.fold_expr(else_branch)?;
+                }
             }
             _ => {}
         }

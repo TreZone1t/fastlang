@@ -17,7 +17,11 @@
 **/.vscode
 **/.idea
 **/.vs
-.json
+*.json
+packages/
+tests/test_*.html
+tests/test_*.json
+tests/test_temp.json
 
 # Ignore all files in the "build" directory
 build/*
@@ -28,3 +32,5 @@ examples/build/*
 !build/Cargo.toml
 Cargo.lock
 *.log
+# Large third-party C amalgamations
+src/std/clib/sqlite3.c

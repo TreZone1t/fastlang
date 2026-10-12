@@ -64,7 +64,6 @@ fn has_compile_directive_expr(expr: &Expr) -> bool {
         Expr::MacroCall { callee, .. } => {
             if let Expr::NamespaceAccess { namespace, .. } = &**callee {
                 if namespace == "@compile" {
-                    println!("Found compile directive in MacroCall!");
                     return true;
                 }
             }
@@ -245,23 +244,19 @@ pub fn detect_execution_mode(body: &[Stmt]) -> ExecutionMode {
             Stmt::CompileValidation { .. } => {
                 *has_c = true;
             }
-            Stmt::CallStmt(Expr::Call { callee, .. }) | Stmt::ExpressionStmt(Expr::Call { callee, .. }) => {
-                if let Expr::NamespaceAccess { namespace, .. } = &**callee {
-                    if namespace == "@compile" {
-                        *has_c = true;
-                        return;
-                    }
+            Stmt::CallStmt(expr) | Stmt::ExpressionStmt(expr) => {
+                if has_compile_directive_expr(expr) {
+                    *has_c = true;
+                } else {
+                    *has_r = true;
                 }
-                *has_r = true;
             }
-            Stmt::ReturnStmt(Some(Expr::Call { callee, .. })) => {
-                if let Expr::NamespaceAccess { namespace, .. } = &**callee {
-                    if namespace == "@compile" {
-                        *has_c = true;
-                        return;
-                    }
+            Stmt::ReturnStmt(Some(expr)) => {
+                if has_compile_directive_expr(expr) {
+                    *has_c = true;
+                } else {
+                    *has_r = true;
                 }
-                *has_r = true;
             }
             Stmt::Declaration(Decl::CompileDecl { .. }) => {
                 *has_c = true;
