@@ -13,6 +13,13 @@ impl Parser {
         if self.peek().kind == TokenKind::Less {
             self.parse_generics(&mut generics)?;
         }
+        for g in &generics {
+            let gen_name = g.as_str();
+            self.current_generics.insert(gen_name.clone());
+            if let Some(stripped) = gen_name.strip_prefix("...") {
+                self.current_generics.insert(stripped.to_string());
+            }
+        }
 
         if self.peek().kind == TokenKind::Arrow || self.peek().kind == TokenKind::Assign {
             self.advance();
@@ -131,6 +138,14 @@ impl Parser {
         }
         self.metadata.insert(name.clone(), meta);
 
+        for g in &generics {
+            let gen_name = g.as_str();
+            self.current_generics.remove(&gen_name);
+            if let Some(stripped) = gen_name.strip_prefix("...") {
+                self.current_generics.remove(stripped);
+            }
+        }
+
         Ok(Decl::BlueprintDecl {
             visibility: Visibility::Private,
             name,
@@ -154,6 +169,14 @@ impl Parser {
             TokenKind::TypeUChar => {
                 self.advance();
                 "uchar".to_string()
+            }
+            TokenKind::TypeStr => {
+                self.advance();
+                "str".to_string()
+            }
+            TokenKind::TypeUStr => {
+                self.advance();
+                "ustr".to_string()
             }
             TokenKind::TypeBool | TokenKind::Flag => {
                 self.advance();
@@ -196,6 +219,16 @@ impl Parser {
             target.push_str(&sub);
         }
 
+        while self.peek().kind == TokenKind::Multiply || self.peek().kind == TokenKind::Ampersand {
+            if self.peek().kind == TokenKind::Multiply {
+                self.advance();
+                target.push('*');
+            } else if self.peek().kind == TokenKind::Ampersand {
+                self.advance();
+                target.push('&');
+            }
+        }
+
         Ok(target)
     }
 
@@ -219,7 +252,13 @@ impl Parser {
             self.parse_generics(&mut target_generics)?;
         }
 
-        let target_type = if target == "array" {
+        let target_type = if target.ends_with('*') {
+            let base_name = &target[..target.len() - 1];
+            BaseType::RawPointer(Box::new(BaseType::from_str(base_name)))
+        } else if target.ends_with('&') {
+            let base_name = &target[..target.len() - 1];
+            BaseType::Address(Box::new(BaseType::from_str(base_name)))
+        } else if target == "array" {
             BaseType::Array {
                 base_type: Box::new(if target_generics.is_empty() {
                     BaseType::Unknown

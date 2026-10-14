@@ -30,7 +30,7 @@ public @sys :: {
 
 public class Mutex -> {
     private -> {
-        raw_ptr<void> raw_handle = undefined;
+        void* raw_handle = undefined;
         bool is_initialized = false;
         fn init_handle() -> void {
             if (@compile::backend() == Backend::Cpp) {
@@ -91,15 +91,15 @@ public class Mutex -> {
 
 public class Thread -> {
     private -> {
-        raw_ptr<void> raw_handle = undefined;
+        void* raw_handle = undefined;
         bool has_joined = false;
     }
     public -> {
-        fn set_handle(h: raw_ptr<void>) -> void {
+        fn set_handle(h: void*) -> void {
             this.raw_handle = h;
             this.has_joined = false;
         }
-        fn get_handle() -> raw_ptr<void> {
+        fn get_handle() -> void* {
             return this.raw_handle;
         }
         fn join() -> int32 {
@@ -123,7 +123,7 @@ public class Thread -> {
         init() -> {
             this.has_joined = true;
         }
-        init(h: raw_ptr<void>) -> {
+        init(h: void*) -> {
             this.raw_handle = h;
             this.has_joined = false;
         }
@@ -139,7 +139,7 @@ public class Thread -> {
 
     public fn spawn(action: auto) -> Thread {
         Thread t = new Thread();
-        raw_ptr<void> h = undefined;
+        void* h = undefined;
         if (@compile::backend() == Backend::Cpp) {
             h = @c::fast_thread_spawn(action);
         } else {

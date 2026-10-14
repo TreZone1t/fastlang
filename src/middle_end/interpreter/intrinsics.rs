@@ -96,6 +96,8 @@ impl CompilerIntrinsics {
         "has_method",
         "has_field",
         "size",
+        "on_heap",
+        "on_stack",
     ];
 
     pub fn find_compile_member(name: &str) -> Option<&'static IntrinsicSignature> {

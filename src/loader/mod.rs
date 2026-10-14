@@ -604,29 +604,19 @@ impl ProjectLoader {
                 Ok((stmts, metadata))
             }
             Err(err_msg) => {
-                let mut line = 1;
-                let mut column = 1;
-                let mut clean_msg = err_msg.clone();
-    
-                if let Some(line_idx) = err_msg.find("at line ") {
-                    let after_line = &err_msg[line_idx + 8..];
-                    if let Some(comma_idx) = after_line.find(',') {
-                        if let Ok(l) = after_line[..comma_idx].parse::<usize>() {
-                            line = l;
-                        }
-                        if let Some(col_idx) = after_line.find("column ") {
-                            let after_col = &after_line[col_idx + 7..];
-                            let num_str = after_col.trim_matches(|c: char| !c.is_ascii_digit());
-                            if let Ok(c) = num_str.parse::<usize>() {
-                                column = c;
-                            }
-                        }
-                    }
-                    clean_msg = err_msg[..line_idx].trim().to_string();
+                let (line_opt, col_opt) = crate::extract_line_col_from_msg(&err_msg);
+                let clean_msg = if let Some(line_idx) = err_msg.find("at line ") {
+                    err_msg[..line_idx].trim().trim_end_matches('(').trim().to_string()
+                } else {
+                    err_msg.clone()
+                };
+
+                if let Some(l) = line_opt {
+                    crate::report_visual_error(&contents, l, col_opt.unwrap_or(1), &clean_msg);
+                } else {
+                    eprintln!("\n\x1b[31;1merror:\x1b[0m {}\n", clean_msg);
                 }
-    
-                crate::report_visual_error(&contents, line, column, &clean_msg);
-    
+
                 Err(err_msg)
             }
         }

@@ -108,7 +108,6 @@ impl SemanticAnalyzer {
                 let cond_type = self.visit_expression(condition)?;
                 let is_bool_like = cond_type == "bool"
                     || cond_type == "unknown"
-                    || cond_type.starts_with("raw_ptr<")
                     || cond_type.ends_with('*');
                 if !is_bool_like {
                     return Err("Semantic Error: if condition must be a boolean".to_string());
@@ -134,8 +133,8 @@ impl SemanticAnalyzer {
                     return Ok(());
                 }
 
-                let prev_in_generic = self.in_generic_template;
-                self.in_generic_template = true;
+                let prev_in_generic = self.scope.in_generic_template;
+                self.scope.in_generic_template = true;
                 self.enter_scope();
                 for s in then_block {
                     self.visit_statement(s)?;
@@ -148,7 +147,7 @@ impl SemanticAnalyzer {
                     }
                     self.leave_scope();
                 }
-                self.in_generic_template = prev_in_generic;
+                self.scope.in_generic_template = prev_in_generic;
             }
 
             Stmt::ForInStmt {
@@ -178,16 +177,13 @@ impl SemanticAnalyzer {
                 } else if let Some(bp) = bp_opt {
                     let specialized_bp = bp.specialize(&type_args);
                     let has_iter = specialized_bp.handle_signatures.contains_key("iter")
-                        || specialized_bp.handles.contains(&HandleMethods::Iter)
-                        || specialized_bp.methods.contains_key("iter");
+                        || specialized_bp.handles.contains(&HandleMethods::Iter);
                     let has_is_done = specialized_bp
                         .handle_signatures
                         .contains_key("is_done_iter")
-                        || specialized_bp.handles.contains(&HandleMethods::IterDone)
-                        || specialized_bp.methods.contains_key("is_done_iter");
+                        || specialized_bp.handles.contains(&HandleMethods::IterDone);
                     let has_next = specialized_bp.handle_signatures.contains_key("next")
-                        || specialized_bp.handles.contains(&HandleMethods::Next)
-                        || specialized_bp.methods.contains_key("next");
+                        || specialized_bp.handles.contains(&HandleMethods::Next);
 
                     if has_iter && (has_is_done || has_next) {
                         return Err(format!(
@@ -203,7 +199,6 @@ impl SemanticAnalyzer {
                         let iter_sig = specialized_bp
                             .handle_signatures
                             .get("iter")
-                            .or_else(|| specialized_bp.methods.get("iter"))
                             .unwrap();
                         let ret_str = iter_sig.return_type.as_str();
                         let (ret_base, ret_generics) = extract_type_args_from_str(&ret_str);
@@ -225,8 +220,7 @@ impl SemanticAnalyzer {
                         if let Some(target_bp) = target_bp_opt {
                             let target_spec = target_bp.specialize(&ret_generics);
                             let t_has_iter = target_spec.handle_signatures.contains_key("iter")
-                                || target_spec.handles.contains(&HandleMethods::Iter)
-                                || target_spec.methods.contains_key("iter");
+                                || target_spec.handles.contains(&HandleMethods::Iter);
                             if t_has_iter {
                                 return Err(format!(
                                     "Semantic Error: Iterator cursor '{}' returned by '{}::iter()' cannot implement 'iter'. It must only implement 'is_done_iter' and 'next'.",
@@ -235,11 +229,9 @@ impl SemanticAnalyzer {
                             }
                             let t_has_done =
                                 target_spec.handle_signatures.contains_key("is_done_iter")
-                                    || target_spec.handles.contains(&HandleMethods::IterDone)
-                                    || target_spec.methods.contains_key("is_done_iter");
+                                    || target_spec.handles.contains(&HandleMethods::IterDone);
                             let t_has_next = target_spec.handle_signatures.contains_key("next")
-                                || target_spec.handles.contains(&HandleMethods::Next)
-                                || target_spec.methods.contains_key("next");
+                                || target_spec.handles.contains(&HandleMethods::Next);
                             if !t_has_done || !t_has_next {
                                 return Err(format!(
                                     "Semantic Error: Iterator cursor '{}' returned by '{}::iter()' must implement 'is_done_iter' and 'next' handles.",
@@ -250,11 +242,7 @@ impl SemanticAnalyzer {
                             self.record_dependency(format!("{}::is_done_iter", ret_base));
                             self.record_dependency(format!("{}::next", ret_base));
 
-                            if let Some(sig) = target_spec
-                                .handle_signatures
-                                .get("next")
-                                .or_else(|| target_spec.methods.get("next"))
-                            {
+                            if let Some(sig) = target_spec.handle_signatures.get("next") {
                                 sig.return_type.as_str()
                             } else if !ret_generics.is_empty() {
                                 ret_generics[0].as_str()
@@ -265,8 +253,7 @@ impl SemanticAnalyzer {
                             self.global_metadata.get(&ret_base).cloned()
                         {
                             let t_has_iter = target_meta.handle_signatures.contains_key("iter")
-                                || target_meta.handles.contains(&HandleMethods::Iter)
-                                || target_meta.methods.contains_key("iter");
+                                || target_meta.handles.contains(&HandleMethods::Iter);
                             if t_has_iter {
                                 return Err(format!(
                                     "Semantic Error: Iterator cursor '{}' returned by '{}::iter()' cannot implement 'iter'. It must only implement 'is_done_iter' and 'next'.",
@@ -275,11 +262,9 @@ impl SemanticAnalyzer {
                             }
                             let t_has_done =
                                 target_meta.handle_signatures.contains_key("is_done_iter")
-                                    || target_meta.handles.contains(&HandleMethods::IterDone)
-                                    || target_meta.methods.contains_key("is_done_iter");
+                                    || target_meta.handles.contains(&HandleMethods::IterDone);
                             let t_has_next = target_meta.handle_signatures.contains_key("next")
-                                || target_meta.handles.contains(&HandleMethods::Next)
-                                || target_meta.methods.contains_key("next");
+                                || target_meta.handles.contains(&HandleMethods::Next);
                             if !t_has_done || !t_has_next {
                                 return Err(format!(
                                     "Semantic Error: Iterator cursor '{}' returned by '{}::iter()' must implement 'is_done_iter' and 'next' handles.",
@@ -290,11 +275,7 @@ impl SemanticAnalyzer {
                             self.record_dependency(format!("{}::is_done_iter", ret_base));
                             self.record_dependency(format!("{}::next", ret_base));
 
-                            if let Some(next_fn) = target_meta
-                                .handle_signatures
-                                .get("next")
-                                .or_else(|| target_meta.methods.get("next"))
-                            {
+                            if let Some(next_fn) = target_meta.handle_signatures.get("next") {
                                 let mut map = HashMap::new();
                                 let generics = match &target_meta.ty {
                                     BaseType::Struct { generics, .. }
@@ -327,11 +308,7 @@ impl SemanticAnalyzer {
                         self.record_dependency(format!("{}::is_done_iter", base_name));
                         self.record_dependency(format!("{}::next", base_name));
 
-                        if let Some(sig) = specialized_bp
-                            .handle_signatures
-                            .get("next")
-                            .or_else(|| specialized_bp.methods.get("next"))
-                        {
+                        if let Some(sig) = specialized_bp.handle_signatures.get("next") {
                             sig.return_type.as_str()
                         } else if !type_args.is_empty() {
                             type_args[0].as_str()
@@ -346,14 +323,11 @@ impl SemanticAnalyzer {
                     }
                 } else if let Some(meta) = meta_opt {
                     let has_iter = meta.handle_signatures.contains_key("iter")
-                        || meta.handles.contains(&HandleMethods::Iter)
-                        || meta.methods.contains_key("iter");
+                        || meta.handles.contains(&HandleMethods::Iter);
                     let has_is_done = meta.handle_signatures.contains_key("is_done_iter")
-                        || meta.handles.contains(&HandleMethods::IterDone)
-                        || meta.methods.contains_key("is_done_iter");
+                        || meta.handles.contains(&HandleMethods::IterDone);
                     let has_next = meta.handle_signatures.contains_key("next")
-                        || meta.handles.contains(&HandleMethods::Next)
-                        || meta.methods.contains_key("next");
+                        || meta.handles.contains(&HandleMethods::Next);
 
                     if has_iter && (has_is_done || has_next) {
                         return Err(format!(
@@ -369,7 +343,6 @@ impl SemanticAnalyzer {
                         let iter_sig = meta
                             .handle_signatures
                             .get("iter")
-                            .or_else(|| meta.methods.get("iter"))
                             .unwrap();
                         let ret_str = iter_sig.return_type.as_str();
                         let (ret_base, ret_generics) = extract_type_args_from_str(ret_str.as_str());
@@ -391,8 +364,7 @@ impl SemanticAnalyzer {
                         if let Some(target_bp) = target_bp_opt {
                             let target_spec = target_bp.specialize(&ret_generics);
                             let t_has_iter = target_spec.handle_signatures.contains_key("iter")
-                                || target_spec.handles.contains(&HandleMethods::Iter)
-                                || target_spec.methods.contains_key("iter");
+                                || target_spec.handles.contains(&HandleMethods::Iter);
                             if t_has_iter {
                                 return Err(format!(
                                     "Semantic Error: Iterator cursor '{}' returned by '{}::iter()' cannot implement 'iter'. It must only implement 'is_done_iter' and 'next'.",
@@ -401,11 +373,9 @@ impl SemanticAnalyzer {
                             }
                             let t_has_done =
                                 target_spec.handle_signatures.contains_key("is_done_iter")
-                                    || target_spec.handles.contains(&HandleMethods::IterDone)
-                                    || target_spec.methods.contains_key("is_done_iter");
+                                    || target_spec.handles.contains(&HandleMethods::IterDone);
                             let t_has_next = target_spec.handle_signatures.contains_key("next")
-                                || target_spec.handles.contains(&HandleMethods::Next)
-                                || target_spec.methods.contains_key("next");
+                                || target_spec.handles.contains(&HandleMethods::Next);
                             if !t_has_done || !t_has_next {
                                 return Err(format!(
                                     "Semantic Error: Iterator cursor '{}' returned by '{}::iter()' must implement 'is_done_iter' and 'next' handles.",
@@ -416,11 +386,7 @@ impl SemanticAnalyzer {
                             self.record_dependency(format!("{}::is_done_iter", ret_base));
                             self.record_dependency(format!("{}::next", ret_base));
 
-                            if let Some(sig) = target_spec
-                                .handle_signatures
-                                .get("next")
-                                .or_else(|| target_spec.methods.get("next"))
-                            {
+                            if let Some(sig) = target_spec.handle_signatures.get("next") {
                                 sig.return_type.as_str()
                             } else if !ret_generics.is_empty() {
                                 ret_generics[0].as_str()
@@ -431,8 +397,7 @@ impl SemanticAnalyzer {
                             self.global_metadata.get(&ret_base).cloned()
                         {
                             let t_has_iter = target_meta.handle_signatures.contains_key("iter")
-                                || target_meta.handles.contains(&HandleMethods::Iter)
-                                || target_meta.methods.contains_key("iter");
+                                || target_meta.handles.contains(&HandleMethods::Iter);
                             if t_has_iter {
                                 return Err(format!(
                                     "Semantic Error: Iterator cursor '{}' returned by '{}::iter()' cannot implement 'iter'. It must only implement 'is_done_iter' and 'next'.",
@@ -441,11 +406,9 @@ impl SemanticAnalyzer {
                             }
                             let t_has_done =
                                 target_meta.handle_signatures.contains_key("is_done_iter")
-                                    || target_meta.handles.contains(&HandleMethods::IterDone)
-                                    || target_meta.methods.contains_key("is_done_iter");
+                                    || target_meta.handles.contains(&HandleMethods::IterDone);
                             let t_has_next = target_meta.handle_signatures.contains_key("next")
-                                || target_meta.handles.contains(&HandleMethods::Next)
-                                || target_meta.methods.contains_key("next");
+                                || target_meta.handles.contains(&HandleMethods::Next);
                             if !t_has_done || !t_has_next {
                                 return Err(format!(
                                     "Semantic Error: Iterator cursor '{}' returned by '{}::iter()' must implement 'is_done_iter' and 'next' handles.",
@@ -456,11 +419,7 @@ impl SemanticAnalyzer {
                             self.record_dependency(format!("{}::is_done_iter", ret_base));
                             self.record_dependency(format!("{}::next", ret_base));
 
-                            if let Some(next_fn) = target_meta
-                                .handle_signatures
-                                .get("next")
-                                .or_else(|| target_meta.methods.get("next"))
-                            {
+                            if let Some(next_fn) = target_meta.handle_signatures.get("next") {
                                 let mut map = HashMap::new();
                                 let generics = match &target_meta.ty {
                                     BaseType::Struct { generics, .. }
@@ -493,11 +452,7 @@ impl SemanticAnalyzer {
                         self.record_dependency(format!("{}::is_done_iter", base_name));
                         self.record_dependency(format!("{}::next", base_name));
 
-                        if let Some(next_fn) = meta
-                            .handle_signatures
-                            .get("next")
-                            .or_else(|| meta.methods.get("next"))
-                        {
+                        if let Some(next_fn) = meta.handle_signatures.get("next") {
                             let mut map = HashMap::new();
                             let generics = match &meta.ty {
                                 BaseType::Struct { generics, .. }
@@ -573,12 +528,13 @@ impl SemanticAnalyzer {
 
                 match body {
                     EitherBlock::Inline(stmts) => {
-                        self.active_flags.push("+has_break".to_string());
+                        let was_break = self.active_flags.contains(&Flag::HasBreak);
+                        self.active_flags.insert(Flag::HasBreak);
                         for s in stmts {
                             self.visit_statement(s)?;
                         }
-                        if let Some(pos) = self.active_flags.iter().rposition(|f| f == "+has_break") {
-                            self.active_flags.remove(pos);
+                        if !was_break {
+                            self.active_flags.remove(&Flag::HasBreak);
                         }
                     }
                     EitherBlock::External(expr) => {
@@ -596,12 +552,13 @@ impl SemanticAnalyzer {
                 match body {
                     EitherBlock::Inline(stmts) => {
                         self.enter_scope();
-                        self.active_flags.push("+has_break".to_string());
+                        let was_break = self.active_flags.contains(&Flag::HasBreak);
+                        self.active_flags.insert(Flag::HasBreak);
                         for s in stmts {
                             self.visit_statement(s)?;
                         }
-                        if let Some(pos) = self.active_flags.iter().rposition(|f| f == "+has_break") {
-                            self.active_flags.remove(pos);
+                        if !was_break {
+                            self.active_flags.remove(&Flag::HasBreak);
                         }
                         self.leave_scope();
                     }
@@ -619,12 +576,13 @@ impl SemanticAnalyzer {
                 match body {
                     EitherBlock::Inline(stmts) => {
                         self.enter_scope();
-                        self.active_flags.push("+has_break".to_string());
+                        let was_break = self.active_flags.contains(&Flag::HasBreak);
+                        self.active_flags.insert(Flag::HasBreak);
                         for s in stmts {
                             self.visit_statement(s)?;
                         }
-                        if let Some(pos) = self.active_flags.iter().rposition(|f| f == "+has_break") {
-                            self.active_flags.remove(pos);
+                        if !was_break {
+                            self.active_flags.remove(&Flag::HasBreak);
                         }
                         self.leave_scope();
                     }
@@ -647,12 +605,13 @@ impl SemanticAnalyzer {
                 match body {
                     EitherBlock::Inline(stmts) => {
                         self.enter_scope();
-                        self.active_flags.push("+has_break".to_string());
+                        let was_break = self.active_flags.contains(&Flag::HasBreak);
+                        self.active_flags.insert(Flag::HasBreak);
                         for s in stmts {
                             self.visit_statement(s)?;
                         }
-                        if let Some(pos) = self.active_flags.iter().rposition(|f| f == "+has_break") {
-                            self.active_flags.remove(pos);
+                        if !was_break {
+                            self.active_flags.remove(&Flag::HasBreak);
                         }
                         self.leave_scope();
                     }
@@ -667,15 +626,16 @@ impl SemanticAnalyzer {
             } => {
                 self.visit_expression(condition)?;
                 self.enter_scope();
-                self.active_flags.push("+has_break".to_string());
+                let was_break = self.active_flags.contains(&Flag::HasBreak);
+                self.active_flags.insert(Flag::HasBreak);
                 for s in cases {
                     if let Stmt::CaseStmt { option, .. } = s {
                         Self::validate_match_pattern(option)?;
                     }
                     self.visit_statement(s)?;
                 }
-                if let Some(pos) = self.active_flags.iter().rposition(|f| f == "+has_break") {
-                    self.active_flags.remove(pos);
+                if !was_break {
+                    self.active_flags.remove(&Flag::HasBreak);
                 }
                 self.leave_scope();
             }
@@ -693,7 +653,7 @@ impl SemanticAnalyzer {
                     self.current_env.borrow_mut().mark_used(name);
 
                     // Stage 1: Double-Delete Check
-                    if self.deleted_vars.contains(name) {
+                    if self.memory.deleted_vars.contains(name) {
                         return Err(format!(
                             "Semantic Error: Variable '{}' has already been deleted.",
                             name
@@ -702,12 +662,11 @@ impl SemanticAnalyzer {
 
                     let type_str = var_info.type_str();
                     let is_pointer_or_ref = type_str.ends_with('*')
-                        || type_str.starts_with("raw_ptr<")
                         || type_str.starts_with("array<")
                         || type_str.ends_with("[]")
                         || *is_array;
 
-                    let is_on_heap = self.heap_allocated_vars.contains(name)
+                    let is_on_heap = self.memory.heap_allocated_vars.contains(name)
                         || is_pointer_or_ref
                         || self.is_class_type(&type_str);
 
@@ -735,8 +694,8 @@ impl SemanticAnalyzer {
                     }
 
                     // Mark as deleted and remove from active heap variables
-                    self.deleted_vars.insert(name.clone());
-                    self.heap_allocated_vars.remove(name);
+                    self.memory.deleted_vars.insert(name.clone());
+                    self.memory.heap_allocated_vars.remove(name);
                 } else {
                     self.visit_expression(target)?;
                 }
@@ -764,12 +723,13 @@ impl SemanticAnalyzer {
                 match body {
                     EitherBlock::Inline(stmts) => {
                         self.enter_scope();
-                        self.active_flags.push("+has_break".to_string());
+                        let was_break = self.active_flags.contains(&Flag::HasBreak);
+                        self.active_flags.insert(Flag::HasBreak);
                         for s in stmts {
                             self.visit_statement(s)?;
                         }
-                        if let Some(pos) = self.active_flags.iter().rposition(|f| f == "+has_break") {
-                            self.active_flags.remove(pos);
+                        if !was_break {
+                            self.active_flags.remove(&Flag::HasBreak);
                         }
                         self.leave_scope();
                     }
@@ -781,7 +741,7 @@ impl SemanticAnalyzer {
             }
 
             Stmt::ReturnStmt(expr) => {
-                if !self.active_flags.contains(&"+has_return".to_string()) {
+                if !self.active_flags.contains(&Flag::HasReturn) {
                     return Err(
                         "Semantic Error: Return statement is not allowed in this scope. 'has_return' flag is not enabled.".to_string()
                     );
@@ -794,7 +754,7 @@ impl SemanticAnalyzer {
                 }
                 if let Some(expected_type) = &self.active_return_type.clone() {
                     let expected_str = expected_type.as_str();
-                    let is_main = self.current_context.as_deref() == Some("main");
+                    let is_main = self.scope.current_context.as_deref() == Some("main");
                     let main_allow = is_main
                         && (actual_type == "void"
                             || ((expected_str == "void" || expected_str == "int" || expected_str == "int32")
@@ -813,7 +773,7 @@ impl SemanticAnalyzer {
             }
 
             Stmt::BreakStmt => {
-                if !self.active_flags.contains(&"+has_break".to_string()) {
+                if !self.active_flags.contains(&Flag::HasBreak) {
                     return Err(
                         "Semantic Error: Break statement is not allowed outside loops or switch statements.".to_string()
                     );
@@ -821,34 +781,31 @@ impl SemanticAnalyzer {
             }
 
             Stmt::ThrowStmt(expr) => {
-                self.record_dependency("Error".to_string());
-                if !self.active_flags.contains(&"+has_throw".to_string()) {
+                if !self.active_flags.contains(&Flag::HasThrow) {
                     return Err(
                         "Semantic Error: Throw statement is not allowed here. The scope must have 'has_throw' enabled (e.g. inside try block or custom scope with error handle).".to_string()
                     );
                 }
                 let thrown_type = self.visit_expression(expr)?;
                 if thrown_type != "unknown" {
-                    let bp_name = extract_blueprint_name_from_type(&thrown_type)
-                        .unwrap_or_else(|| thrown_type.clone());
-                    let is_throwable = if bp_name == "Error" || bp_name == "std::Error" {
-                        true
-                    } else if let Some(bp) = self.current_env.borrow().lookup_blueprint(&bp_name) {
+                    let thrown_base = BaseType::from_str(&thrown_type);
+                    let bp_name = thrown_base
+                        .blueprint_name()
+                        .unwrap_or(&thrown_type);
+                    let is_throwable = if let Some(bp) = self.current_env.borrow().lookup_blueprint(bp_name) {
                         bp.handles.contains(&HandleMethods::Throw)
                             || bp.handle_signatures.contains_key("throw")
-                            || bp.methods.contains_key("throw")
-                            || bp.name == "Error"
-                    } else if let Some(meta) = self.global_metadata.get(&bp_name) {
+                            || bp.handle_signatures.contains_key("$throw")
+                    } else if let Some(meta) = self.global_metadata.get(bp_name) {
                         meta.handles.contains(&HandleMethods::Throw)
                             || meta.handle_signatures.contains_key("throw")
-                            || meta.methods.contains_key("throw")
-                            || meta.name == "Error"
+                            || meta.handle_signatures.contains_key("$throw")
                     } else {
                         false
                     };
                     if !is_throwable {
                         return Err(
-                            format!("Semantic Error: Type '{}' is not throwable. Only 'Error' or types implementing a 'throw' handle can be thrown.", thrown_type)
+                            format!("Semantic Error: Type '{}' is not throwable. Only types implementing a 'throw' handle can be thrown.", thrown_type)
                         );
                     }
                 }
@@ -856,46 +813,51 @@ impl SemanticAnalyzer {
 
             Stmt::TryCatchStmt {
                 try_block,
-                catch_param,
-                catch_block,
+                catches,
             } => {
-                self.record_dependency("Error".to_string());
                 self.enter_scope();
-                self.active_flags.push("+has_throw".to_string());
+                self.active_flags.insert(Flag::HasThrow);
                 for s in try_block {
                     self.visit_statement(s)?;
                 }
-                self.active_flags.retain(|f| f != "+has_throw");
+                self.active_flags.remove(&Flag::HasThrow);
                 self.leave_scope();
 
-                self.enter_scope();
-                let info = SymbolInfo {
-                    name: catch_param.clone(),
-                    kind: SymbolKind::Variable {
-                        type_node: BaseType::from_str("Error"),
-                        editability: Editability::NotEditable,
-                        is_array: false,
-                    },
-                    visibility: Visibility::Private,
-                    dependencies: vec![],
-                    is_used: false,
-                    is_param: true,
-                    is_uninitialized: false,
-                    is_compilable: false,
-                };
-                self.current_env
-                    .borrow_mut()
-                    .define(catch_param.clone(), info)?;
-                for s in catch_block {
-                    self.visit_statement(s)?;
+                for catch_clause in catches {
+                    self.enter_scope();
+                    let catch_type = catch_clause.param_type.as_ref().cloned().unwrap_or_else(|| {
+                        self.record_dependency("Error".to_string());
+                        BaseType::from_str("Error")
+                    });
+                    let resolved_type = self.resolve_type(&catch_type);
+                    let info = SymbolInfo {
+                        name: catch_clause.param.clone(),
+                        kind: SymbolKind::Variable {
+                            type_node: resolved_type,
+                            editability: Editability::NotEditable,
+                            is_array: false,
+                        },
+                        visibility: Visibility::Private,
+                        dependencies: vec![],
+                        is_used: false,
+                        is_param: true,
+                        is_uninitialized: false,
+                        is_compilable: false,
+                    };
+                    self.current_env
+                        .borrow_mut()
+                        .define(catch_clause.param.clone(), info)?;
+                    for s in &catch_clause.body {
+                        self.visit_statement(s)?;
+                    }
+                    self.leave_scope();
                 }
-                self.leave_scope();
             }
 
             Stmt::GotoStmt(_) => {}
 
             Stmt::YieldStmt(expr) => {
-                if !self.active_flags.contains(&"+has_yield".to_string()) {
+                if !self.active_flags.contains(&Flag::HasYield) {
                     return Err(
                         "Semantic Error: Yield statement is not allowed in this scope (forbidden in global scope).".to_string()
                     );
@@ -906,7 +868,7 @@ impl SemanticAnalyzer {
             }
 
             Stmt::LeaveStmt => {
-                if !self.active_flags.contains(&"+has_leave".to_string()) {
+                if !self.active_flags.contains(&Flag::HasLeave) {
                     return Err(
                         "Semantic Error: Leave statement is not allowed in this scope (forbidden in global scope).".to_string()
                     );
@@ -998,29 +960,8 @@ impl SemanticAnalyzer {
     ) -> Result<(), String> {
         // Scope flags are strictly read-only
         if let Expr::Identifier(name) = target {
-            if matches!(
-                name.trim(),
-                "broken"
-                    | "is_done"
-                    | "yielded"
-                    | "returned"
-                    | "leaved"
-                    | "continued"
-                    | "has_break"
-                    | "has_yield"
-                    | "has_leave"
-                    | "has_return"
-                    | "has_call"
-                    | "has_error"
-                    | "compilable"
-                    | "is_compilable"
-                    | "printable"
-                    | "is_printable"
-                    | "throwable"
-                    | "is_throwable"
-                    | "shareable"
-                    | "is_shareable"
-            ) {
+            let flag = Flag::from_str(name.trim());
+            if !matches!(flag, Flag::Custom(_)) {
                 return Err(format!(
                     "Semantic Error: Scope flag '{}' is read-only and cannot be manually modified",
                     name
@@ -1041,15 +982,15 @@ impl SemanticAnalyzer {
 
         let expr_type = self.visit_expression(value)?;
         if let Expr::Identifier(name) = target {
-            if self.deleted_vars.contains(name) {
+            if self.memory.deleted_vars.contains(name) {
                 if matches!(value, Expr::Instantiate { .. }) {
-                    self.deleted_vars.remove(name);
-                    self.heap_allocated_vars.insert(name.clone());
+                    self.memory.deleted_vars.remove(name);
+                    self.memory.heap_allocated_vars.insert(name.clone());
                 } else {
                     return Err(format!("Semantic Error: Cannot assign to variable '{}' because it has been deleted.", name));
                 }
             } else if matches!(value, Expr::Instantiate { .. }) {
-                self.heap_allocated_vars.insert(name.clone());
+                self.memory.heap_allocated_vars.insert(name.clone());
             }
             if expr_type != "undefined" {
                 self.current_env.borrow_mut().mark_initialized(name);
@@ -1089,11 +1030,13 @@ impl SemanticAnalyzer {
         // e.g. counter += 1; x -= 2; x *= 2;
 
         // Complex types: look up handle
-        if is_complex_type(target_type) {
-            let bp_name = extract_blueprint_name_from_type(target_type)
-                .unwrap_or_else(|| target_type.to_string());
+        let target_base = BaseType::from_str(target_type);
+        if target_base.is_complex() {
+            let bp_name = target_base
+                .blueprint_name()
+                .unwrap_or(target_type);
 
-            return match resolve_handle_for_op(&self.current_env, &bp_name, op) {
+            return match resolve_handle_for_op(&self.current_env, bp_name, op) {
                 HandleLookupResult::Found(bp) => {
                     let handle = op_to_handle(op);
                     if !bp.handle_accepts_type(handle, expr_type) {
@@ -1196,10 +1139,11 @@ impl SemanticAnalyzer {
             }
             Stmt::TryCatchStmt {
                 try_block,
-                catch_block,
-                ..
+                catches,
             } => {
-                self.block_always_terminates(try_block) && self.block_always_terminates(catch_block)
+                self.block_always_terminates(try_block)
+                    && !catches.is_empty()
+                    && catches.iter().all(|c| self.block_always_terminates(&c.body))
             }
             Stmt::DoWhileStmt { body, .. } => match body {
                 EitherBlock::Inline(stmts) => self.block_always_terminates(stmts),

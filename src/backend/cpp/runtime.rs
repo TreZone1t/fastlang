@@ -169,9 +169,13 @@ inline void fastlang_array_free(T* arr) {
 namespace fast_std {
 template <typename T>
 using array = T*;
+using str = char*;
+using ustr = char32_t*;
 }
 
 using fast_std::array;
+using fast_std::str;
+using fast_std::ustr;
 // ============================================================================
 
 struct fastlang_unit_t {
@@ -225,6 +229,12 @@ inline char* fastlang_as_str(char* s);
 inline char* fastlang_as_str(const char* s);
 inline char* fastlang_as_str(char32_t* s);
 inline char* fastlang_as_str(const char32_t* s);
+template <typename T>
+inline char32_t* fastlang_as_ustr(const T& val);
+inline char32_t* fastlang_as_ustr(char32_t* s);
+inline char32_t* fastlang_as_ustr(const char32_t* s);
+inline char32_t* fastlang_as_ustr(char* s);
+inline char32_t* fastlang_as_ustr(const char* s);
 
 
 template <typename A, typename B>
@@ -313,6 +323,73 @@ inline char* fastlang_uchar_to_utf8(const char32_t* u_str) {
 
 inline char* fastlang_as_str(char32_t* s) { return fastlang_uchar_to_utf8(s); }
 inline char* fastlang_as_str(const char32_t* s) { return fastlang_uchar_to_utf8(s); }
+
+inline char32_t* fastlang_utf8_to_uchar(const char* s) {
+    if (!s) return fastlang_ustring_create_from_ptr(U"");
+    size_t s_len = std::strlen(s);
+    size_t total_bytes = sizeof(size_t) + (s_len + 1) * sizeof(char32_t);
+    void* mem = std::malloc(total_bytes);
+    if (!mem) return nullptr;
+    size_t* raw = reinterpret_cast<size_t*>(mem);
+    char32_t* buf = reinterpret_cast<char32_t*>(raw + 1);
+    size_t out_idx = 0;
+    size_t i = 0;
+    while (i < s_len) {
+        unsigned char c = (unsigned char)s[i];
+        if (c < 0x80) {
+            buf[out_idx++] = (char32_t)c;
+            i += 1;
+        } else if ((c >> 5) == 0x06) {
+            uint32_t code = (c & 0x1F) << 6;
+            if (i + 1 < s_len) code |= ((unsigned char)s[i + 1] & 0x3F);
+            buf[out_idx++] = (char32_t)code;
+            i += 2;
+        } else if ((c >> 4) == 0x0E) {
+            uint32_t code = (c & 0x0F) << 12;
+            if (i + 1 < s_len) code |= (((unsigned char)s[i + 1] & 0x3F) << 6);
+            if (i + 2 < s_len) code |= ((unsigned char)s[i + 2] & 0x3F);
+            buf[out_idx++] = (char32_t)code;
+            i += 3;
+        } else if ((c >> 3) == 0x1E) {
+            uint32_t code = (c & 0x07) << 18;
+            if (i + 1 < s_len) code |= (((unsigned char)s[i + 1] & 0x3F) << 12);
+            if (i + 2 < s_len) code |= (((unsigned char)s[i + 2] & 0x3F) << 6);
+            if (i + 3 < s_len) code |= ((unsigned char)s[i + 3] & 0x3F);
+            buf[out_idx++] = (char32_t)code;
+            i += 4;
+        } else {
+            buf[out_idx++] = (char32_t)c;
+            i += 1;
+        }
+    }
+    buf[out_idx] = 0;
+    raw[0] = out_idx;
+    return buf;
+}
+
+inline char32_t* fastlang_as_ustr(char32_t* s) { return s ? s : fastlang_ustring_create_from_ptr(U""); }
+inline char32_t* fastlang_as_ustr(const char32_t* s) { return fastlang_ustring_create_from_ptr(s ? s : U""); }
+inline char32_t* fastlang_as_ustr(char* s) { return fastlang_utf8_to_uchar(s); }
+inline char32_t* fastlang_as_ustr(const char* s) { return fastlang_utf8_to_uchar(s); }
+
+template <typename T>
+inline char32_t* fastlang_as_ustr(const T& val) {
+    using Decayed = std::decay_t<T>;
+    if constexpr (std::is_same_v<Decayed, const char32_t*> || std::is_same_v<Decayed, char32_t*>) {
+        return fastlang_as_ustr(val);
+    } else if constexpr (std::is_same_v<Decayed, const char*> || std::is_same_v<Decayed, char*>) {
+        return fastlang_utf8_to_uchar(val);
+    } else if constexpr (std::is_same_v<Decayed, char32_t>) {
+        char32_t single[2] = {val, 0};
+        return fastlang_ustring_create_from_ptr(single);
+    } else if constexpr (std::is_same_v<Decayed, char>) {
+        char buf[2] = {val, '\0'};
+        return fastlang_utf8_to_uchar(buf);
+    } else {
+        char* s = fastlang_as_str(val);
+        return fastlang_utf8_to_uchar(s);
+    }
+}
 
 template <typename T>
 inline char* fastlang_as_str(const T& val) {

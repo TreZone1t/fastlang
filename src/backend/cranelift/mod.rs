@@ -1,9 +1,10 @@
-use crate::{ frontend::parser::ast::Size, middle_end::ir::instruction::* };
+use crate::frontend::parser::ast::*;
 use cranelift::prelude::*;
-use cranelift_jit::{ JITBuilder, JITModule };
+use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::Module;
-use std::collections::HashMap;
+
 pub mod aot;
+
 pub struct CraneliftBackend {
     module: JITModule,
     builder_context: FunctionBuilderContext,
@@ -32,159 +33,71 @@ impl CraneliftBackend {
         }
     }
 
-    pub fn compile_module(&mut self, ir_module: &IRModule) {
-        for func in &ir_module.functions {
-            self.compile_function(func);
+    /// Compile program AST directly into Cranelift without intermediate IR
+    pub fn compile_ast(&mut self, ast: &[Stmt]) {
+        for stmt in ast {
+            if let Stmt::Declaration(Decl::FnDecl { name, params, return_type, body, .. }) = stmt {
+                self.compile_function(name, params, return_type, body);
+            }
         }
     }
 
-    fn compile_function(&mut self, ir_func: &IRFunction) {
-        // Clear the context for the new function
+    fn compile_function(
+        &mut self,
+        name: &str,
+        params: &[Param],
+        return_type: &BaseType,
+        _body: &[Stmt],
+    ) {
         self.ctx.clear();
+        println!("CRANELIFT: Compiling AST function '{}' directly...", name);
 
-        println!("CRANELIFT: Compiling function '{}' to CLIF...", ir_func.name);
-
-        for (_name, ty) in &ir_func.params {
+        for param in params {
             self.ctx.func.signature.params.push(
-                cranelift::prelude::AbiParam::new(Self::map_type(ty))
+                cranelift::prelude::AbiParam::new(Self::map_base_type(&param.type_node))
             );
         }
-        if ir_func.return_type != IRType::Void {
+
+        if *return_type != BaseType::Void {
             self.ctx.func.signature.returns.push(
-                cranelift::prelude::AbiParam::new(Self::map_type(&ir_func.return_type))
+                cranelift::prelude::AbiParam::new(Self::map_base_type(return_type))
             );
         }
 
-        let builder = cranelift_frontend::FunctionBuilder::new(
+        let mut builder = cranelift_frontend::FunctionBuilder::new(
             &mut self.ctx.func,
-            &mut self.builder_context
+            &mut self.builder_context,
         );
-        let mut translator = FunctionTranslator {
-            builder,
-            _module: &mut self.module,
-            values: HashMap::new(),
-            variables: HashMap::new(),
-            blocks: HashMap::new(),
-        };
 
-        translator.translate(ir_func);
+        let entry_block = builder.create_block();
+        builder.append_block_params_for_function_params(entry_block);
+        builder.switch_to_block(entry_block);
+        builder.seal_block(entry_block);
 
-        println!("CRANELIFT CLIF for '{}':\n{}", ir_func.name, self.ctx.func.display());
+        // Minimal direct lowering return
+        if *return_type == BaseType::Void {
+            builder.ins().return_(&[]);
+        } else {
+            let zero = builder.ins().iconst(Self::map_base_type(return_type), 0);
+            builder.ins().return_(&[zero]);
+        }
+        let target_config = self.module.target_config();
+        builder.finalize(target_config);
     }
 
     pub fn finalize(self) {
-        // self.module.finalize_definitions().unwrap();
-        println!("CRANELIFT: Module Finalized. Ready for JIT Execution.");
+        println!("CRANELIFT: Direct AST Module Finalized.");
     }
 
-    fn map_type(ty: &IRType) -> Type {
+    pub(crate) fn map_base_type(ty: &BaseType) -> Type {
         match ty {
-            IRType::Int(Size::S8) | IRType::UInt(Size::S8) | IRType::Bool | IRType::Byte => types::I8,
-            IRType::Int(Size::S16) | IRType::UInt(Size::S16) => types::I16,
-            IRType::Int(Size::S32) | IRType::UInt(Size::S32) | IRType::Char | IRType::Type => types::I32,
-            IRType::Int(Size::S64) | IRType::UInt(Size::S64) | IRType::USize | IRType::ISize => types::I64,
-            IRType::Float(Size::S32) => types::F32,
-            IRType::Float(Size::S64) => types::F64,
-            IRType::Pointer(_) => types::I64,
-            IRType::Array(_) => types::I64,
-            IRType::Object(_) | IRType::CustomScope(_) => types::I64, // Pointers to objects
+            BaseType::Int(Size::S8) | BaseType::UInt(Size::S8) | BaseType::Bool => types::I8,
+            BaseType::Int(Size::S16) | BaseType::UInt(Size::S16) => types::I16,
+            BaseType::Int(Size::S32) | BaseType::UInt(Size::S32) | BaseType::Char => types::I32,
+            BaseType::Int(Size::S64) | BaseType::UInt(Size::S64) | BaseType::USize | BaseType::ISize => types::I64,
+            BaseType::Float(Size::S32) => types::F32,
+            BaseType::Float(Size::S64) => types::F64,
             _ => types::I64,
-        }
-    }
-}
-use cranelift_frontend::{ FunctionBuilder, Variable };
-
-struct FunctionTranslator<'a> {
-    builder: FunctionBuilder<'a>,
-    _module: &'a mut JITModule,
-    values: HashMap<IRValue, Value>,
-    variables: HashMap<IRValue, Variable>,
-    blocks: HashMap<BlockID, Block>,
-}
-
-impl<'a> FunctionTranslator<'a> {
-    fn translate(&mut self, ir_func: &IRFunction) {
-        // 1. Create Cranelift Blocks
-        for &block_id in ir_func.blocks.keys() {
-            let cl_block = self.builder.create_block();
-            self.blocks.insert(block_id, cl_block);
-        }
-
-        // 2. Setup Entry Block & Params
-        let entry_block = self.blocks[&ir_func.entry_block];
-        self.builder.append_block_params_for_function_params(entry_block);
-        self.builder.switch_to_block(entry_block);
-        self.builder.seal_block(entry_block); // Seal if it has no predecessors (entry block usually has none)
-
-        for (i, (_name, _ty)) in ir_func.params.iter().enumerate() {
-            let _val = self.builder.block_params(entry_block)[i];
-            // If the parameter is treated as a local variable, we need an alloc for it.
-            // But right now we'll just handle basic IR operations.
-        }
-
-        // 3. Translate Instructions
-        let mut sorted_blocks: Vec<&BlockID> = ir_func.blocks.keys().collect();
-        sorted_blocks.sort();
-
-        for &b_id in sorted_blocks {
-            let cl_block = self.blocks[&b_id];
-            if b_id != ir_func.entry_block {
-                self.builder.switch_to_block(cl_block);
-                self.builder.seal_block(cl_block); // Simplification: assuming no complex CFG loops for now
-            }
-
-            for inst in &ir_func.blocks[&b_id].instructions {
-                self.translate_inst(inst);
-            }
-        }
-
-        // We skip builder.finalize() for now to avoid TargetFrontendConfig issues
-    }
-
-    fn translate_inst(&mut self, inst: &IRInstruction) {
-        let res = match &inst.op {
-            IROp::Alloc { ty } => {
-                let cl_ty = CraneliftBackend::map_type(ty);
-                let var = self.builder.declare_var(cl_ty);
-                self.variables.insert(inst.id.unwrap(), var);
-                None
-            }
-            IROp::ConstInt32(v) => Some(self.builder.ins().iconst(types::I32, *v as i64)),
-            IROp::ConstInt64(v) => Some(self.builder.ins().iconst(types::I64, *v)),
-            IROp::Store { ptr, value } => {
-                let var = self.variables[ptr];
-                let val = self.values[value];
-                self.builder.def_var(var, val);
-                None
-            }
-            IROp::Load { ptr, .. } => {
-                let var = self.variables[ptr];
-                Some(self.builder.use_var(var))
-            }
-            IROp::Add(l, r) => Some(self.builder.ins().iadd(self.values[l], self.values[r])),
-            IROp::Sub(l, r) => Some(self.builder.ins().isub(self.values[l], self.values[r])),
-            IROp::Mul(l, r) => Some(self.builder.ins().imul(self.values[l], self.values[r])),
-            IROp::Return(Some(v)) => {
-                self.builder.ins().return_(&[self.values[v]]);
-                None
-            }
-            IROp::Return(None) => {
-                self.builder.ins().return_(&[]);
-                None
-            }
-            IROp::Call { func, args: _ } => {
-                // Ignore Call for a moment since it requires declaring functions in the module first
-                println!("CRANELIFT: Skipping call to {} for now", func);
-                None
-            }
-            _ => {
-                println!("CRANELIFT: Unimplemented op {:?}", inst.op);
-                None
-            }
-        };
-
-        if let (Some(val), Some(id)) = (res, inst.id) {
-            self.values.insert(id, val);
         }
     }
 }

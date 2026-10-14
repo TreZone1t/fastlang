@@ -12,7 +12,7 @@ public @compile :: {
 
     set typeof<T>(T) -> type;
     set sizeof<T>(T) -> uint32;
-    set access<T>(T, MemberType) -> raw_ptr<unknown>;
+    set access<T>(T, MemberType) -> unknown*;
     set rand<T>() -> T;
     set rand<T>(T) -> T;
     set rand<T>(T, T) -> T;
@@ -48,12 +48,10 @@ public @compile :: {
         set castable_to(type) -> bool;
         set size() -> uint32;
     }
-    /*
-    impl type<address<T>> {
+    impl type<&T> {
         set on_heap() -> bool;
         set on_stack() -> bool;
     }
-    */
     micro todo = (msg: str) -> {
         throw new Error("TODO: " + msg);
     }

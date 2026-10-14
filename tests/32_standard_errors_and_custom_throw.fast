@@ -1,0 +1,60 @@
+﻿// Test Suite 32: Standard Error Subclasses, Multi-Catch & Typed Catch
+import std;
+import std::fmt;
+
+class CustomMyError -> {
+    public -> {
+        str desc = "custom independent error";
+    }
+    handle -> {
+        fn $throw() -> str {
+            return this.desc;
+        }
+    }
+}
+
+fn test_multi_catch_index() -> void {
+    try {
+        IndexError err = new IndexError("out of range", 101);
+        throw err;
+    } catch (e: IndexError) -> {
+        println("Caught via typed IndexError, code: ", e.code); // EXPECT: Caught via typed IndexError, code: 101
+    } catch (e: TypeError) -> {
+        println("WRONG: Caught in TypeError block");
+    } catch (e) -> {
+        println("WRONG: Caught in generic block");
+    }
+}
+
+fn test_multi_catch_type() -> void {
+    try {
+        TypeError err = new TypeError("mismatched operand", 202);
+        throw err;
+    } catch (e: IndexError) -> {
+        println("WRONG: Caught in IndexError block");
+    } catch (e: TypeError) -> {
+        println("Caught via typed TypeError, code: ", e.code); // EXPECT: Caught via typed TypeError, code: 202
+    } catch (e) -> {
+        println("WRONG: Caught in generic block");
+    }
+}
+
+fn test_multi_catch_fallback() -> void {
+    try {
+        CustomMyError c_err = new CustomMyError();
+        throw c_err;
+    } catch (e: IndexError) -> {
+        println("WRONG: Caught in IndexError block");
+    } catch (e: TypeError) -> {
+        println("WRONG: Caught in TypeError block");
+    } catch (e) -> {
+        println("Caught via generic fallback block!"); // EXPECT: Caught via generic fallback block!
+    }
+}
+
+fn main() -> void {
+    test_multi_catch_index();
+    test_multi_catch_type();
+    test_multi_catch_fallback();
+    println("All Multi-Catch and Typed Catch tests passed successfully!"); // EXPECT: All Multi-Catch and Typed Catch tests passed successfully!
+}

@@ -7,7 +7,7 @@ impl SemanticAnalyzer {
             Expr::LiteralInt(_) => Ok("int".to_string()),
             Expr::LiteralUInt(_) => Ok("uint".to_string()),
             Expr::LiteralFloat(_) => Ok("float".to_string()),
-            Expr::LiteralString(_) => Ok("array<char>".to_string()),
+            Expr::LiteralString(_) => Ok("str".to_string()),
             Expr::LiteralChar(_) => Ok("char".to_string()),
             Expr::LiteralUChar(_) => Ok("uchar".to_string()),
             Expr::LiteralBool(_) => Ok("bool".to_string()),
@@ -63,8 +63,8 @@ impl SemanticAnalyzer {
             }
 
             Expr::ObjectLiteral(stmts) => {
-                let prev_in_struct = self.in_struct;
-                self.in_struct = true;
+                let prev_in_struct = self.scope.in_struct;
+                self.scope.in_struct = true;
                 self.enter_scope();
                 for s in stmts {
                     match s {
@@ -80,7 +80,7 @@ impl SemanticAnalyzer {
                     }
                 }
                 self.leave_scope();
-                self.in_struct = prev_in_struct;
+                self.scope.in_struct = prev_in_struct;
                 Ok("object".to_string())
             }
 
@@ -143,7 +143,7 @@ impl SemanticAnalyzer {
                 ) {
                     return Ok(format!("type<{}>", name));
                 }
-                if self.deleted_vars.contains(name) {
+                if self.memory.deleted_vars.contains(name) {
                     return Err(format!("Semantic Error: Cannot use variable '{}' because it has already been deleted.", name));
                 }
                 self.record_dependency(name.clone());
@@ -182,7 +182,7 @@ impl SemanticAnalyzer {
                 if let Some(enum_name) = self.current_env.borrow().lookup_enum_for_variant(name) {
                     return Ok(enum_name);
                 }
-                if let Some(ref type_name) = self.current_type_name {
+                if let Some(ref type_name) = self.scope.current_type_name {
                     if let Some(bp) = self.current_env.borrow().lookup_blueprint(type_name) {
                         if let Some(field_type) = bp.fields.get(name) {
                             return Ok(field_type.as_str());
@@ -194,7 +194,7 @@ impl SemanticAnalyzer {
                         }
                     }
                 }
-                if self.in_struct || self.in_class || self.in_custom_scope {
+                if self.scope.in_struct || self.scope.in_class {
                     return Ok("unknown".to_string());
                 }
                 Err(format!(
@@ -208,7 +208,7 @@ impl SemanticAnalyzer {
                 property,
             } => {
                 if namespace.starts_with('@') {
-                    if let Some(ref m_name) = self.current_machine {
+                    if let Some(ref m_name) = self.scope.current_machine {
                         let clean_lbl = namespace.replace("@", "");
                         if let Some(labels_map) = self.machine_labels.get(m_name) {
                             if let Some(vars_map) = labels_map
@@ -265,7 +265,9 @@ impl SemanticAnalyzer {
                         if let SymbolKind::Variable { type_node, .. } = &info.kind {
                             let obj_type = type_node.as_str();
                             if let Some(target_type) = self.resolve_property_access_target_type(&obj_type) {
-                                let target_bp_opt = extract_blueprint_name_from_type(&target_type)
+                                let target_bp_opt = BaseType::from_str(&target_type)
+                                    .blueprint_name()
+                                    .map(|s| s.to_string())
                                     .or_else(|| Some(target_type.clone()));
                                 if let Some(t_bp_name) = target_bp_opt {
                                     if let Some(t_bp) = env.lookup_blueprint(&t_bp_name) {
@@ -585,8 +587,10 @@ impl SemanticAnalyzer {
                     } else {
                         obj_type.clone()
                     };
-                    let normalized_type = if unwrap_address == "char[]" {
+                    let normalized_type = if unwrap_address == "char[]" || unwrap_address == "str" {
                         "array<char>".to_string()
+                    } else if unwrap_address == "uchar[]" || unwrap_address == "ustr" {
+                        "array<uchar>".to_string()
                     } else if unwrap_address.ends_with("[]") {
                         format!("array<{}>", &unwrap_address[..unwrap_address.len() - 2])
                     } else {
@@ -594,8 +598,8 @@ impl SemanticAnalyzer {
                     };
 
                     let (specialized_type_name, primary_type_name) =
-                        if let Some(bp) = extract_blueprint_name_from_type(&normalized_type) {
-                            (None, bp)
+                        if let Some(bp) = BaseType::from_str(&normalized_type).blueprint_name() {
+                            (None, bp.to_string())
                         } else if let Some(idx) = normalized_type.find('<') {
                             let base = normalized_type[..idx].trim().to_string();
                             (Some(normalized_type.clone()), base)
@@ -675,13 +679,9 @@ impl SemanticAnalyzer {
                         self.record_dependency(format!("{}::{}", chosen_bp_name, property));
                         self.record_dependency(property.clone());
                         self.record_dependency(chosen_bp_name.clone());
-                        for dep in extract_all_type_names(&method_sig.return_type.as_str()) {
-                            self.record_dependency(dep);
-                        }
+                        self.record_type_dependencies(&method_sig.return_type);
                         for p in &method_sig.params {
-                            for dep in extract_all_type_names(&p.type_node.as_str()) {
-                                self.record_dependency(dep);
-                            }
+                            self.record_type_dependencies(&p.type_node);
                         }
                         for arg in args {
                             self.visit_expression(arg)?;
@@ -720,14 +720,9 @@ impl SemanticAnalyzer {
                                         property.clone(),
                                         t_name.to_string(),
                                     ];
-                                    for dep in extract_all_type_names(&fn_type.return_type.as_str())
-                                    {
-                                        deps.push(dep);
-                                    }
+                                    fn_type.return_type.collect_type_dependencies(&mut deps);
                                     for p in &fn_type.params {
-                                        for dep in extract_all_type_names(&p.type_node.as_str()) {
-                                            deps.push(dep);
-                                        }
+                                        p.type_node.collect_type_dependencies(&mut deps);
                                     }
                                     Some((deps, fn_type.return_type.clone()))
                                 } else {
@@ -803,7 +798,9 @@ impl SemanticAnalyzer {
 
                     // Forward method call via `property_access` handle if defined on wrapper
                     if let Some(target_type) = self.resolve_property_access_target_type(&obj_type) {
-                        let target_bp_opt = extract_blueprint_name_from_type(&target_type)
+                        let target_bp_opt = BaseType::from_str(&target_type)
+                            .blueprint_name()
+                            .map(|s| s.to_string())
                             .or_else(|| Some(target_type.clone()));
                         if let Some(t_bp_name) = target_bp_opt {
                             let mut found_ret: Option<(String, Vec<String>)> = None;
@@ -816,13 +813,9 @@ impl SemanticAnalyzer {
                                         property.clone(),
                                         t_bp_name.clone(),
                                     ];
-                                    for dep in extract_all_type_names(&sig.return_type.as_str()) {
-                                        deps.push(dep);
-                                    }
+                                    sig.return_type.collect_type_dependencies(&mut deps);
                                     for p in &sig.params {
-                                        for dep in extract_all_type_names(&p.type_node.as_str()) {
-                                            deps.push(dep);
-                                        }
+                                        p.type_node.collect_type_dependencies(&mut deps);
                                     }
                                     found_ret = Some((sig.return_type.as_str(), deps));
                                 }
@@ -835,16 +828,9 @@ impl SemanticAnalyzer {
                                             property.clone(),
                                             t_bp_name.clone(),
                                         ];
-                                        for dep in
-                                            extract_all_type_names(&fn_type.return_type.as_str())
-                                        {
-                                            deps.push(dep);
-                                        }
+                                        fn_type.return_type.collect_type_dependencies(&mut deps);
                                         for p in &fn_type.params {
-                                            for dep in extract_all_type_names(&p.type_node.as_str())
-                                            {
-                                                deps.push(dep);
-                                            }
+                                            p.type_node.collect_type_dependencies(&mut deps);
                                         }
                                         found_ret = Some((fn_type.return_type.as_str(), deps));
                                     }
@@ -940,16 +926,11 @@ impl SemanticAnalyzer {
                                 }
                                 _ => {}
                             }
-                            let mut base_clean = base_str.trim();
-                            for prefix in &["raw_ptr<", "address<"] {
-                                if base_clean.starts_with(prefix) && base_clean.ends_with('>') {
-                                    base_clean = &base_clean[prefix.len()..base_clean.len() - 1];
-                                }
-                            }
+                            let base_clean = base_str.trim().trim_end_matches('*').trim_end_matches('&').trim();
                             let bp_name = base_clean.split('<').next().unwrap_or(base_clean).trim();
                             let env = self.current_env.borrow();
                             if let Some(bp) = env.lookup_blueprint(bp_name) {
-                                if let Some(sig) = bp.handle_signatures.get("call").or_else(|| bp.methods.get("call")) {
+                                if let Some(sig) = bp.handle_signatures.get("call") {
                                     if sig.return_type == BaseType::Auto {
                                         if let Some(start) = base_clean.find('<') {
                                             if let Some(end) = base_clean.rfind('>') {
@@ -1035,7 +1016,7 @@ impl SemanticAnalyzer {
                                             _ => "".to_string(),
                                         };
                                         let mut clean_target = target_type.trim();
-                                        for prefix in &["raw_ptr<", "address<", "type<"] {
+                                        for prefix in &["type<"] {
                                             if clean_target.starts_with(prefix) && clean_target.ends_with('>') {
                                                 clean_target = &clean_target[prefix.len()..clean_target.len() - 1];
                                             }
@@ -1045,16 +1026,16 @@ impl SemanticAnalyzer {
                                         if let Some(bp) = env.lookup_blueprint(clean_bp) {
                                             if !prop_name.is_empty() && prop_name != "prop" {
                                                 if let Some(field_t) = bp.fields.get(&prop_name) {
-                                                    return Ok(format!("raw_ptr<{}>", field_t.as_str()));
+                                                    return Ok(format!("{}*", field_t.as_str()));
                                                 }
                                                 if let Some(sig) = bp.methods.get(&prop_name).or_else(|| bp.handle_signatures.get(&prop_name)) {
-                                                    return Ok(format!("raw_ptr<{}>", sig.return_type.as_str()));
+                                                    return Ok(format!("{}*", sig.return_type.as_str()));
                                                 }
                                                 return Err(format!("Semantic Error: Member '{}' not found on type '{}'", prop_name, clean_bp));
                                             }
                                         }
                                     }
-                                    return Ok("raw_ptr<unknown>".to_string());
+                                    return Ok("unknown*".to_string());
                                 }
                                 _ => {}
                             }
@@ -1122,7 +1103,6 @@ impl SemanticAnalyzer {
                         }
                         bp.handle_signatures
                             .get("call")
-                            .or_else(|| bp.methods.get("call"))
                             .map(|s| s.return_type.as_str())
                     } else {
                         None
@@ -1135,7 +1115,6 @@ impl SemanticAnalyzer {
                         if let Some(call_sig) = meta
                             .handle_signatures
                             .get("call")
-                            .or_else(|| meta.methods.get("call"))
                         {
                             return Ok(call_sig.return_type.as_str());
                         }
@@ -1314,12 +1293,13 @@ impl SemanticAnalyzer {
             }
 
             Expr::This => {
-                if !self.in_class && !self.in_struct && !self.in_custom_scope {
+                if !self.scope.is_member_context() {
                     return Err(
-                        "Semantic Error: Cannot use 'this' outside of a class, struct, or custom scope".to_string()
+                        "Semantic Error: Cannot use 'this' outside of a class or struct".to_string()
                     );
                 }
                 Ok(self
+                    .scope
                     .current_type_name
                     .clone()
                     .unwrap_or_else(|| "object".to_string()))
@@ -1328,7 +1308,7 @@ impl SemanticAnalyzer {
             Expr::Global => Ok("object".to_string()),
 
             Expr::Super => {
-                if !self.in_class {
+                if !self.scope.in_class {
                     return Err("Semantic Error: Cannot use 'super' outside of a class".to_string());
                 }
                 Ok("object".to_string())
@@ -1368,14 +1348,16 @@ impl SemanticAnalyzer {
                     };
                     if let Some(prop_name) = prop_name_opt {
                         if let Some(target_type) = self.resolve_property_access_target_type(&left_type) {
-                            let target_bp_opt = extract_blueprint_name_from_type(&target_type)
+                            let target_bp_opt = BaseType::from_str(&target_type)
+                                .blueprint_name()
+                                .map(|s| s.to_string())
                                 .or_else(|| Some(target_type.clone()));
                             if let Some(t_bp_name) = target_bp_opt {
                                 if let Some(t_bp) = self.current_env.borrow().lookup_blueprint(&t_bp_name) {
                                     if let Some(field_type) = t_bp.fields.get(prop_name) {
                                         return Ok(field_type.as_str());
                                     }
-                                    if let Some(sig) = t_bp.methods.get(prop_name).or_else(|| t_bp.handle_signatures.get(prop_name)) {
+                                    if let Some(sig) = t_bp.methods.get(prop_name) {
                                         return Ok(sig.return_type.as_str());
                                     }
                                 }
@@ -1383,7 +1365,7 @@ impl SemanticAnalyzer {
                                     if let Some(field_type) = t_meta.fields.get(prop_name) {
                                         return Ok(field_type.as_str());
                                     }
-                                    if let Some(fn_type) = t_meta.methods.get(prop_name).or_else(|| t_meta.handle_signatures.get(prop_name)) {
+                                    if let Some(fn_type) = t_meta.methods.get(prop_name) {
                                         return Ok(fn_type.return_type.as_str());
                                     }
                                 }
@@ -1393,7 +1375,7 @@ impl SemanticAnalyzer {
                     let clean_left = left_type.trim_end_matches('*').trim();
                     let bp_opt = self.current_env.borrow().lookup_blueprint(clean_left);
                     if let Some(bp) = bp_opt {
-                        if let Some(h_sig) = bp.handle_signatures.get(handle_name).or_else(|| bp.methods.get(handle_name)) {
+                        if let Some(h_sig) = bp.handle_signatures.get(handle_name) {
                             return Ok(h_sig.return_type.as_str().to_string());
                         }
                     }
@@ -1447,14 +1429,18 @@ impl SemanticAnalyzer {
                 if operator == "!" {
                     return Ok("bool".to_string());
                 } else if operator == "*" {
-                    for prefix in &["raw_ptr<", "array<", "address<"] {
-                        if op_type.starts_with(prefix) {
-                            let inner = strip_wrapper(&op_type, prefix);
-                            return Ok(inner.to_string());
-                        }
+                    if op_type.ends_with('*') {
+                        return Ok(op_type[..op_type.len() - 1].trim().to_string());
+                    }
+                    if op_type.ends_with('&') {
+                        return Ok(op_type[..op_type.len() - 1].trim().to_string());
+                    }
+                    if op_type.starts_with("array<") {
+                        let inner = strip_wrapper(&op_type, "array<");
+                        return Ok(inner.to_string());
                     }
                 } else if operator == "&" {
-                    return Ok(format!("address<{}>", op_type));
+                    return Ok(format!("{}&", op_type));
                 }
                 Ok(op_type)
             }
@@ -1471,9 +1457,16 @@ impl SemanticAnalyzer {
                 let obj_type = self.visit_expression(object)?;
 
                 let mut current_type = obj_type.clone();
+                let clean_name = BaseType::from_str(&current_type)
+                    .blueprint_name()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| current_type.clone());
+                if let Some(aliased) = self.current_env.borrow().resolve_type_alias(&clean_name) {
+                    current_type = aliased.as_str();
+                }
 
-                while current_type.starts_with("raw_ptr<") {
-                    current_type = strip_wrapper(&current_type, "raw_ptr<").to_string();
+                while current_type.ends_with('*') {
+                    current_type = current_type[..current_type.len() - 1].trim().to_string();
                 }
 
                 // Compile-time bounds checking for constant indices
@@ -1510,6 +1503,18 @@ impl SemanticAnalyzer {
                         }
                     }
                 }
+                if current_type == "str" {
+                    if indices.len() > 1 {
+                        return Err("Semantic Error: Multi-index access [a, b] is not supported for str.".to_string());
+                    }
+                    return Ok("char".to_string());
+                }
+                if current_type == "ustr" {
+                    if indices.len() > 1 {
+                        return Err("Semantic Error: Multi-index access [a, b] is not supported for ustr.".to_string());
+                    }
+                    return Ok("uchar".to_string());
+                }
                 if current_type.starts_with("array<") || current_type == "array" {
                     if indices.len() > 1 {
                         return Err(
@@ -1523,11 +1528,13 @@ impl SemanticAnalyzer {
                     }
                     return Ok(strip_wrapper(&current_type, "array<").to_string());
                 }
-                if obj_type.starts_with("raw_ptr<") {
-                    return Ok(strip_wrapper(&obj_type, "raw_ptr<").to_string());
+                if obj_type.ends_with('*') {
+                    return Ok(obj_type[..obj_type.len() - 1].trim().to_string());
                 }
                 if current_type != "unknown" {
-                    let bp_name = extract_blueprint_name_from_type(&obj_type)
+                    let bp_name = BaseType::from_str(&obj_type)
+                        .blueprint_name()
+                        .map(|s| s.to_string())
                         .unwrap_or_else(|| obj_type.clone());
                     let bp_match = {
                         let env = self.current_env.borrow();
@@ -1616,18 +1623,22 @@ impl SemanticAnalyzer {
                 // If object is an address<T> (or T&), unwrap to T for direct property access (C++ reference style)
                 let actual_obj_type = if obj_type.starts_with("address<") {
                     strip_wrapper(&obj_type, "address<").to_string()
-                } else if obj_type.ends_with('&') {
-                    obj_type[..obj_type.len() - 1].trim().to_string()
                 } else {
                     obj_type.clone()
                 };
+
+                if property == "len" && (actual_obj_type == "str" || actual_obj_type == "ustr") {
+                    return Ok("usize".to_string());
+                }
 
                 // Try to find in blueprint
                 let bp_name_opt =
                     if actual_obj_type.starts_with("type<") || actual_obj_type == "type" {
                         Some("type".to_string())
                     } else {
-                        extract_blueprint_name_from_type(&actual_obj_type)
+                        BaseType::from_str(&actual_obj_type)
+                            .blueprint_name()
+                            .map(|s| s.to_string())
                             .or_else(|| Some(actual_obj_type.clone()))
                     };
                 if let Some(bp_name) = bp_name_opt {
@@ -1635,11 +1646,7 @@ impl SemanticAnalyzer {
                         if let Some(field_type) = bp.fields.get(property) {
                             return Ok(field_type.as_str());
                         }
-                        if let Some(sig) = bp
-                            .methods
-                            .get(property)
-                            .or_else(|| bp.handle_signatures.get(property))
-                        {
+                        if let Some(sig) = bp.methods.get(property) {
                             return Ok(sig.return_type.as_str());
                         }
                     }
@@ -1648,23 +1655,22 @@ impl SemanticAnalyzer {
                         if let Some(field_type) = meta.fields.get(property) {
                             return Ok(field_type.as_str());
                         }
-                        if let Some(fn_type) = meta
-                            .methods
-                            .get(property)
-                            .or_else(|| meta.handle_signatures.get(property))
-                        {
+                        if let Some(fn_type) = meta.methods.get(property) {
                             return Ok(fn_type.return_type.as_str());
                         }
                     }
 
                     if actual_obj_type.starts_with("type<") && actual_obj_type.ends_with('>') {
                         let inner_ty = strip_wrapper(&actual_obj_type, "type<");
-                        let inner_bp_name = extract_blueprint_name_from_type(&inner_ty).unwrap_or_else(|| inner_ty.to_string());
+                        let inner_bp_name = BaseType::from_str(&inner_ty)
+                            .blueprint_name()
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| inner_ty.to_string());
                         if let Some(inner_bp) = self.current_env.borrow().lookup_blueprint(&inner_bp_name) {
                             if let Some(field_type) = inner_bp.fields.get(property) {
                                 return Ok(field_type.as_str());
                             }
-                            if let Some(sig) = inner_bp.methods.get(property).or_else(|| inner_bp.handle_signatures.get(property)) {
+                            if let Some(sig) = inner_bp.methods.get(property) {
                                 return Ok(sig.return_type.as_str());
                             }
                         }
@@ -1672,7 +1678,7 @@ impl SemanticAnalyzer {
                             if let Some(field_type) = inner_meta.fields.get(property) {
                                 return Ok(field_type.as_str());
                             }
-                            if let Some(fn_type) = inner_meta.methods.get(property).or_else(|| inner_meta.handle_signatures.get(property)) {
+                            if let Some(fn_type) = inner_meta.methods.get(property) {
                                 return Ok(fn_type.return_type.as_str());
                             }
                         }
@@ -1681,7 +1687,9 @@ impl SemanticAnalyzer {
                     if let Some(target_type) =
                         self.resolve_property_access_target_type(&actual_obj_type)
                     {
-                        let target_bp_opt = extract_blueprint_name_from_type(&target_type)
+                        let target_bp_opt = BaseType::from_str(&target_type)
+                            .blueprint_name()
+                            .map(|s| s.to_string())
                             .or_else(|| Some(target_type.clone()));
                         if let Some(t_bp_name) = target_bp_opt {
                             if let Some(t_bp) =
@@ -1690,11 +1698,7 @@ impl SemanticAnalyzer {
                                 if let Some(field_type) = t_bp.fields.get(property) {
                                     return Ok(field_type.as_str());
                                 }
-                                if let Some(sig) = t_bp
-                                    .methods
-                                    .get(property)
-                                    .or_else(|| t_bp.handle_signatures.get(property))
-                                {
+                                if let Some(sig) = t_bp.methods.get(property) {
                                     return Ok(sig.return_type.as_str());
                                 }
                             }
@@ -1702,11 +1706,7 @@ impl SemanticAnalyzer {
                                 if let Some(field_type) = t_meta.fields.get(property) {
                                     return Ok(field_type.as_str());
                                 }
-                                if let Some(fn_type) = t_meta
-                                    .methods
-                                    .get(property)
-                                    .or_else(|| t_meta.handle_signatures.get(property))
-                                {
+                                if let Some(fn_type) = t_meta.methods.get(property) {
                                     return Ok(fn_type.return_type.as_str());
                                 }
                             }
@@ -1744,7 +1744,9 @@ impl SemanticAnalyzer {
             Expr::New { type_node, target } => {
                 self.visit_expression(target)?;
                 let type_str = type_node.as_str();
-                for dep in extract_all_type_names(&type_str) {
+                let mut deps = Vec::new();
+                type_node.collect_type_dependencies(&mut deps);
+                for dep in deps {
                     self.record_dependency(dep.clone());
                     self.record_dependency(format!("{}::init", dep));
                 }
@@ -1790,7 +1792,9 @@ impl SemanticAnalyzer {
                 let source_type_str = self.visit_expression(expr)?;
                 let target_type_str = target_type.as_str();
 
-                let source_base = extract_blueprint_name_from_type(&source_type_str)
+                let source_base = BaseType::from_str(&source_type_str)
+                    .blueprint_name()
+                    .map(|s| s.to_string())
                     .unwrap_or_else(|| source_type_str.clone());
 
                 let source_ft = self.get_fast_type(&source_base);
@@ -1857,45 +1861,35 @@ impl SemanticAnalyzer {
                         _ => {}
                     }
                 }
-                let bp_name_opt =
-                    extract_blueprint_name_from_type(&obj_type).or_else(|| Some(obj_type.clone()));
+                let bp_name_opt = BaseType::from_str(&obj_type)
+                    .blueprint_name()
+                    .map(|s| s.to_string())
+                    .or_else(|| Some(obj_type.clone()));
                 if let Some(bp_name) = bp_name_opt {
                     if let Some(bp) = self.current_env.borrow().lookup_blueprint(&bp_name) {
-                        if let Some(sig) = bp
-                            .handle_signatures
-                            .get(handle_name)
-                            .or_else(|| bp.methods.get(handle_name))
-                        {
+                        if let Some(sig) = bp.handle_signatures.get(handle_name) {
                             return Ok(sig.return_type.as_str());
                         }
                     }
                     if let Some(meta) = self.global_metadata.get(&bp_name) {
-                        if let Some(fn_type) = meta
-                            .handle_signatures
-                            .get(handle_name)
-                            .or_else(|| meta.methods.get(handle_name))
-                        {
+                        if let Some(fn_type) = meta.handle_signatures.get(handle_name) {
                             return Ok(fn_type.return_type.as_str());
                         }
                     }
                     if args.is_empty() {
                         if let Some(target_type) = self.resolve_property_access_target_type(&obj_type) {
-                            let target_bp_opt = extract_blueprint_name_from_type(&target_type)
+                            let target_bp_opt = BaseType::from_str(&target_type)
+                                .blueprint_name()
+                                .map(|s| s.to_string())
                                 .or_else(|| Some(target_type.clone()));
                             if let Some(t_bp_name) = target_bp_opt {
                                 if let Some(t_bp) = self.current_env.borrow().lookup_blueprint(&t_bp_name) {
-                                    if let Some(field_type) = t_bp.fields.get(handle_name) {
-                                        return Ok(field_type.as_str());
-                                    }
-                                    if let Some(sig) = t_bp.methods.get(handle_name).or_else(|| t_bp.handle_signatures.get(handle_name)) {
+                                    if let Some(sig) = t_bp.handle_signatures.get(handle_name) {
                                         return Ok(sig.return_type.as_str());
                                     }
                                 }
                                 if let Some(t_meta) = self.global_metadata.get(&t_bp_name) {
-                                    if let Some(field_type) = t_meta.fields.get(handle_name) {
-                                        return Ok(field_type.as_str());
-                                    }
-                                    if let Some(fn_type) = t_meta.methods.get(handle_name).or_else(|| t_meta.handle_signatures.get(handle_name)) {
+                                    if let Some(fn_type) = t_meta.handle_signatures.get(handle_name) {
                                         return Ok(fn_type.return_type.as_str());
                                     }
                                 }
@@ -1954,7 +1948,7 @@ impl SemanticAnalyzer {
                 self.leave_scope();
                 res
             }
-            Expr::LiteralUString(_) => Ok("array<uchar>".to_string()),
+            Expr::LiteralUString(_) => Ok("ustr".to_string()),
             Expr::ForeignBlock { kind, chunks } => {
                 for chunk in chunks {
                     match chunk {
@@ -2037,12 +2031,10 @@ impl SemanticAnalyzer {
 
         if let Some(p) = inner_type {
             let p_str = p.as_str();
-            for prefix in &["raw_ptr<", "address<"] {
-                if p_str.starts_with(prefix) {
-                    return Some(strip_wrapper(&p_str, prefix).to_string());
-                }
-            }
             if p_str.ends_with('*') {
+                return Some(p_str[..p_str.len() - 1].trim().to_string());
+            }
+            if p_str.ends_with('&') {
                 return Some(p_str[..p_str.len() - 1].trim().to_string());
             }
             return Some(p_str);

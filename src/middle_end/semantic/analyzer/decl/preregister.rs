@@ -1,0 +1,543 @@
+use super::super::*;
+use std::rc::Rc;
+use std::collections::HashMap;
+
+pub fn make_sig_key(name: &str, params: &[Param]) -> String {
+    let types: Vec<String> = params.iter().map(|p| p.type_node.as_str()).collect();
+    format!("{}#{}", name, types.join(","))
+}
+
+impl SemanticAnalyzer {
+    pub fn pre_register_decl(&mut self, decl: &Decl) -> Result<(), String> {
+        match decl {
+            Decl::NamespaceDecl { name, decls, .. } => {
+                let parent_env = Rc::clone(&self.current_env);
+                let ns_env = self.current_env.borrow_mut().get_or_create_namespace(name, parent_env);
+                let prev_env = Rc::clone(&self.current_env);
+                self.current_env = Rc::clone(&ns_env);
+                for d in decls {
+                    self.pre_register_decl(d)?;
+                }
+                self.current_env = prev_env;
+            }
+            Decl::CompileDecl { name, decls } => {
+                for d in decls {
+                    let mut namespaced_d = d.clone();
+                    match &mut namespaced_d {
+                        Decl::FnDecl { name: fn_name, .. } => {
+                            *fn_name = format!("{}::{}", name, fn_name);
+                        }
+                        Decl::MicroDecl { name: m_name, .. } => {
+                            *m_name = format!("{}::{}", name, m_name);
+                        }
+                        Decl::MacroDecl { name: m_name, .. } => {
+                            *m_name = format!("{}::{}", name, m_name);
+                        }
+                        _ => {}
+                    }
+                    if let Decl::MacroDecl {
+                        name: ref m_name,
+                        params,
+                        body,
+                        visibility,
+                        ..
+                    } = namespaced_d
+                    {
+                        let prefix = format!("{}::", name);
+                        let short_name = m_name.replace(&prefix, "");
+                        let without_dollar = short_name.trim_start_matches('$').to_string();
+                        let aliases = vec![
+                            m_name.clone(),
+                            format!("{}::{}", name, without_dollar),
+                            short_name.clone(),
+                            without_dollar.clone(),
+                        ];
+                        for alias in aliases {
+                            let alias_info = SymbolInfo {
+                                name: alias.clone(),
+                                kind: SymbolKind::Macro {
+                                    params: params.clone(),
+                                    return_type: BaseType::Void,
+                                    body: body.clone(),
+                                },
+                                visibility: visibility.clone(),
+                                dependencies: vec![],
+                                is_used: false,
+                                is_param: false,
+                                is_uninitialized: false,
+                                is_compilable: true,
+                            };
+                            self.current_env
+                                .borrow_mut()
+                                .define_or_update(alias, alias_info);
+                        }
+                    } else if let Decl::FnDecl {
+                        name: ref f_name,
+                        generics,
+                        params,
+                        return_type,
+                        body,
+                        visibility: _,
+                        ..
+                    } = namespaced_d
+                    {
+                        let fn_info = SymbolInfo {
+                            name: f_name.clone(),
+                            kind: SymbolKind::Function {
+                                params: params.clone(),
+                                return_type: return_type.clone(),
+                                generics: generics.clone(),
+                                body: Some(body.clone()),
+                            },
+                            visibility: Visibility::Public,
+                            dependencies: vec![],
+                            is_used: false,
+                            is_param: false,
+                            is_uninitialized: false,
+                            is_compilable: true,
+                        };
+                        self.current_env
+                            .borrow_mut()
+                            .define_or_update(f_name.clone(), fn_info);
+                    } else if let Decl::MicroDecl {
+                        name: ref m_name,
+                        params,
+                        body,
+                        visibility,
+                        generics,
+                        ..
+                    } = namespaced_d
+                    {
+                        let prefix = format!("{}::", name);
+                        let short_name = m_name.replace(&prefix, "");
+                        let aliases = vec![
+                            m_name.clone(),
+                            format!("{}::{}", name, short_name),
+                            short_name.clone(),
+                        ];
+                        let gen_types: Vec<BaseType> = generics
+                            .as_ref()
+                            .map(|v| v.iter().map(|s| BaseType::from_str(s)).collect())
+                            .unwrap_or_default();
+                        for alias in aliases {
+                            let alias_info = SymbolInfo {
+                                name: alias.clone(),
+                                kind: SymbolKind::Micro {
+                                    params: params.clone(),
+                                    generics: gen_types.clone(),
+                                    body: body.clone(),
+                                },
+                                visibility: visibility.clone(),
+                                dependencies: vec![],
+                                is_used: false,
+                                is_param: false,
+                                is_uninitialized: false,
+                                is_compilable: true,
+                            };
+                            self.current_env
+                                .borrow_mut()
+                                .define_or_update(alias, alias_info);
+                        }
+                    } else if let Decl::ImplDecl {
+                        target,
+                        methods,
+                        handle_block,
+                        ..
+                    } = d
+                    {
+                        let entry =
+                            self.global_metadata
+                                .entry(target.clone())
+                                .or_insert_with(|| TypeMetadata {
+                                    name: target.clone(),
+                                    ty: BaseType::from_str(target),
+                                    fields: std::collections::HashMap::new(),
+                                    methods: std::collections::HashMap::new(),
+                                    constructor: None,
+                                    handles: vec![],
+                                    handle_signatures: std::collections::HashMap::new(),
+                                    vars: std::collections::HashMap::new(),
+                                    variants: None,
+                                });
+                        for m in methods {
+                            if let Decl::FnDecl {
+                                name,
+                                generics,
+                                params,
+                                return_type,
+                                ..
+                            } = m
+                            {
+                                entry.methods.insert(
+                                    name.clone(),
+                                    FnType {
+                                        name: name.clone(),
+                                        generics: generics.clone(),
+                                        params: params.clone(),
+                                        return_type: return_type.clone(),
+                                        mode: ExecutionMode::Runtime,
+                                    },
+                                );
+                            }
+                        }
+                        for h in handle_block {
+                            if let Decl::FnDecl {
+                                name,
+                                generics,
+                                params,
+                                return_type,
+                                ..
+                            } = h
+                            {
+                                let hk = HandleMethods::from_str(name.as_str());
+                                if hk != HandleMethods::NotFound && !entry.handles.contains(&hk) {
+                                    entry.handles.push(hk);
+                                }
+                                entry.handle_signatures.insert(
+                                    name.clone(),
+                                    FnType {
+                                        name: name.clone(),
+                                        generics: generics.clone(),
+                                        params: params.clone(),
+                                        return_type: return_type.clone(),
+                                        mode: ExecutionMode::Runtime,
+                                    },
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            Decl::MacroDecl {
+                name,
+                params,
+                body,
+                visibility,
+                ..
+            } => {
+                let without_dollar = name.trim_start_matches('$').to_string();
+                let aliases = vec![name.clone(), without_dollar];
+                for alias in aliases {
+                    let alias_info = SymbolInfo {
+                        name: alias.clone(),
+                        kind: SymbolKind::Macro {
+                            params: params.clone(),
+                            return_type: BaseType::Void,
+                            body: body.clone(),
+                        },
+                        visibility: visibility.clone(),
+                        dependencies: vec![],
+                        is_used: false,
+                        is_param: false,
+                        is_uninitialized: false,
+                        is_compilable: true,
+                    };
+                    self.current_env
+                        .borrow_mut()
+                        .define_or_update(alias, alias_info);
+                }
+            }
+            Decl::ImplDecl {
+                target,
+                target_generics,
+                methods,
+                handle_block,
+                ..
+            } => {
+                let spec_key = if target_generics.is_empty()
+                    || target_generics
+                        .iter()
+                        .all(|g| matches!(g, BaseType::GenericParam(_)))
+                {
+                    target.clone()
+                } else {
+                    let g_str: Vec<String> = target_generics.iter().map(|g| g.as_str()).collect();
+                    format!("{}<{}>", target, g_str.join(", "))
+                };
+
+                let entry = self
+                    .global_metadata
+                    .entry(spec_key.clone())
+                    .or_insert_with(|| TypeMetadata {
+                        name: spec_key.clone(),
+                        ty: if target == "array" && !target_generics.is_empty() {
+                            BaseType::Array {
+                                base_type: Box::new(target_generics[0].clone()),
+                                size: Box::new(None),
+                            }
+                        } else {
+                            BaseType::from_str(target)
+                        },
+                        fields: std::collections::HashMap::new(),
+                        methods: std::collections::HashMap::new(),
+                        constructor: None,
+                        handles: vec![],
+                        handle_signatures: std::collections::HashMap::new(),
+                        vars: std::collections::HashMap::new(),
+                        variants: None,
+                    });
+                for m in methods {
+                    if let Decl::FnDecl {
+                        name,
+                        generics,
+                        params,
+                        return_type,
+                        ..
+                    } = m
+                    {
+                        entry.methods.insert(
+                            name.clone(),
+                            FnType {
+                                name: name.clone(),
+                                generics: generics.clone(),
+                                params: params.clone(),
+                                return_type: return_type.clone(),
+                                mode: ExecutionMode::Runtime,
+                            },
+                        );
+                    }
+                }
+                for h in handle_block {
+                    if let Decl::FnDecl {
+                        name,
+                        generics,
+                        params,
+                        return_type,
+                        ..
+                    } = h
+                    {
+                        let hk = HandleMethods::from_str(name.as_str());
+                        if hk != HandleMethods::NotFound && !entry.handles.contains(&hk) {
+                            entry.handles.push(hk);
+                        }
+                        entry.handle_signatures.insert(
+                            name.clone(),
+                            FnType {
+                                name: name.clone(),
+                                generics: generics.clone(),
+                                params: params.clone(),
+                                return_type: return_type.clone(),
+                                mode: ExecutionMode::Runtime,
+                            },
+                        );
+                    }
+                }
+                let mut bp_entry = self
+                    .current_env
+                    .borrow()
+                    .lookup_blueprint(target)
+                    .unwrap_or_else(|| BlueprintData::new(target.clone()));
+                for h in handle_block {
+                    if let Decl::FnDecl { name: h_name, .. } = h {
+                        let hk = HandleMethods::from_str(h_name.as_str());
+                        if hk != HandleMethods::NotFound && !bp_entry.handles.contains(&hk) {
+                            bp_entry.handles.insert(hk);
+                        }
+                    }
+                }
+                self.current_env
+                    .borrow_mut()
+                    .define_blueprint(target.clone(), bp_entry);
+            }
+            Decl::FnDecl {
+                visibility,
+                name,
+                generics,
+                params,
+                return_type,
+                body,
+                is_virtual,
+                is_abstract,
+                ..
+            } => {
+                let sig = FnSignature {
+                    name: name.clone(),
+                    generics: generics.clone(),
+                    params: params.clone(),
+                    return_type: return_type.clone(),
+                    is_virtual: *is_virtual,
+                    is_abstract: *is_abstract,
+                };
+                let entry = self.fn_overloads.entry(name.clone()).or_default();
+                if !entry.iter().any(|s| s.params == sig.params && s.generics == sig.generics) {
+                    entry.push(sig);
+                }
+
+                let exec_mode = detect_execution_mode(body);
+                let is_compilable_fn =
+                    name.starts_with("@compile::") || exec_mode == ExecutionMode::FullyCompilable;
+
+                let fn_info = SymbolInfo {
+                    name: name.clone(),
+                    kind: SymbolKind::Function {
+                        params: params.clone(),
+                        return_type: return_type.clone(),
+                        generics: generics.clone(),
+                        body: Some(body.clone()),
+                    },
+                    visibility: visibility.clone(),
+                    dependencies: vec![],
+                    is_used: false,
+                    is_param: false,
+                    is_uninitialized: false,
+                    is_compilable: is_compilable_fn,
+                };
+                self.current_env
+                    .borrow_mut()
+                    .define_or_update(name.clone(), fn_info);
+            }
+            Decl::BlueprintDecl {
+                visibility,
+                name,
+                generics,
+                definition,
+                ..
+            } => {
+                let mut bp = self
+                    .current_env
+                    .borrow()
+                    .lookup_blueprint(name)
+                    .unwrap_or_else(|| BlueprintData::new(name.clone()));
+                bp.generics = generics.iter().map(|g| g.as_str()).collect();
+                if let BlueprintDef::Explicit(fields) = definition {
+                    for f in fields {
+                        bp.fields.insert(f.name.clone(), f.type_node.clone());
+                    }
+                }
+                self.current_env
+                    .borrow_mut()
+                    .define_blueprint(name.to_string(), bp);
+                let info = self.make_blueprint_symbol(name, visibility.clone());
+                self.current_env
+                    .borrow_mut()
+                    .define_or_update(name.clone(), info);
+            }
+            Decl::ClassDecl {
+                visibility,
+                name,
+                generics,
+                extends,
+                ..
+            } => {
+                let mut bp = self
+                    .current_env
+                    .borrow()
+                    .lookup_blueprint(name)
+                    .unwrap_or_else(|| BlueprintData::new(name.clone()));
+                bp.is_class = true;
+                bp.generics = generics.iter().map(|g| g.as_str()).collect();
+                self.current_env
+                    .borrow_mut()
+                    .define_blueprint(name.to_string(), bp);
+                let info = self.make_blueprint_symbol(name, visibility.clone());
+                self.current_env
+                    .borrow_mut()
+                    .define_or_update(name.clone(), info);
+                if let Some(parent) = extends {
+                    self.class_hierarchy.insert(name.clone(), parent.clone());
+                }
+            }
+            Decl::StructDecl {
+                visibility,
+                name,
+                ..
+            } => {
+                let bp = self
+                    .current_env
+                    .borrow()
+                    .lookup_blueprint(name)
+                    .unwrap_or_else(|| BlueprintData::new(name.clone()));
+                self.current_env
+                    .borrow_mut()
+                    .define_blueprint(name.to_string(), bp);
+                let info = self.make_blueprint_symbol(name, visibility.clone());
+                self.current_env
+                    .borrow_mut()
+                    .define_or_update(name.clone(), info);
+            }
+            Decl::EnumDecl {
+                visibility,
+                name,
+                variants,
+                generics,
+                ..
+            } => {
+                let info = self.make_blueprint_symbol(name, visibility.clone());
+                self.current_env
+                    .borrow_mut()
+                    .define_or_update(name.clone(), info);
+                for v in variants {
+                    let var_qualified = format!("{}::{}", name, v.name);
+                    let bp_var_info = self.make_blueprint_symbol(&var_qualified, visibility.clone());
+                    self.current_env
+                        .borrow_mut()
+                        .define_or_update(var_qualified.clone(), bp_var_info);
+                    let var_symbol = SymbolInfo {
+                        name: v.name.clone(),
+                        kind: SymbolKind::Variable {
+                            type_node: BaseType::from_str(name),
+                            editability: Editability::NotEditable,
+                            is_array: false,
+                        },
+                        visibility: visibility.clone(),
+                        dependencies: vec![],
+                        is_used: false,
+                        is_param: false,
+                        is_uninitialized: false,
+                        is_compilable: false,
+                    };
+                    self.current_env
+                        .borrow_mut()
+                        .define_or_update(var_qualified, var_symbol);
+                }
+                self.global_metadata.insert(
+                    name.clone(),
+                    TypeMetadata {
+                        name: name.clone(),
+                        ty: BaseType::Enum {
+                            name: name.clone(),
+                            variants: variants.clone(),
+                            methods: Box::new(HashMap::new()),
+                            generics: generics.clone(),
+                        },
+                        fields: HashMap::new(),
+                        methods: HashMap::new(),
+                        constructor: None,
+                        handles: vec![],
+                        handle_signatures: HashMap::new(),
+                        vars: HashMap::new(),
+                        variants: Some(variants.clone()),
+                    },
+                );
+            }
+            Decl::DefineDecl {
+                name,
+                type_alias,
+                visibility,
+                ..
+            } => {
+                if let Some(t) = type_alias {
+                    let info = SymbolInfo {
+                        name: name.clone(),
+                        kind: SymbolKind::Variable {
+                            type_node: BaseType::Type(Box::new(t.clone())),
+                            editability: Editability::NotEditable,
+                            is_array: false,
+                        },
+                        visibility: visibility.clone(),
+                        dependencies: vec![],
+                        is_used: false,
+                        is_param: false,
+                        is_uninitialized: false,
+                        is_compilable: true,
+                    };
+                    self.current_env
+                        .borrow_mut()
+                        .define_or_update(name.clone(), info);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}

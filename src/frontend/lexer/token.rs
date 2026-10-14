@@ -71,6 +71,8 @@ pub enum TokenKind {
     TypeFloat(u8), // float, float32, float64, float128
     TypeChar,      // char
     TypeUChar,     // uchar
+    TypeStr,       // str
+    TypeUStr,      // ustr
     TypeBool,      // bool
     TypeVoid,      // void
     TypeType,      // type
@@ -178,8 +180,10 @@ impl TokenKind {
             TokenKind::Int(_) => "int",
             TokenKind::UInt(_) => "uint",
             TokenKind::Float(_) => "float",
-            TokenKind::String(_) => "array<char>",
-            TokenKind::UString(_) => "array<uchar>",
+            TokenKind::String(_) => "str",
+            TokenKind::UString(_) => "ustr",
+            TokenKind::TypeStr => "str",
+            TokenKind::TypeUStr => "ustr",
             TokenKind::Char(_) => "char",
             TokenKind::UChar(_) => "uchar",
             TokenKind::Identifier(v) => v,
@@ -292,6 +296,8 @@ impl TokenKind {
             TokenKind::TypeBool => Some("bool"),
             TokenKind::TypeChar => Some("char"),
             TokenKind::TypeUChar => Some("uchar"),
+            TokenKind::TypeStr => Some("str"),
+            TokenKind::TypeUStr => Some("ustr"),
             TokenKind::TypeVoid => Some("void"),
             TokenKind::TypeMethod => Some("method"),
             TokenKind::TypeFn => Some("Fn"),

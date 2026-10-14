@@ -114,12 +114,15 @@ pub fn stmt_to_json(stmt: &Stmt) -> Value {
             "count": count.as_ref().map(expr_to_json),
             "body": either_block_to_json(body)
         }),
-        Stmt::TryCatchStmt { try_block, catch_param, catch_block } =>
+        Stmt::TryCatchStmt { try_block, catches } =>
             json!({
             "type": "TryCatchStmt",
             "try": stmts_to_json(try_block),
-            "catch_param": catch_param,
-            "catch": stmts_to_json(catch_block)
+            "catches": catches.iter().map(|c| json!({
+                "param": c.param,
+                "param_type": c.param_type.as_ref().map(|t| t.as_str()),
+                "body": stmts_to_json(&c.body)
+            })).collect::<Vec<_>>()
         }),
         Stmt::SwitchStmt { name, condition, cases } =>
             json!({

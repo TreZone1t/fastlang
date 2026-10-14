@@ -71,10 +71,7 @@ impl BlueprintData {
     /// Used to verify operator overloading compatibility
     pub fn handle_accepts_type(&self, h: HandleMethods, value_type: &str) -> bool {
         let fn_name = h.as_str();
-        let maybe_sig = self
-            .handle_signatures
-            .get(fn_name)
-            .or_else(|| self.methods.get(fn_name));
+        let maybe_sig = self.handle_signatures.get(fn_name);
         if let Some(sig) = maybe_sig {
             if sig.params.is_empty() {
                 // Handle without params accepts anything

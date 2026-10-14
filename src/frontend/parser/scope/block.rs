@@ -82,27 +82,38 @@ impl Parser {
             let token = self.peek().kind.clone();
             if matches!(token, TokenKind::Identifier(_)) {
                 let type_name = self.get_identifier("Unexpected error happen")?;
-                if self.metadata.contains_key(&type_name) {
+                let mut base_ty = if self.metadata.contains_key(&type_name) {
                     let mut meta_generics = Vec::new();
                     if self.peek().kind == TokenKind::Less {
                         self.advance();
                         self.parse_generic_list(&mut meta_generics)?;
                         self.consume(TokenKind::Greater, "Expected '>' after generic type parameter")?;
                     }
-                    generics.push(BaseType::Blueprint {
+                    BaseType::Blueprint {
                         name: type_name,
                         fields: Box::new(std::collections::HashMap::new()),
                         methods: Box::new(std::collections::HashMap::new()),
                         generics: meta_generics,
-                    });
+                    }
                 } else {
                     let name_stored = if is_variadic {
                         format!("...{}", type_name)
                     } else {
                         type_name
                     };
-                    generics.push(BaseType::GenericParam(name_stored));
+                    BaseType::GenericParam(name_stored)
+                };
+
+                while self.peek().kind == TokenKind::Multiply || self.peek().kind == TokenKind::Ampersand {
+                    if self.peek().kind == TokenKind::Multiply {
+                        self.advance();
+                        base_ty = BaseType::RawPointer(Box::new(base_ty));
+                    } else if self.peek().kind == TokenKind::Ampersand {
+                        self.advance();
+                        base_ty = BaseType::Address(Box::new(base_ty));
+                    }
                 }
+                generics.push(base_ty);
                 continue;
             } else if token == TokenKind::Comma {
                 self.advance();
@@ -131,7 +142,7 @@ impl Parser {
         let mut allowed_handle: Vec<HandleMethods> = Vec::new();
         match base_type {
             BaseType::Class { .. } | BaseType::Enum { .. } | BaseType::Struct { .. } | BaseType::Blueprint { .. }
-            | BaseType::Array { .. } | BaseType::Char | BaseType::Int(_) | BaseType::UInt(_) | BaseType::Float(_) | BaseType::Bool | BaseType::USize | BaseType::ISize => {
+            | BaseType::Array { .. } | BaseType::Str | BaseType::UStr | BaseType::Char | BaseType::Int(_) | BaseType::UInt(_) | BaseType::Float(_) | BaseType::Bool | BaseType::USize | BaseType::ISize => {
                 allowed_handle.push(HandleMethods::Add);
                 allowed_handle.push(HandleMethods::Mod);
                 allowed_handle.push(HandleMethods::Mul);
@@ -347,10 +358,7 @@ impl Parser {
                 }
 
                 let default_ret: BaseType = if handle_kind == HandleMethods::Display {
-                    BaseType::Array {
-                        base_type: Box::new(BaseType::Char),
-                        size: Box::new(None),
-                    }
+                    BaseType::Str
                 } else {
                     BaseType::Void
                 };

@@ -123,6 +123,22 @@ fn test_unicode_concatenation() -> void {
     println("combined: ", combined); // EXPECT: combined: Hello World 🚀
 }
 
+fn test_str_and_ustr_casting() -> void {
+    // Native ustr variable and casting ustr as str
+    ustr original_u = u"FastLang 🚀";
+    println("native ustr: ", original_u); // EXPECT: native ustr: FastLang 🚀
+    println("ustr len: ", original_u.len); // EXPECT: ustr len: 10
+    println("ustr[0]: ", original_u[0]); // EXPECT: ustr[0]: F
+
+    str as_utf8 = original_u as str;
+    println("ustr as str: ", as_utf8); // EXPECT: ustr as str: FastLang 🚀
+
+    // Native str variable and casting str as ustr
+    str original_s = "FastLang";
+    ustr as_unicode = original_s as ustr;
+    println("str as ustr: ", as_unicode); // EXPECT: str as ustr: FastLang
+}
+
 fn main() -> int32 {
     test_str_operations();
     test_char_methods();
@@ -132,6 +148,7 @@ fn main() -> int32 {
     test_uchar();
     test_unicode_strings();
     test_unicode_concatenation();
+    test_str_and_ustr_casting();
     println("ALL 05_STR_AND_PRIMITIVES TESTS PASSED"); // EXPECT: ALL 05_STR_AND_PRIMITIVES TESTS PASSED
     return 0;
 }

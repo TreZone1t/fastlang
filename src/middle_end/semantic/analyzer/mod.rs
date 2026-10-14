@@ -1,10 +1,10 @@
 use crate::frontend::parser::ast::*;
+use crate::frontend::parser::ast::Flag;
 use crate::middle_end::semantic::environment::{
     BlueprintData, Environment, FnSignature, SymbolInfo, SymbolKind,
 };
 use crate::middle_end::semantic::handle_resolver::{
-    build_blueprint_from_metadata, extract_all_type_names, extract_blueprint_name_from_type,
-    is_complex_type, op_to_handle, resolve_handle_for_op, HandleLookupResult,
+    build_blueprint_from_metadata, op_to_handle, resolve_handle_for_op, HandleLookupResult,
 };
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -22,29 +22,65 @@ pub(crate) use type_system::{extract_type_args_from_str, strip_wrapper};
 // ============================================================
 // SemanticAnalyzer - main orchestrator
 // ============================================================
-pub struct SemanticAnalyzer {
-    pub current_env: Rc<RefCell<Environment>>,
+#[derive(Debug, Clone, Default)]
+pub struct ScopeContext {
     pub in_class: bool,
     pub in_struct: bool,
-    pub in_custom_scope: bool,
     pub in_statement_scope: bool,
-    pub active_flags: Vec<String>,
-    pub active_return_type: Option<BaseType>,
+    pub in_generic_template: bool,
     pub current_type_name: Option<String>,
-    pub global_metadata: HashMap<String, TypeMetadata>,
-    pub dependency_graph: HashMap<String, HashSet<String>>,
     pub current_context: Option<String>,
-    pub current_file: String,
-    pub source_code: Option<String>,
-    pub fn_overloads: HashMap<String, Vec<FnSignature>>,
+    pub current_machine: Option<String>,
+}
+
+impl ScopeContext {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn is_member_context(&self) -> bool {
+        self.in_class || self.in_struct || self.current_type_name.is_some()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MemoryTracker {
     pub heap_allocated_vars: HashSet<String>,
     pub deleted_vars: HashSet<String>,
-    pub current_machine: Option<String>,
-    pub machine_labels: HashMap<String, HashMap<String, HashMap<String, BaseType>>>,
-    pub in_generic_template: bool,
-    pub class_hierarchy: HashMap<String, String>,
+}
+
+impl MemoryTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DiagnosticContext {
+    pub current_file: String,
+    pub source_code: Option<String>,
     pub debug_errors: bool,
     pub accumulated_errors: Vec<String>,
+}
+
+impl DiagnosticContext {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+pub struct SemanticAnalyzer {
+    pub current_env: Rc<RefCell<Environment>>,
+    pub scope: ScopeContext,
+    pub memory: MemoryTracker,
+    pub diagnostics: DiagnosticContext,
+    pub active_flags: HashSet<Flag>,
+    pub active_return_type: Option<BaseType>,
+    pub global_metadata: HashMap<String, TypeMetadata>,
+    pub dependency_graph: HashMap<String, HashSet<String>>,
+    pub fn_overloads: HashMap<String, Vec<FnSignature>>,
+    pub machine_labels: HashMap<String, HashMap<String, HashMap<String, BaseType>>>,
+    pub class_hierarchy: HashMap<String, String>,
     pub target_backend: String,
 }
 
@@ -53,28 +89,21 @@ impl SemanticAnalyzer {
     pub fn new(global_metadata: HashMap<String, TypeMetadata>) -> Self {
         let mut analyzer = SemanticAnalyzer {
             current_env: Environment::new(),
-            in_class: false,
-            in_struct: false,
-            in_custom_scope: false,
-            in_statement_scope: false,
-            current_type_name: None,
-            active_flags: vec!["+has_exit".to_string()],
+            scope: ScopeContext::new(),
+            memory: MemoryTracker::new(),
+            diagnostics: DiagnosticContext::new(),
+            active_flags: {
+                let mut s = HashSet::new();
+                s.insert(Flag::HasExit);
+                s
+            },
             active_return_type: None,
             global_metadata,
             dependency_graph: HashMap::new(),
-            current_context: None,
-            current_file: String::new(),
             target_backend: "cpp".to_string(),
-            source_code: None,
             fn_overloads: HashMap::new(),
-            heap_allocated_vars: HashSet::new(),
-            deleted_vars: HashSet::new(),
-            current_machine: None,
             machine_labels: HashMap::new(),
-            in_generic_template: false,
             class_hierarchy: HashMap::new(),
-            debug_errors: false,
-            accumulated_errors: Vec::new(),
         };
         analyzer.import_metadata();
         analyzer
@@ -107,13 +136,13 @@ impl SemanticAnalyzer {
     ) {
         eprintln!("\x1b[33;1mwarning:\x1b[0m {}", message);
         if let (Some(l), Some(c)) = (line, column) {
-            let file_display = if self.current_file.is_empty() {
+            let file_display = if self.diagnostics.current_file.is_empty() {
                 "<input>"
             } else {
-                &self.current_file
+                &self.diagnostics.current_file
             };
             eprintln!("  --> {}:{}:{}", file_display, l, c);
-            if let Some(ref src) = self.source_code {
+            if let Some(ref src) = self.diagnostics.source_code {
                 if let Some(line_str) = src.lines().nth(l.saturating_sub(1)) {
                     let pad = " ".repeat(format!("{}", l).len());
                     eprintln!("   {} |", pad);
@@ -129,7 +158,7 @@ impl SemanticAnalyzer {
     }
 
     pub(crate) fn leave_scope(&mut self) {
-        if !self.in_class && !self.in_struct && !self.in_custom_scope {
+        if !self.scope.is_member_context() {
             for (name, info) in &self.current_env.borrow().symbols {
                 if !info.is_used
                     && !name.starts_with('_')
@@ -175,8 +204,8 @@ impl SemanticAnalyzer {
         for stmt in ast {
             if let Stmt::Declaration(decl) = stmt {
                 if let Err(e) = self.pre_register_decl(decl) {
-                    if self.debug_errors {
-                        self.accumulated_errors.push(e);
+                    if self.diagnostics.debug_errors {
+                        self.diagnostics.accumulated_errors.push(e);
                     } else {
                         return Err(e);
                     }
@@ -186,22 +215,23 @@ impl SemanticAnalyzer {
 
         for stmt in ast {
             if let Err(e) = self.visit_statement(stmt) {
-                if self.debug_errors {
-                    self.accumulated_errors.push(e);
+                if self.diagnostics.debug_errors {
+                    self.diagnostics.accumulated_errors.push(e);
                 } else {
                     return Err(e);
                 }
             }
         }
 
-        if self.debug_errors && !self.accumulated_errors.is_empty() {
-            return Err(self.accumulated_errors.join("\n"));
+        if self.diagnostics.debug_errors && !self.diagnostics.accumulated_errors.is_empty() {
+            return Err(self.diagnostics.accumulated_errors.join("\n"));
         }
         Ok(())
     }
 
     pub fn record_dependency(&mut self, dep: String) {
         let ctx = self
+            .scope
             .current_context
             .clone()
             .unwrap_or_else(|| "main".to_string());
@@ -209,6 +239,14 @@ impl SemanticAnalyzer {
             .entry(ctx)
             .or_insert_with(HashSet::new)
             .insert(dep);
+    }
+
+    pub fn record_type_dependencies(&mut self, type_node: &BaseType) {
+        let mut deps = Vec::new();
+        type_node.collect_type_dependencies(&mut deps);
+        for dep in deps {
+            self.record_dependency(dep);
+        }
     }
 
     pub fn get_reachable_symbols(&self) -> HashSet<String> {
@@ -311,5 +349,4 @@ impl SemanticAnalyzer {
 
         reachable
     }
-
 }

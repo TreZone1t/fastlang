@@ -56,6 +56,8 @@ pub enum BaseType {
     Float(Size),
     Char,
     UChar,
+    Str,
+    UStr,
     Bool,
     Void,
     RawPointer(Box<BaseType>),
@@ -153,6 +155,58 @@ pub enum BaseType {
     New(String),
 }
 impl BaseType {
+    pub fn is_numeric(&self) -> bool {
+        matches!(
+            self,
+            BaseType::Int(_)
+                | BaseType::UInt(_)
+                | BaseType::USize
+                | BaseType::ISize
+                | BaseType::Float(_)
+                | BaseType::Number
+        )
+    }
+
+    pub fn is_integer(&self) -> bool {
+        matches!(
+            self,
+            BaseType::Int(_) | BaseType::UInt(_) | BaseType::USize | BaseType::ISize
+        )
+    }
+
+    pub fn is_float(&self) -> bool {
+        matches!(self, BaseType::Float(_))
+    }
+
+    pub fn is_string(&self) -> bool {
+        matches!(self, BaseType::Str | BaseType::UStr)
+    }
+
+    pub fn is_callable(&self) -> bool {
+        matches!(
+            self,
+            BaseType::Function { .. }
+                | BaseType::Fn { .. }
+                | BaseType::Method { .. }
+                | BaseType::Lambda { .. }
+                | BaseType::Micro { .. }
+                | BaseType::Macro { .. }
+        )
+    }
+
+    pub fn type_name(&self) -> Option<&str> {
+        match self {
+            BaseType::Blueprint { name, .. }
+            | BaseType::Struct { name, .. }
+            | BaseType::Class { name, .. }
+            | BaseType::Enum { name, .. }
+            | BaseType::Block { name, .. }
+            | BaseType::Label { name, .. }
+            | BaseType::Machine { name, .. } => Some(name.as_str()),
+            _ => None,
+        }
+    }
+
     pub fn get_name(&self) -> String {
         match self {
             BaseType::Blueprint { name, .. } => name.clone(),
@@ -179,14 +233,16 @@ impl BaseType {
             BaseType::Float(s) => format!("float{}", s.as_str()),
             BaseType::Char => "char".to_string(),
             BaseType::UChar => "uchar".to_string(),
+            BaseType::Str => "str".to_string(),
+            BaseType::UStr => "ustr".to_string(),
             BaseType::Bool => "bool".to_string(),
             BaseType::Flag => "flag".to_string(),
             BaseType::Block { name, .. } => format!("block<{}>", name),
             BaseType::Machine { name, .. } => format!("machine<{}>", name),
             BaseType::Label { name, .. } => format!("label<{}>", name),
             BaseType::Void => "void".to_string(),
-            BaseType::RawPointer(t) => format!("raw_ptr<{}>", t.as_str()),
-            BaseType::Address(t) => format!("address<{}>", t.as_str()),
+            BaseType::RawPointer(t) => format!("{}*", t.as_str()),
+            BaseType::Address(t) => format!("{}&", t.as_str()),
             BaseType::Type(t) => format!("type<{}>", t.as_str()),
             BaseType::Array { base_type, size } => {
                 if let Some(s) = size.as_ref() {
@@ -375,7 +431,11 @@ impl BaseType {
             "float128" => BaseType::Float(Size::S128),
             "char" => BaseType::Char,
             "uchar" => BaseType::UChar,
+            "str" => BaseType::Str,
+            "ustr" => BaseType::UStr,
             "bool" => BaseType::Bool,
+            "flag" => BaseType::Flag,
+            "any" | "undefined" => BaseType::Auto,
             "void" => BaseType::Void,
             "type" => BaseType::Type(Box::new(BaseType::Unknown)),
             "macro" => BaseType::Macro {
@@ -394,11 +454,36 @@ impl BaseType {
                 return_type: Box::new(BaseType::Unknown),
             },
             _ => {
-                if s.starts_with("blueprint::") {
-                    let inner = &s[10..s.len() - 1];
+                if let Some(inner) = s.strip_prefix("blueprint::") {
+                    let clean = inner.strip_suffix('>').unwrap_or(inner);
                     BaseType::Blueprint {
-                        name: inner.to_string(),
+                        name: clean.to_string(),
                         fields: Box::new(std::collections::HashMap::new()),
+                        methods: Box::new(std::collections::HashMap::new()),
+                        generics: vec![],
+                    }
+                } else if let Some(inner) = s.strip_prefix("class::") {
+                    let clean = inner.strip_suffix('>').unwrap_or(inner);
+                    BaseType::Class {
+                        name: clean.to_string(),
+                        fields: Box::new(std::collections::HashMap::new()),
+                        methods: Box::new(std::collections::HashMap::new()),
+                        constructor: None,
+                        generics: vec![],
+                    }
+                } else if let Some(inner) = s.strip_prefix("struct::") {
+                    let clean = inner.strip_suffix('>').unwrap_or(inner);
+                    BaseType::Struct {
+                        name: clean.to_string(),
+                        fields: Box::new(std::collections::HashMap::new()),
+                        methods: Box::new(std::collections::HashMap::new()),
+                        generics: vec![],
+                    }
+                } else if let Some(inner) = s.strip_prefix("enum::") {
+                    let clean = inner.strip_suffix('>').unwrap_or(inner);
+                    BaseType::Enum {
+                        name: clean.to_string(),
+                        variants: vec![],
                         methods: Box::new(std::collections::HashMap::new()),
                         generics: vec![],
                     }
@@ -427,12 +512,8 @@ impl BaseType {
                         methods: Box::new(std::collections::HashMap::new()),
                         generics: vec![],
                     }
-                } else if s.starts_with("raw_ptr<") && s.ends_with('>') {
-                    let inner = &s[8..s.len() - 1];
-                    BaseType::RawPointer(Box::new(BaseType::from_str(inner)))
-                } else if s.starts_with("address<") && s.ends_with('>') {
-                    let inner = &s[8..s.len() - 1];
-                    BaseType::Address(Box::new(BaseType::from_str(inner)))
+                } else if s.starts_with('&') {
+                    BaseType::Address(Box::new(BaseType::from_str(&s[1..])))
                 } else if s.ends_with('*') {
                     BaseType::RawPointer(Box::new(BaseType::from_str(&s[..s.len() - 1])))
                 } else if s.ends_with('&') {
@@ -519,6 +600,101 @@ impl BaseType {
                     BaseType::Unknown
                 }
             }
+        }
+    }
+
+    pub fn is_primitive(&self) -> bool {
+        matches!(
+            self,
+            BaseType::Int(_)
+                | BaseType::UInt(_)
+                | BaseType::USize
+                | BaseType::ISize
+                | BaseType::Float(_)
+                | BaseType::Char
+                | BaseType::UChar
+                | BaseType::Str
+                | BaseType::UStr
+                | BaseType::Bool
+                | BaseType::Flag
+                | BaseType::Void
+                | BaseType::Type(_)
+                | BaseType::Unknown
+                | BaseType::Auto
+        )
+    }
+
+    pub fn is_complex(&self) -> bool {
+        matches!(
+            self,
+            BaseType::Class { .. }
+                | BaseType::Struct { .. }
+                | BaseType::Enum { .. }
+                | BaseType::Blueprint { .. }
+                | BaseType::Machine { .. }
+                | BaseType::Block { .. }
+        )
+    }
+
+    pub fn blueprint_name(&self) -> Option<&str> {
+        match self {
+            BaseType::Blueprint { name, .. }
+            | BaseType::Class { name, .. }
+            | BaseType::Struct { name, .. }
+            | BaseType::Enum { name, .. }
+            | BaseType::Block { name, .. }
+            | BaseType::Machine { name, .. } => Some(name.as_str()),
+            BaseType::RawPointer(inner) | BaseType::Address(inner) => inner.blueprint_name(),
+            _ => None,
+        }
+    }
+
+    pub fn collect_type_dependencies(&self, out: &mut Vec<String>) {
+        match self {
+            BaseType::Blueprint { name, generics, .. }
+            | BaseType::Class { name, generics, .. }
+            | BaseType::Struct { name, generics, .. }
+            | BaseType::Enum { name, generics, .. } => {
+                if !out.contains(name) {
+                    out.push(name.clone());
+                }
+                for g in generics {
+                    g.collect_type_dependencies(out);
+                }
+            }
+            BaseType::Block { name, .. } | BaseType::Machine { name, .. } => {
+                if !name.is_empty() && !out.contains(name) {
+                    out.push(name.clone());
+                }
+            }
+            BaseType::Array { base_type, .. }
+            | BaseType::RawPointer(base_type)
+            | BaseType::Address(base_type)
+            | BaseType::Type(base_type) => {
+                base_type.collect_type_dependencies(out);
+            }
+            BaseType::Fn { params, return_type, .. }
+            | BaseType::Method { params, return_type, .. }
+            | BaseType::Micro { params, return_type, .. }
+            | BaseType::Macro { params, return_type, .. }
+            | BaseType::Lambda { params, return_type, .. }
+            | BaseType::Function { params, return_type, .. } => {
+                for p in params {
+                    p.collect_type_dependencies(out);
+                }
+                return_type.collect_type_dependencies(out);
+            }
+            BaseType::Generic(gen_vec) => {
+                for g in gen_vec {
+                    g.collect_type_dependencies(out);
+                }
+            }
+            BaseType::GenericParam(name) | BaseType::New(name) => {
+                if !out.contains(name) {
+                    out.push(name.clone());
+                }
+            }
+            _ => {}
         }
     }
 
@@ -978,6 +1154,34 @@ pub enum HandleMethods {
     NotFound,
 }
 impl HandleMethods {
+    pub fn as_cpp_operator(&self) -> Option<&'static str> {
+        match self {
+            HandleMethods::Add => Some("+"),
+            HandleMethods::Sub => Some("-"),
+            HandleMethods::Mul => Some("*"),
+            HandleMethods::Div => Some("/"),
+            HandleMethods::Mod => Some("%"),
+            HandleMethods::PartialEqual => Some("=="),
+            HandleMethods::NotEqual => Some("!="),
+            HandleMethods::GreaterThan => Some(">"),
+            HandleMethods::LessThan => Some("<"),
+            HandleMethods::GreaterThanEqual => Some(">="),
+            HandleMethods::LessThanEqual => Some("<="),
+            HandleMethods::Equal => Some("="),
+            HandleMethods::AddReassign => Some("+="),
+            HandleMethods::SubReassign => Some("-="),
+            HandleMethods::MulReassign => Some("*="),
+            HandleMethods::DivReassign => Some("/="),
+            HandleMethods::ModReassign => Some("%="),
+            HandleMethods::And => Some("&&"),
+            HandleMethods::Or => Some("||"),
+            HandleMethods::Not => Some("!"),
+            HandleMethods::Increment | HandleMethods::PreIncrement => Some("++"),
+            HandleMethods::Decrement | HandleMethods::PreDecrement => Some("--"),
+            _ => None,
+        }
+    }
+
     pub fn from_str(s: &str) -> Self {
         match s {
             "index_access" => HandleMethods::IndexAccess,
@@ -1005,7 +1209,7 @@ impl HandleMethods {
             "arrow_assign" => HandleMethods::ArrowAssign,
             "fat_arrow" => HandleMethods::FatArrow,
             "equal_assign" => HandleMethods::EqualAssign,
-            "equal" => HandleMethods::Equal,
+            "equal" | "assign" => HandleMethods::Equal,
             "partial_equal" => HandleMethods::PartialEqual,
             "not_equal" => HandleMethods::NotEqual,
             "greater_than" => HandleMethods::GreaterThan,
@@ -1340,14 +1544,8 @@ pub fn type_from_expr(expr: &Expr) -> BaseType {
         Expr::LiteralUInt(_) => BaseType::UInt(Size::S32),
         Expr::LiteralFloat(_) => BaseType::Float(Size::S64),
         Expr::LiteralBool(_) => BaseType::Bool,
-        Expr::LiteralString(s) => BaseType::Array {
-            base_type: Box::new(BaseType::Char),
-            size: Box::new(Some(Expr::LiteralInt(s.len() as i128))),
-        },
-        Expr::LiteralUString(s) => BaseType::Array {
-            base_type: Box::new(BaseType::UChar),
-            size: Box::new(Some(Expr::LiteralInt(s.chars().count() as i128))),
-        },
+        Expr::LiteralString(_) => BaseType::Str,
+        Expr::LiteralUString(_) => BaseType::UStr,
         Expr::LiteralChar(_) => BaseType::Char,
         Expr::LiteralUChar(_) => BaseType::UChar,
         Expr::New { type_node, .. } => type_node.clone(),
@@ -1543,6 +1741,13 @@ pub enum Decl {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct CatchClause {
+    pub param: String,
+    pub param_type: Option<BaseType>,
+    pub body: Vec<Stmt>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Declaration(Decl),
     Block(Vec<Stmt>),
@@ -1578,8 +1783,7 @@ pub enum Stmt {
     ThrowStmt(Expr),
     TryCatchStmt {
         try_block: Vec<Stmt>,
-        catch_param: String,
-        catch_block: Vec<Stmt>,
+        catches: Vec<CatchClause>,
     },
 
     // ── Control Flow ──────────────────────────────────────────
@@ -1762,13 +1966,10 @@ type : {struct || class || object (instance) || block || global || Fn || looped 
 
 */
 /*
-what the custom sys does (all the setting start with custom_ ) :
-1.index_access :
- it enable the cusom scope to be accessed like that custom_scope_name[index];
- but of course  you need to decare a fn with the name "index_access" in handle will handle the index_access
- for ex if i have a list custom scope with this setting and a fn called access take a index and return a name (ref)
- what i can do in handle is will be like that
- handle -> {
+Handle methods mechanism:
+1. index_access:
+   Enables indexing syntax: `obj[index]`
+   Implemented by declaring a fn `index_access` in the `handle` block:
   fn index_access (index : int(32)) -> name {
     let name  ele= this.access(index);
     return ele;

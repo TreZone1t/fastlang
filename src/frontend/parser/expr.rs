@@ -29,6 +29,12 @@ impl Parser {
     }
 
     pub(crate) fn parse_type(&mut self) -> Result<BaseType, String> {
+        if self.peek().kind == TokenKind::Ampersand {
+            self.advance();
+            let inner = self.parse_type()?;
+            return Ok(BaseType::Address(Box::new(inner)));
+        }
+
         let mut base_type = self.parse_base_type()?;
 
         while self.peek().kind == TokenKind::Multiply
@@ -282,6 +288,14 @@ impl Parser {
             TokenKind::TypeUChar => {
                 self.advance();
                 Ok(BaseType::UChar)
+            }
+            TokenKind::TypeStr => {
+                self.advance();
+                Ok(BaseType::Str)
+            }
+            TokenKind::TypeUStr => {
+                self.advance();
+                Ok(BaseType::UStr)
             }
             TokenKind::TypeVoid => {
                 self.advance();
@@ -556,23 +570,6 @@ impl Parser {
                     });
                 }
 
-                if n == "raw_ptr" {
-                    let elem = if generics.is_empty() {
-                        BaseType::Unknown
-                    } else {
-                        generics.into_iter().next().unwrap()
-                    };
-                    return Ok(BaseType::RawPointer(Box::new(elem)));
-                }
-
-                if n == "address" {
-                    let elem = if generics.is_empty() {
-                        BaseType::Unknown
-                    } else {
-                        generics.into_iter().next().unwrap()
-                    };
-                    return Ok(BaseType::Address(Box::new(elem)));
-                }
                 if let Some(meta) = self.metadata.get(&n).cloned() {
                     let fields = Box::new(meta.fields.clone());
                     let methods = Box::new(meta.methods.clone());
@@ -811,6 +808,8 @@ impl Parser {
             | TokenKind::TypeFloat(_)
             | TokenKind::TypeChar
             | TokenKind::TypeUChar
+            | TokenKind::TypeStr
+            | TokenKind::TypeUStr
             | TokenKind::TypeBool
             | TokenKind::TypeType => {
                 let t = self.parse_type()?;
@@ -1325,6 +1324,8 @@ impl Parser {
                 | TokenKind::TypeFloat(_)
                 | TokenKind::TypeChar
                 | TokenKind::TypeUChar
+                | TokenKind::TypeStr
+                | TokenKind::TypeUStr
                 | TokenKind::TypeBool
                 | TokenKind::TypeVoid
                 | TokenKind::TypeUSize

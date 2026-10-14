@@ -46,6 +46,9 @@ impl SemanticAnalyzer {
                 | "float64"
                 | "float128"
                 | "char"
+                | "uchar"
+                | "str"
+                | "ustr"
                 | "bool"
                 | "void"
                 | "type"
@@ -57,8 +60,10 @@ impl SemanticAnalyzer {
     }
 
     pub(crate) fn type_has_drop_handle(&self, type_name: &str) -> bool {
-        let extracted =
-            extract_blueprint_name_from_type(type_name).unwrap_or_else(|| type_name.to_string());
+        let extracted = BaseType::from_str(type_name)
+            .blueprint_name()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| type_name.to_string());
         let clean_name = if let Some(idx) = extracted.find('<') {
             extracted[..idx].trim().to_string()
         } else {
@@ -67,7 +72,7 @@ impl SemanticAnalyzer {
         if let Some(bp) = self.current_env.borrow().lookup_blueprint(&clean_name) {
             if bp.handles.contains(&HandleMethods::Drop)
                 || bp.handle_signatures.contains_key("drop")
-                || bp.methods.contains_key("drop")
+                || bp.handle_signatures.contains_key("$drop")
             {
                 return true;
             }
@@ -75,7 +80,7 @@ impl SemanticAnalyzer {
         if let Some(meta) = self.global_metadata.get(&clean_name) {
             if meta.handles.contains(&HandleMethods::Drop)
                 || meta.handle_signatures.contains_key("drop")
-                || meta.methods.contains_key("drop")
+                || meta.handle_signatures.contains_key("$drop")
             {
                 return true;
             }
@@ -84,8 +89,10 @@ impl SemanticAnalyzer {
     }
 
     pub(crate) fn is_class_type(&self, type_name: &str) -> bool {
-        let clean_name =
-            extract_blueprint_name_from_type(type_name).unwrap_or_else(|| type_name.to_string());
+        let clean_name = BaseType::from_str(type_name)
+            .blueprint_name()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| type_name.to_string());
         if let Some(meta) = self.global_metadata.get(&clean_name) {
             if let BaseType::Class { .. } = &meta.ty {
                 return true;
@@ -95,8 +102,10 @@ impl SemanticAnalyzer {
     }
 
     pub(crate) fn is_struct_or_blueprint_type(&self, type_name: &str) -> bool {
-        let clean_name =
-            extract_blueprint_name_from_type(type_name).unwrap_or_else(|| type_name.to_string());
+        let clean_name = BaseType::from_str(type_name)
+            .blueprint_name()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| type_name.to_string());
         if let Some(meta) = self.global_metadata.get(&clean_name) {
             if matches!(
                 &meta.ty,
@@ -115,6 +124,264 @@ impl SemanticAnalyzer {
         }
         false
     }
+    pub(crate) fn is_subclass_of(&self, derived: &str, base: &str) -> bool {
+        let mut curr = derived;
+        while let Some(parent) = self.class_hierarchy.get(curr) {
+            if parent == base {
+                return true;
+            }
+            curr = parent;
+        }
+        false
+    }
+
+    pub(crate) fn types_are_compatible_basetype(&self, expected: &BaseType, actual: &BaseType) -> bool {
+        let res_exp = self.resolve_type(expected);
+        let res_act = self.resolve_type(actual);
+        let expected = &res_exp;
+        let actual = &res_act;
+
+        if expected == actual {
+            return true;
+        }
+
+        // Generic type handling (e.g. T, U, or GenericParam)
+        if matches!(expected, BaseType::GenericParam(_)) || matches!(actual, BaseType::GenericParam(_)) {
+            return true;
+        }
+        if let Some(n) = expected.type_name() {
+            if self.is_generic_type(n) {
+                return true;
+            }
+        }
+        if let Some(n) = actual.type_name() {
+            if self.is_generic_type(n) {
+                return true;
+            }
+        }
+
+        // Auto, Unknown, Any handling
+        match (expected, actual) {
+            (BaseType::Auto, _) | (_, BaseType::Auto) => return true,
+            (BaseType::Unknown, _) | (_, BaseType::Unknown) => return true,
+            _ => {}
+        }
+
+        // Flag and Bool interchangeability
+        if matches!(
+            (expected, actual),
+            (BaseType::Flag, BaseType::Bool) | (BaseType::Bool, BaseType::Flag)
+        ) {
+            return true;
+        }
+
+        // Object handling: Object accepts any Class, Struct, Blueprint, Enum
+        if matches!(expected, BaseType::Object) {
+            if matches!(
+                actual,
+                BaseType::Object
+                    | BaseType::Class { .. }
+                    | BaseType::Struct { .. }
+                    | BaseType::Blueprint { .. }
+                    | BaseType::Enum { .. }
+            ) {
+                return true;
+            }
+            if let Some(name) = actual.type_name() {
+                if self.is_class_type(name) || self.is_struct_or_blueprint_type(name) {
+                    return true;
+                }
+            }
+        }
+        if matches!(actual, BaseType::Object) {
+            if matches!(
+                expected,
+                BaseType::Class { .. }
+                    | BaseType::Struct { .. }
+                    | BaseType::Blueprint { .. }
+                    | BaseType::Enum { .. }
+            ) {
+                return true;
+            }
+            if let Some(name) = expected.type_name() {
+                if self.is_class_type(name) || self.is_struct_or_blueprint_type(name) {
+                    return true;
+                }
+            }
+        }
+
+        // Number handling: BaseType::Number accepts any numeric type
+        if matches!(expected, BaseType::Number) && actual.is_numeric() {
+            return true;
+        }
+        if matches!(actual, BaseType::Number) && expected.is_numeric() {
+            return true;
+        }
+
+        // Numeric widening
+        if is_numeric_widening_basetype(expected, actual) {
+            return true;
+        }
+
+        // Integer families (int8..int128, uint8..uint128, usize, isize)
+        if expected.is_integer() && actual.is_integer() {
+            return true;
+        }
+
+        // Float families (float32, float64, float128)
+        if expected.is_float() && actual.is_float() {
+            return true;
+        }
+
+        // Type expressions: Type(T) accepts Type, Int, UInt, Bool, Float
+        if let BaseType::Type(_) = expected {
+            if matches!(actual, BaseType::Type(_)) || actual.is_numeric() || matches!(actual, BaseType::Bool) {
+                return true;
+            }
+        }
+
+        // Functions / Fn / Lambda / Method
+        if expected.is_callable() && actual.is_callable() {
+            return true;
+        }
+
+        // Array compatibility
+        if let (BaseType::Array { base_type: exp_inner, .. }, BaseType::Array { base_type: act_inner, .. }) = (expected, actual) {
+            return self.types_are_compatible_basetype(exp_inner, act_inner);
+        }
+
+        // str and ustr compatibility
+        if matches!((expected, actual), (BaseType::Str, BaseType::Str) | (BaseType::UStr, BaseType::UStr)) {
+            return true;
+        }
+        if matches!((expected, actual), (BaseType::Str, BaseType::Array { ref base_type, .. }) if **base_type == BaseType::Char) {
+            return true;
+        }
+        if matches!((expected, actual), (BaseType::Array { ref base_type, .. }, BaseType::Str) if **base_type == BaseType::Char) {
+            return true;
+        }
+        if matches!((expected, actual), (BaseType::UStr, BaseType::Array { ref base_type, .. }) if **base_type == BaseType::UChar) {
+            return true;
+        }
+        if matches!((expected, actual), (BaseType::Array { ref base_type, .. }, BaseType::UStr) if **base_type == BaseType::UChar) {
+            return true;
+        }
+
+        // Address / Pointer compatibility
+        if let BaseType::Address(exp_inner) = expected {
+            if matches!(**exp_inner, BaseType::Unknown) {
+                return true;
+            }
+            let act_target = match actual {
+                BaseType::Address(inner) => inner.as_ref(),
+                BaseType::Array { base_type, .. } => base_type.as_ref(),
+                BaseType::RawPointer(inner) => inner.as_ref(),
+                other => other,
+            };
+            return self.types_are_compatible_basetype(exp_inner, act_target);
+        }
+        if let BaseType::Address(act_inner) = actual {
+            return self.types_are_compatible_basetype(expected, act_inner);
+        }
+
+        // RawPointer compatibility: raw_ptr<T> accepts raw_ptr<T>, array<T>, or address<T>
+        if let BaseType::RawPointer(exp_inner) = expected {
+            if matches!(**exp_inner, BaseType::Unknown) {
+                return true;
+            }
+            let act_target = match actual {
+                BaseType::RawPointer(inner) => inner.as_ref(),
+                BaseType::Array { base_type, .. } => base_type.as_ref(),
+                BaseType::Address(inner) => inner.as_ref(),
+                other => other,
+            };
+            return self.types_are_compatible_basetype(exp_inner, act_target);
+        }
+        if let BaseType::RawPointer(act_inner) = actual {
+            return self.types_are_compatible_basetype(expected, act_inner);
+        }
+
+        // Generic param checks
+        if let BaseType::GenericParam(_) = expected {
+            return true;
+        }
+        if let BaseType::GenericParam(_) = actual {
+            return true;
+        }
+
+        // Blueprint / Class / Struct handle / constructor checks
+        let exp_name = expected.type_name();
+        let act_name = actual.type_name();
+
+        if let Some(exp_n) = exp_name {
+            if let Some(bp) = self.current_env.borrow().lookup_blueprint(exp_n).or_else(|| {
+                self.global_metadata.get(exp_n).map(build_blueprint_from_metadata)
+            }) {
+                let actual_str = actual.as_str();
+                if bp.handle_accepts_type(HandleMethods::Equal, &actual_str)
+                    || bp.handle_accepts_type(HandleMethods::EqualAssign, &actual_str)
+                    || bp.handle_accepts_type(HandleMethods::ArrowAssign, &actual_str)
+                    || bp.handle_accepts_type(HandleMethods::Arrow, &actual_str)
+                {
+                    return true;
+                }
+                if let Some(meta) = self.global_metadata.get(exp_n) {
+                    if let Some(constructors) = &meta.constructor {
+                        for c in constructors {
+                            if c.params.len() == 1 {
+                                let param_t = &c.params[0].type_node;
+                                if param_t == actual
+                                    || (param_t != expected && self.types_are_compatible_basetype(param_t, actual))
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(sym) = self.current_env.borrow().lookup(exp_n) {
+                if let SymbolKind::Variable {
+                    type_node: BaseType::Type(inner),
+                    ..
+                } = &sym.kind {
+                    if matches!(**inner, BaseType::GenericParam(_)) {
+                        return true;
+                    }
+                    if inner.as_ref() != expected {
+                        return self.types_are_compatible_basetype(inner, actual);
+                    }
+                }
+            }
+        }
+
+        if let Some(act_n) = act_name {
+            if let Some(sym) = self.current_env.borrow().lookup(act_n) {
+                if let SymbolKind::Variable {
+                    type_node: BaseType::Type(inner),
+                    ..
+                } = &sym.kind {
+                    if matches!(**inner, BaseType::GenericParam(_)) {
+                        return true;
+                    }
+                    if inner.as_ref() != actual {
+                        return self.types_are_compatible_basetype(expected, inner);
+                    }
+                }
+            }
+        }
+
+        // Class inheritance check
+        if let (Some(exp_n), Some(act_n)) = (exp_name, act_name) {
+            if self.is_subclass_of(act_n, exp_n) {
+                return true;
+            }
+        }
+
+        false
+    }
+
     pub(crate) fn types_are_compatible(&self, expected: &str, actual: &str) -> bool {
         if expected == actual
             || expected == "any"
@@ -123,311 +390,14 @@ impl SemanticAnalyzer {
             || expected == "auto"
             || actual == "auto"
             || actual == "undefined"
-        {
-            return true;
-        }
-        if self.is_generic_type(expected)
-            || self.is_generic_type(actual)
             || expected.starts_with("...")
             || actual.starts_with("...")
         {
             return true;
         }
-        if (expected == "flag" && actual == "bool") || (expected == "bool" && actual == "flag") {
-            return true;
-        }
-        if expected == "object" || actual == "object" {
-            let other = if expected == "object" {
-                actual
-            } else {
-                expected
-            };
-            let other_clean = if let Some(stripped) = other.strip_prefix("object::") {
-                stripped
-            } else {
-                other
-            };
-            if other_clean == "object"
-                || self.is_class_type(other_clean)
-                || self.is_struct_or_blueprint_type(other_clean)
-                || other_clean.starts_with("class::")
-                || other_clean.starts_with("struct::")
-                || other_clean.starts_with("blueprint::")
-                || other_clean.starts_with("class<")
-                || other_clean.starts_with("struct<")
-                || other_clean.starts_with("blueprint<")
-                || other_clean.starts_with("enum<")
-                || other_clean.starts_with("enum::")
-            {
-                return true;
-            }
-        }
-        if expected == "number"
-            || expected == "num"
-            || expected.starts_with("number<")
-            || actual == "number"
-            || actual == "num"
-            || actual.starts_with("number<")
-        {
-            let other =
-                if expected == "number" || expected == "num" || expected.starts_with("number<") {
-                    actual
-                } else {
-                    expected
-                };
-            let other_clean = if let Some(stripped) = other.strip_prefix("number::") {
-                stripped
-            } else if let Some(stripped) = other.strip_prefix("num::") {
-                stripped
-            } else {
-                other
-            };
-            let other_lower = other_clean.to_lowercase();
-            if other_lower == "number"
-                || other_lower == "num"
-                || other_lower.starts_with("int")
-                || other_lower.starts_with("uint")
-                || other_lower.starts_with("float")
-                || other_lower == "usize"
-                || other_lower == "isize"
-            {
-                return true;
-            }
-        }
-        if is_numeric_widening(expected, actual) {
-            return true;
-        }
-        if expected == "function"
-            || expected.starts_with("function<")
-            || actual == "function"
-            || actual.starts_with("function<")
-        {
-            let other = if expected == "function" || expected.starts_with("function<") {
-                actual
-            } else {
-                expected
-            };
-            let other_clean = if let Some(stripped) = other.strip_prefix("function::") {
-                stripped
-            } else {
-                other
-            };
-            let other_lower = other_clean.to_lowercase();
-            if other_lower == "function"
-                || other_lower.starts_with("fn")
-                || other_lower.starts_with("lambda")
-                || other_lower.starts_with("method")
-            {
-                return true;
-            }
-        }
-        if (expected.to_lowercase().starts_with("lambda")
-            || expected.to_lowercase().starts_with("fn")
-            || expected.to_lowercase().starts_with("method"))
-            && (actual.to_lowercase().starts_with("lambda")
-                || actual.to_lowercase().starts_with("fn")
-                || actual.to_lowercase().starts_with("method"))
-        {
-            return true;
-        }
-        let norm_exp = if expected == "char[]" {
-            "array<char>".to_string()
-        } else if expected.ends_with("[]") {
-            format!("array<{}>", &expected[..expected.len() - 2])
-        } else {
-            expected.to_string()
-        };
-        let norm_act = if actual == "char[]" {
-            "array<char>".to_string()
-        } else if actual.ends_with("[]") {
-            format!("array<{}>", &actual[..actual.len() - 2])
-        } else {
-            actual.to_string()
-        };
-        if norm_exp == norm_act {
-            return true;
-        }
-        if (expected == "type" || expected.starts_with("type<"))
-            && (actual == "type"
-                || actual.starts_with("type<")
-                || actual.starts_with("int")
-                || actual.starts_with("uint")
-                || actual == "bool"
-                || actual.starts_with("float"))
-        {
-            return true;
-        }
-        let exp_clean =
-            extract_blueprint_name_from_type(expected).unwrap_or_else(|| expected.to_string());
-        let act_clean =
-            extract_blueprint_name_from_type(actual).unwrap_or_else(|| actual.to_string());
-        if let Some(bp) = self.current_env.borrow().lookup_blueprint(&exp_clean) {
-            if bp.handle_accepts_type(HandleMethods::Equal, actual)
-                || bp.handle_accepts_type(HandleMethods::EqualAssign, actual)
-            {
-                return true;
-            }
-        }
-        if let Some(sym) = self.current_env.borrow().lookup(&exp_clean) {
-            if let SymbolKind::Variable {
-                type_node: BaseType::Type(inner),
-                ..
-            } = &sym.kind
-            {
-                if matches!(**inner, BaseType::GenericParam(_)) {
-                    return true;
-                }
-                let inner_str = inner.as_str();
-                if inner_str != exp_clean {
-                    return self.types_are_compatible(&inner_str, actual);
-                }
-            }
-        }
-        if let Some(sym) = self.current_env.borrow().lookup(&act_clean) {
-            if let SymbolKind::Variable {
-                type_node: BaseType::Type(inner),
-                ..
-            } = &sym.kind
-            {
-                if matches!(**inner, BaseType::GenericParam(_)) {
-                    return true;
-                }
-                let inner_str = inner.as_str();
-                if inner_str != act_clean {
-                    return self.types_are_compatible(expected, &inner_str);
-                }
-            }
-        }
-        if (expected.to_lowercase().starts_with("method")
-            || expected.starts_with("Fn")
-            || expected.starts_with("fn")
-            || expected.to_lowercase().contains("<method")
-            || expected.contains("<Fn<"))
-            && (actual.to_lowercase().starts_with("method")
-                || actual.starts_with("Fn")
-                || actual.starts_with("fn")
-                || actual.to_lowercase().contains("<method")
-                || actual.contains("<Fn<")
-                || actual == "fn")
-        {
-            return true;
-        }
-        // int and uint family
-        if (expected.starts_with("int")
-            || expected.starts_with("uint")
-            || expected == "byte"
-            || expected == "usize"
-            || expected == "isize")
-            && (actual.starts_with("int")
-                || actual.starts_with("uint")
-                || actual == "byte"
-                || actual == "usize"
-                || actual == "isize")
-        {
-            return true;
-        }
-        if (expected == "int" || expected == "int32" || expected == "uint" || expected == "uint32")
-            && (actual == "int" || actual == "uint")
-        {
-            return true;
-        }
-        // float family
-        if expected.starts_with("float") && actual.starts_with("float") {
-            return true;
-        }
-        // array family
-        if expected.starts_with("array<") && actual.starts_with("array<") {
-            let exp_inner = expected.trim_start_matches("array<").trim_end_matches('>');
-            let act_inner = actual.trim_start_matches("array<").trim_end_matches('>');
-            let exp_base = exp_inner.split('[').next().unwrap_or(exp_inner);
-            let act_base = act_inner.split('[').next().unwrap_or(act_inner);
-            return self.types_are_compatible(exp_base, act_base);
-        }
-        // blueprint/struct/class/enum/machine/block wrappers
-        for prefix in &[
-            "blueprint::",
-            "struct::",
-            "class::",
-            "enum::",
-            "machine::",
-            "block::",
-            "object::",
-        ] {
-            if expected.starts_with(prefix) {
-                let inner = strip_wrapper(expected, prefix);
-                if inner == actual || self.types_are_compatible(inner, actual) {
-                    return true;
-                }
-            }
-            if actual.starts_with(prefix) {
-                let inner = strip_wrapper(actual, prefix);
-                if inner == expected || self.types_are_compatible(expected, inner) {
-                    return true;
-                }
-            }
-        }
-        let exp_bp_name =
-            extract_blueprint_name_from_type(expected).unwrap_or_else(|| expected.to_string());
-        if let Some(bp) = self
-            .current_env
-            .borrow()
-            .lookup_blueprint(&exp_bp_name)
-            .or_else(|| {
-                self.global_metadata
-                    .get(&exp_bp_name)
-                    .map(build_blueprint_from_metadata)
-            })
-        {
-            if bp.handle_accepts_type(HandleMethods::ArrowAssign, actual)
-                || bp.handle_accepts_type(HandleMethods::Arrow, actual)
-            {
-                return true;
-            }
-            if let Some(meta) = self.global_metadata.get(&exp_bp_name) {
-                if let Some(constructors) = &meta.constructor {
-                    for c in constructors {
-                        if c.params.len() == 1 {
-                            let param_t = c.params[0].type_node.as_str();
-                            if param_t == actual
-                                || (param_t != expected
-                                    && self.types_are_compatible(&param_t, actual))
-                            {
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // address compatibility (address<T> / T&)
-        if expected == "address"
-            || expected == "address<unknown>"
-            || actual == "address"
-            || actual == "address<unknown>"
-        {
-            return true;
-        }
-        if expected.starts_with("address<") {
-            let inner = strip_wrapper(expected, "address<");
-            if inner == "unknown" {
-                return true;
-            }
-            let actual_inner = if actual.starts_with("address<") {
-                strip_wrapper(actual, "address<")
-            } else if actual.starts_with("array<") {
-                strip_wrapper(actual, "array<")
-            } else if actual.starts_with("raw_ptr<") {
-                strip_wrapper(actual, "raw_ptr<")
-            } else {
-                actual
-            };
-            return self.types_are_compatible(inner, actual_inner);
-        }
-        if actual.starts_with("address<") {
-            let actual_inner = strip_wrapper(actual, "address<");
-            return self.types_are_compatible(expected, actual_inner);
-        }
-        false
+        let exp_ty = self.resolve_type(&BaseType::from_str(expected));
+        let act_ty = self.resolve_type(&BaseType::from_str(actual));
+        self.types_are_compatible_basetype(&exp_ty, &act_ty)
     }
 
     // ----------------------------------------------------------
@@ -917,10 +887,8 @@ pub(crate) fn extract_type_args_from_str(s: &str) -> (String, Vec<BaseType>) {
         "object::",
     ] {
         if let Some(rest) = trimmed.strip_prefix(prefix) {
-            if let Some(inner) = rest.strip_suffix('>') {
-                trimmed = inner.trim();
-                break;
-            }
+            trimmed = rest.trim();
+            break;
         }
     }
 
@@ -952,53 +920,67 @@ pub(crate) fn extract_iter_payload_type(t: &BaseType) -> String {
     }
 }
 
-pub(crate) fn is_numeric_widening(expected: &str, actual: &str) -> bool {
-    let int_rank = |t: &str| -> Option<u32> {
-        match t {
-            "int8" => Some(8),
-            "int16" => Some(16),
-            "int32" | "int" => Some(32),
-            "int64" | "isize" => Some(64),
-            "int128" => Some(128),
-            _ => None,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NumericKind {
+    Signed,
+    Unsigned,
+    Float,
+}
+
+pub(crate) fn numeric_rank_basetype(ty: &BaseType) -> Option<(NumericKind, u32)> {
+    match ty {
+        BaseType::Int(size) => {
+            let bits = match size {
+                Size::S8 => 8,
+                Size::S16 => 16,
+                Size::S32 => 32,
+                Size::S64 => 64,
+                Size::S128 => 128,
+            };
+            Some((NumericKind::Signed, bits))
         }
+        BaseType::ISize => Some((NumericKind::Signed, 64)),
+        BaseType::UInt(size) => {
+            let bits = match size {
+                Size::S8 => 8,
+                Size::S16 => 16,
+                Size::S32 => 32,
+                Size::S64 => 64,
+                Size::S128 => 128,
+            };
+            Some((NumericKind::Unsigned, bits))
+        }
+        BaseType::USize => Some((NumericKind::Unsigned, 64)),
+        BaseType::Float(size) => {
+            let bits = match size {
+                Size::S8 | Size::S16 | Size::S32 => 32,
+                Size::S64 => 64,
+                Size::S128 => 128,
+            };
+            Some((NumericKind::Float, bits))
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn is_numeric_widening_basetype(expected: &BaseType, actual: &BaseType) -> bool {
+    let (exp_kind, exp_rank) = match numeric_rank_basetype(expected) {
+        Some(r) => r,
+        None => return false,
     };
-    let uint_rank = |t: &str| -> Option<u32> {
-        match t {
-            "uint8" => Some(8),
-            "uint16" => Some(16),
-            "uint32" | "uint" => Some(32),
-            "uint64" | "usize" => Some(64),
-            "uint128" => Some(128),
-            _ => None,
-        }
-    };
-    let float_rank = |t: &str| -> Option<u32> {
-        match t {
-            "float32" | "float" => Some(32),
-            "float64" => Some(64),
-            "float128" => Some(128),
-            _ => None,
-        }
+    let (act_kind, act_rank) = match numeric_rank_basetype(actual) {
+        Some(r) => r,
+        None => return false,
     };
 
-    if let (Some(e), Some(a)) = (int_rank(expected), int_rank(actual)) {
-        return e >= a;
+    if exp_kind == act_kind {
+        return exp_rank >= act_rank;
     }
-    if let (Some(e), Some(a)) = (uint_rank(expected), uint_rank(actual)) {
-        return e >= a;
+    if exp_kind == NumericKind::Float {
+        return exp_rank >= act_rank;
     }
-    if let (Some(e), Some(a)) = (float_rank(expected), float_rank(actual)) {
-        return e >= a;
-    }
-    if let (Some(e), Some(a)) = (float_rank(expected), int_rank(actual)) {
-        return e >= a || (e == 64 && a <= 32);
-    }
-    if let (Some(e), Some(a)) = (float_rank(expected), uint_rank(actual)) {
-        return e >= a || (e == 64 && a <= 32);
-    }
-    if let (Some(e), Some(a)) = (int_rank(expected), uint_rank(actual)) {
-        return e > a;
+    if exp_kind == NumericKind::Signed && act_kind == NumericKind::Unsigned {
+        return exp_rank > act_rank;
     }
     false
 }

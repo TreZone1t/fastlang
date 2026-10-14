@@ -45,6 +45,18 @@ pub fn report_visual_error(source: &str, line: usize, column: usize, err_msg: &s
     eprintln!("   \x1b[34;1m|\x1b[0m\n");
 }
 
+pub fn extract_line_col_from_msg(msg: &str) -> (Option<usize>, Option<usize>) {
+    if let Some(idx) = msg.find("at line ") {
+        let sub = &msg[idx + 8..];
+        let mut parts = sub.split(|c: char| !c.is_ascii_digit()).filter(|s| !s.is_empty());
+        let line = parts.next().and_then(|s| s.parse::<usize>().ok());
+        let col = parts.next().and_then(|s| s.parse::<usize>().ok());
+        (line, col)
+    } else {
+        (None, None)
+    }
+}
+
 fn module_import_deps(ast: &[Stmt]) -> Vec<(String, Option<Vec<String>>)> {
     ast.iter()
         .filter_map(|stmt| {
@@ -1153,8 +1165,8 @@ fn main() {
     let mut target = None;
     let mut custom_includes = Vec::new();
     let mut cli_backend: Option<String> = None;
-    let mut emit_ir = false;
-    let mut ir_output_file: Option<String> = None;
+    let mut _emit_ir = false;
+    let mut _ir_output_file: Option<String> = None;
     let mut emit_cpp = false;
     let mut debug = false;
     let mut use_aot = false;
@@ -1188,16 +1200,16 @@ fn main() {
             cli_backend = Some(args[i + 1].clone());
             i += 2;
         } else if (args[i] == "--ir-out" || args[i] == "--ir-file") && i + 1 < args.len() {
-            emit_ir = true;
-            ir_output_file = Some(args[i + 1].clone());
+            _emit_ir = true;
+            _ir_output_file = Some(args[i + 1].clone());
             i += 2;
         } else if args[i] == "--print-ir" || args[i] == "--emit-ir" {
-            emit_ir = true;
+            _emit_ir = true;
             if i + 1 < args.len()
                 && !args[i + 1].starts_with('-')
                 && (args[i + 1].ends_with(".ir") || args[i + 1].ends_with(".txt"))
             {
-                ir_output_file = Some(args[i + 1].clone());
+                _ir_output_file = Some(args[i + 1].clone());
                 i += 2;
             } else {
                 i += 1;
@@ -1368,7 +1380,7 @@ fn main() {
             println!("Analyzing module: {}", module.name);
             let mut analyzer = SemanticAnalyzer::new(program.global_metadata.clone());
             analyzer.target_backend = backend.clone();
-            analyzer.current_file = module.name.clone();
+            analyzer.diagnostics.current_file = module.name.clone();
             if envs.contains_key("std/types") && module.name != "std/types" {
                 inject_module_exports(
                     &mut analyzer,
@@ -1426,10 +1438,10 @@ fn main() {
     }
     let mut main_analyzer = SemanticAnalyzer::new(program.global_metadata.clone());
     main_analyzer.target_backend = backend.clone();
-    main_analyzer.current_file = path.clone();
-    main_analyzer.source_code = std::fs::read_to_string(&path).ok();
-    main_analyzer.current_context = Some("main".to_string());
-    main_analyzer.debug_errors = debug_errors;
+    main_analyzer.diagnostics.current_file = path.clone();
+    main_analyzer.diagnostics.source_code = std::fs::read_to_string(&path).ok();
+    main_analyzer.scope.current_context = Some("main".to_string());
+    main_analyzer.diagnostics.debug_errors = debug_errors;
     for (k, v) in all_module_dep_graphs {
         main_analyzer
             .dependency_graph
@@ -1755,15 +1767,8 @@ fn main() {
         }
 
         // Modular Compilation:
-        // Compile each loaded module (std/types, std/io, etc.) into its own .o object file in lib_dir!
+        // Compile each loaded module into its own .o object file in lib_dir
         let mut module_obj_files = Vec::new();
-        let mut all_module_structs = std::collections::HashMap::new();
-        let mut all_module_signatures = std::collections::HashMap::new();
-        let mut all_module_param_defaults = std::collections::HashMap::new();
-        let mut all_module_return_types = std::collections::HashMap::new();
-        let mut all_module_enum_tags = std::collections::HashMap::new();
-        let mut all_module_enum_payloads = std::collections::HashSet::new();
-        let mut all_module_enum_fields = std::collections::HashMap::new();
 
         for m in &program.modules {
             let mod_safe_name = m
@@ -1776,97 +1781,19 @@ fn main() {
                 .to_string_lossy()
                 .into_owned();
 
-            let mut mod_builder = crate::middle_end::ir::builder::IRBuilder::new(
-                m.name.clone(),
-                &program.global_metadata,
-            );
-            mod_builder.target_backend = backend.clone();
-            mod_builder.import_declarations(
-                &all_module_structs,
-                &all_module_signatures,
-                &all_module_param_defaults,
-                &all_module_return_types,
-                &all_module_enum_tags,
-                &all_module_enum_payloads,
-                &all_module_enum_fields,
-            );
-
-            let mod_ir = mod_builder.build(&m.ast);
-
-            all_module_structs.extend(mod_ir.structs.clone());
-            for func in &mod_ir.functions {
-                if !func.is_extern {
-                    all_module_signatures
-                        .entry(func.name.clone())
-                        .or_insert_with(Vec::new)
-                        .push((
-                            func.name.clone(),
-                            func.params.iter().map(|(_, ty)| ty.clone()).collect(),
-                        ));
-                }
-            }
-            all_module_signatures.extend(mod_builder.export_fn_signatures());
-            all_module_param_defaults.extend(mod_builder.export_param_defaults());
-            all_module_return_types.extend(mod_builder.export_fn_return_types());
-            all_module_enum_tags.extend(mod_builder.export_enum_tags());
-            all_module_enum_payloads.extend(mod_builder.export_enum_payloads());
-            all_module_enum_fields.extend(mod_builder.export_enum_fields());
-
             if use_aot {
                 let mut mod_backend = crate::backend::cranelift::aot::CraneliftAotBackend::new();
-                mod_backend.compile_module(&mod_ir);
+                mod_backend.compile_ast(&m.ast);
                 mod_backend.finalize(&mod_out_o);
                 module_obj_files.push(mod_out_o);
             }
         }
 
-        // Compile main AST into its own object file
-        let mut main_builder = crate::middle_end::ir::builder::IRBuilder::new(
-            "main".to_string(),
-            &program.global_metadata,
-        );
-        main_builder.target_backend = backend.clone();
-        main_builder.import_declarations(
-            &all_module_structs,
-            &all_module_signatures,
-            &all_module_param_defaults,
-            &all_module_return_types,
-            &all_module_enum_tags,
-            &all_module_enum_payloads,
-            &all_module_enum_fields,
-        );
-        let main_ir = main_builder.build(&program.main_ast);
-
-        if debug {
-            println!(
-                "Generated Custom IR Module for main with {} functions.",
-                main_ir.functions.len()
-            );
-        }
-
-        if emit_ir {
-            let ir_str = format!("{}", main_ir);
-            if let Some(out_f) = &ir_output_file {
-                std::fs::write(out_f, &ir_str).expect("Failed to write IR file");
-                println!("IR exported successfully to {}", out_f);
-            } else {
-                println!("\n=== Custom IR Output ===");
-                println!("{}", ir_str);
-                println!("========================\n");
-            }
-            if !use_aot {
-                return;
-            }
-        }
-
         if use_aot {
-            let ir_file = format!("{}.ir", out_path_base);
-            std::fs::write(&ir_file, format!("{}", main_ir)).ok();
-
             let out_o = format!("{}.o", out_path_base);
 
             let mut aot_backend = crate::backend::cranelift::aot::CraneliftAotBackend::new();
-            aot_backend.compile_module(&main_ir);
+            aot_backend.compile_ast(&program.main_ast);
             aot_backend.finalize(&out_o);
 
             println!("Linking {} into {}...", out_o, exe_path);
@@ -1914,7 +1841,7 @@ fn main() {
             }
         } else {
             let mut cl_backend = cranelift::CraneliftBackend::new();
-            cl_backend.compile_module(&main_ir);
+            cl_backend.compile_ast(&program.main_ast);
             cl_backend.finalize();
             println!("Cranelift JIT execution completed!");
         }
@@ -1931,7 +1858,7 @@ fn main() {
     }
     initial_codegen.scan_declarations(&program.main_ast);
 
-    let mut accumulated_custom_scopes = initial_codegen.custom_scope_types;
+    let mut accumulated_machine_types = initial_codegen.machine_types;
     let mut accumulated_primitive_impl_methods = initial_codegen.primitive_impl_methods;
     let mut accumulated_property_access_types = initial_codegen.property_access_types;
     let mut accumulated_type_own_members = initial_codegen.type_own_members;
@@ -1988,7 +1915,7 @@ fn main() {
             .collect();
 
         let mut codegen = cpp::generator::CodeGenerator::new();
-        codegen.custom_scope_types = accumulated_custom_scopes.clone();
+        codegen.machine_types = accumulated_machine_types.clone();
         codegen.primitive_impl_methods = accumulated_primitive_impl_methods.clone();
         codegen.property_access_types = accumulated_property_access_types.clone();
         codegen.type_own_members = accumulated_type_own_members.clone();
@@ -1996,7 +1923,7 @@ fn main() {
         codegen.namespaces = accumulated_namespaces.clone();
         codegen.type_aliases = accumulated_type_aliases.clone();
         let module_cpp = codegen.generate(&filtered_ast, false, false);
-        accumulated_custom_scopes.extend(codegen.custom_scope_types.clone());
+        accumulated_machine_types.extend(codegen.machine_types.clone());
         accumulated_struct_field_types.extend(codegen.struct_field_types.clone());
         accumulated_namespaces.extend(codegen.namespaces.clone());
         accumulated_type_aliases.extend(codegen.type_aliases.clone());
@@ -2085,7 +2012,7 @@ fn main() {
     }
 
     let mut main_codegen = cpp::generator::CodeGenerator::new();
-    main_codegen.custom_scope_types = accumulated_custom_scopes;
+    main_codegen.machine_types = accumulated_machine_types;
     main_codegen.primitive_impl_methods = accumulated_primitive_impl_methods;
     main_codegen.property_access_types = accumulated_property_access_types;
     main_codegen.type_own_members = accumulated_type_own_members;

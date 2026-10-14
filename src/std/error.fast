@@ -38,6 +38,45 @@ public class Error -> {
     }
 }
 
+public class IndexError extends Error -> {
+    constructor -> {
+        init(msg: char[]) -> {
+            this.message = msg;
+            this.code = 1;
+        }
+        init(msg: char[], code: int32) -> {
+            this.message = msg;
+            this.code = code;
+        }
+    }
+}
+
+public class TypeError extends Error -> {
+    constructor -> {
+        init(msg: char[]) -> {
+            this.message = msg;
+            this.code = 2;
+        }
+        init(msg: char[], code: int32) -> {
+            this.message = msg;
+            this.code = code;
+        }
+    }
+}
+
+public class KeyError extends Error -> {
+    constructor -> {
+        init(msg: char[]) -> {
+            this.message = msg;
+            this.code = 3;
+        }
+        init(msg: char[], code: int32) -> {
+            this.message = msg;
+            this.code = code;
+        }
+    }
+}
+
 public @compile :: {
     macro $throw[e: Error] -> {
         throw e;

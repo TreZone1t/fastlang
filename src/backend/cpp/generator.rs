@@ -4,8 +4,7 @@ use std::collections::{HashMap, HashSet};
 pub struct CodeGenerator {
     pub(crate) output: String,
     pub(crate) indent_level: usize,
-    pub(crate) custom_scopes: HashSet<String>,
-    pub(crate) custom_scope_types: HashSet<String>,
+    pub(crate) machine_types: HashSet<String>,
     pub(crate) enum_types: HashSet<String>,
     pub(crate) payload_enum_types: HashSet<String>,
     pub(crate) simple_enum_types: HashSet<String>,
@@ -45,8 +44,7 @@ impl CodeGenerator {
         CodeGenerator {
             output: String::new(),
             indent_level: 0,
-            custom_scopes: HashSet::new(),
-            custom_scope_types: HashSet::new(),
+            machine_types: HashSet::new(),
             enum_types: HashSet::new(),
             used_enums: HashSet::from(["Option".to_string(), "Result".to_string()]),
             payload_enum_types: HashSet::new(),
@@ -264,7 +262,11 @@ impl CodeGenerator {
                 && (resolved_type == "array"
                     || resolved_type.starts_with("fast_std::array")
                     || resolved_type.starts_with("array<")
-                    || resolved_type.ends_with("[]"))
+                    || resolved_type.ends_with("[]")
+                    || resolved_type == "str"
+                    || resolved_type == "ustr"
+                    || resolved_type == "char*"
+                    || resolved_type == "char32_t*")
             {
                 Some("array".to_string())
             } else if targets.contains(&"char".to_string()) && cpp_type == "char" {
@@ -330,8 +332,7 @@ impl CodeGenerator {
     pub(crate) fn fork_child(&self) -> CodeGenerator {
         let mut child = CodeGenerator::new();
         child.indent_level = self.indent_level;
-        child.custom_scopes = self.custom_scopes.clone();
-        child.custom_scope_types = self.custom_scope_types.clone();
+        child.machine_types = self.machine_types.clone();
         child.enum_types = self.enum_types.clone();
         child.used_enums = self.used_enums.clone();
         child.payload_enum_types = self.payload_enum_types.clone();
@@ -1220,7 +1221,7 @@ impl CodeGenerator {
 
         for stmt in ast {
             if let Stmt::Declaration(Decl::MachineDecl { name, .. }) = stmt {
-                self.custom_scope_types.insert(name.clone());
+                self.machine_types.insert(name.clone());
             }
         }
 

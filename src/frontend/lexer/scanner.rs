@@ -116,6 +116,8 @@ impl Scanner {
             // Primitives
             "char" => Some(TokenKind::TypeChar),
             "uchar" => Some(TokenKind::TypeUChar),
+            "str" => Some(TokenKind::TypeStr),
+            "ustr" => Some(TokenKind::TypeUStr),
             "int" => Some(TokenKind::TypeInt(32)),
             "int8" => Some(TokenKind::TypeInt(8)),
             "int16" => Some(TokenKind::TypeInt(16)),

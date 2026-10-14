@@ -95,109 +95,6 @@ pub enum HandleLookupResult {
     UnknownOp,
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// extract_blueprint_name_from_type
-// Extracts blueprint name from types like:
-//   "custom<list>"   -> Some("list")
-//   "class<Node>"    -> Some("Node")
-//   "struct<Point>"  -> Some("Point")
-//   "int32"          -> None
-// ─────────────────────────────────────────────────────────────────────────────
-pub fn extract_blueprint_name_from_type(type_str: &str) -> Option<String> {
-    const PREFIXES: &[&str] = &[
-        "class::",
-        "class<",
-        "struct::",
-        "struct<",
-        "enum::",
-        "enum<",
-        "blueprint::",
-        "blueprint<",
-        "machine::",
-        "machine<",
-        "block::",
-        "block<",
-    ];
-    for prefix in PREFIXES {
-        if let Some(rest) = type_str.strip_prefix(prefix) {
-            let base_name = rest
-                .split('<')
-                .next()
-                .unwrap_or(rest)
-                .trim_end_matches('>')
-                .trim()
-                .to_string();
-            return Some(base_name);
-        }
-    }
-    None
-}
-
-pub fn extract_all_type_names(type_str: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut current = String::new();
-    for ch in type_str.chars() {
-        if ch.is_alphanumeric() || ch == '_' {
-            current.push(ch);
-        } else {
-            if !current.is_empty() {
-                if !is_primitive_type(&current) {
-                    names.push(current.clone());
-                }
-                current.clear();
-            }
-        }
-    }
-    if !current.is_empty() && !is_primitive_type(&current) {
-        names.push(current);
-    }
-    names
-}
-fn is_primitive_type(s: &str) -> bool {
-    matches!(
-        s,
-        "int8"
-            | "int16"
-            | "int32"
-            | "int64"
-            | "int128"
-            | "int"
-            | "uint8"
-            | "uint16"
-            | "uint32"
-            | "uint64"
-            | "uint128"
-            | "uint"
-            | "float32"
-            | "float64"
-            | "float128"
-            | "float"
-            | "char"
-            | "bool"
-            | "void"
-            | "type"
-            | "unknown"
-            | "array"
-            | "class"
-            | "struct"
-            | "enum"
-            | "blueprint"
-            | "machine"
-            | "block"
-    )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// is_complex_type — checks if type is composite/user-defined (can define handles)
-// ─────────────────────────────────────────────────────────────────────────────
-pub fn is_complex_type(type_str: &str) -> bool {
-    type_str.starts_with("class::")
-        || type_str.starts_with("struct::")
-        || type_str.starts_with("enum::")
-        || type_str.starts_with("blueprint::")
-        || type_str.starts_with("machine::")
-        || type_str.starts_with("block::")
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // build_blueprint_from_metadata
@@ -291,8 +188,7 @@ pub fn build_blueprint_from_base_type(
             ..
         } => {
             for v in variants {
-                bp.fields
-                    .insert(v.name.clone(), BaseType::from_str(&ty.get_name()));
+                bp.fields.insert(v.name.clone(), ty.clone());
             }
             for (m_name, fn_type) in methods.as_ref() {
                 let hk = HandleMethods::from_str(m_name.as_str());

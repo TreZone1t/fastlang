@@ -111,7 +111,7 @@ fn test_copy_semantics() -> void {
 }
 
 fn test_raw_ptr() -> void {
-    raw_ptr<int32> r = new int32(888);
+    int32* r = new int32(888);
     println("raw_ptr val: ", *r); // EXPECT: raw_ptr val: 888
     del r;
 }
@@ -142,7 +142,7 @@ fn test_address_and_reference() -> void {
     println("addr via deref: ", *addr_sugar); // EXPECT: addr via deref: 42
     println("addr via direct pass: ", get_address_val(addr_sugar)); // EXPECT: addr via direct pass: 42
 
-    address<int32> addr_full = &num;
+    int32& addr_full = &num;
     println("addr_full via deref: ", *addr_full); // EXPECT: addr_full via deref: 42
 
     Point pt = Point {

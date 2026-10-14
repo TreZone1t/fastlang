@@ -163,16 +163,26 @@ impl FastType {
                 | BaseType::Bool
                 | BaseType::Char
                 | BaseType::UChar
+                | BaseType::Str
+                | BaseType::UStr
                 | BaseType::Void
                 | BaseType::Number
         )
     }
 
     pub fn is_pointer(&self) -> bool {
-        matches!(self.base_type, BaseType::RawPointer(_))
-            || self.base_type.as_str().starts_with("raw_ptr<")
+        matches!(self.base_type, BaseType::RawPointer(_) | BaseType::Address(_))
             || self.base_type.as_str().starts_with('&')
             || self.base_type.as_str().ends_with('*')
+            || self.base_type.as_str().ends_with('&')
+    }
+
+    pub fn on_heap(&self) -> bool {
+        self.is_pointer() || self.is_array()
+    }
+
+    pub fn on_stack(&self) -> bool {
+        !self.on_heap()
     }
 
     pub fn is_array(&self) -> bool {
@@ -315,6 +325,8 @@ impl FastType {
             | BaseType::Bool
             | BaseType::Char
             | BaseType::UChar
+            | BaseType::Str
+            | BaseType::UStr
             | BaseType::Number => true,
             _ if self.is_pointer() => true,
             _ => self.has_cast,
@@ -323,6 +335,11 @@ impl FastType {
 
     pub fn castable_to(&self, target: &FastType) -> bool {
         if self.is_primitive() && target.is_primitive() && !target.is_array() {
+            return true;
+        }
+        if (self.base_type == BaseType::Str && target.base_type == BaseType::UStr)
+            || (self.base_type == BaseType::UStr && target.base_type == BaseType::Str)
+        {
             return true;
         }
         if self.base_type == target.base_type {
@@ -355,6 +372,7 @@ impl FastType {
             BaseType::Bool => 1,
             BaseType::Char => 1,
             BaseType::UChar => 4,
+            BaseType::Str | BaseType::UStr => 8,
             BaseType::Void => 0,
             _ if self.is_pointer() => 8,
             _ => 8,

@@ -238,24 +238,24 @@ public blueprint MemberType -> {
 }
 
 public blueprint pointer<T> -> {
-    raw_ptr<T> ptr = undefined;
-    raw_ptr<shared> counter = undefined;
+    T* ptr = undefined;
+    shared* counter = undefined;
     share counter if (this.ptr == other.ptr);
 }
 public blueprint ref<...T> -> {
-    raw_ptr<T> ptr = undefined;
+    T* ptr = undefined;
     type inner = T;
 }
 public blueprint mutRef<...T> -> {
-    raw_ptr<T> ptr = undefined;
-    raw_ptr<shared> counter = undefined;
+    T* ptr = undefined;
+    shared* counter = undefined;
     type inner = T;
     type expect[] = [...T];
     share counter if (this.ptr == other.ptr);
 }
 
 public blueprint iterator<T> -> {
-    raw_ptr<T> ptr = undefined;
+    T* ptr = undefined;
     usize total = 0;
     usize idx = 0;
 }
@@ -396,7 +396,7 @@ public impl Result<T> -> {
 }
 public impl ref<...T> -> {
     handle -> {
-        fn property_access(prop: MemberType) -> raw_ptr<unknown> {
+        fn property_access(prop: MemberType) -> unknown* {
             return @compile::access(this.ptr, prop);
         }
         fn call<...Args>(...args: ...Args) -> auto {
@@ -423,7 +423,7 @@ public impl mutRef<...T> -> {
         }
     }
     handle -> {
-        fn property_access(prop: MemberType) -> raw_ptr<unknown> {
+        fn property_access(prop: MemberType) -> unknown* {
             return @compile::access(this.ptr, prop);
         }
         fn call<...Args>(...args: ...Args) -> auto {
@@ -465,7 +465,7 @@ public impl mutRef<...T> -> {
 
 public impl pointer<T> -> {
     handle -> {
-        fn property_access(prop: MemberType) -> raw_ptr<unknown> {
+        fn property_access(prop: MemberType) -> unknown* {
             return @compile::access(this.ptr, prop);
         }
         fn display() -> char[] {

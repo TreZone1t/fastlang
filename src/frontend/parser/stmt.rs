@@ -35,7 +35,10 @@ impl Parser {
             | TokenKind::TypeFloat(_)
             | TokenKind::TypeChar
             | TokenKind::TypeUChar
+            | TokenKind::TypeStr
+            | TokenKind::TypeUStr
             | TokenKind::TypeBool
+            | TokenKind::TypeVoid
             | TokenKind::Flag
             | TokenKind::TypeMethod => {
                 if let Some(next) = self.tokens.get(self.current + 1) {
@@ -639,6 +642,8 @@ impl Parser {
                 | TokenKind::TypeISize
                 | TokenKind::TypeChar
                 | TokenKind::TypeUChar
+                | TokenKind::TypeStr
+                | TokenKind::TypeUStr
                 | TokenKind::TypeBool
                 | TokenKind::TypeVoid
                 | TokenKind::TypeType
@@ -825,6 +830,14 @@ impl Parser {
                 self.advance();
                 s
             }
+            TokenKind::TypeStr => {
+                self.advance();
+                "str".to_string()
+            }
+            TokenKind::TypeUStr => {
+                self.advance();
+                "ustr".to_string()
+            }
             _ => return Err("Expected identifier after 'define'".to_string()),
         };
         if self.peek().kind == TokenKind::Assign || self.peek().kind == TokenKind::Arrow {
@@ -841,6 +854,8 @@ impl Parser {
             | TokenKind::TypeFloat(_)
             | TokenKind::TypeChar
             | TokenKind::TypeUChar
+            | TokenKind::TypeStr
+            | TokenKind::TypeUStr
             | TokenKind::TypeBool
             | TokenKind::TypeVoid
             | TokenKind::TypeStruct
@@ -901,6 +916,8 @@ impl Parser {
             | TokenKind::TypeFloat(_)
             | TokenKind::TypeChar
             | TokenKind::TypeUChar
+            | TokenKind::TypeStr
+            | TokenKind::TypeUStr
             | TokenKind::TypeBool
             | TokenKind::TypeType
             | TokenKind::Identifier(_) => self.parse_var_decl(scope)?,
@@ -1121,7 +1138,10 @@ impl Parser {
             | TokenKind::TypeFloat(_)
             | TokenKind::TypeChar
             | TokenKind::TypeUChar
+            | TokenKind::TypeStr
+            | TokenKind::TypeUStr
             | TokenKind::TypeBool
+            | TokenKind::TypeVoid
             | TokenKind::Flag
             //| TokenKind::Scope
             | TokenKind::TypeType
@@ -2416,6 +2436,21 @@ impl Parser {
                             | TokenKind::LBracket,
                         ),
                     ) => true,
+                    (
+                        Some(TokenKind::Multiply | TokenKind::Ampersand),
+                        Some(TokenKind::Identifier(_)),
+                    ) => {
+                        let next3 = self.tokens.get(self.current + 3).map(|t| &t.kind);
+                        matches!(
+                            next3,
+                            Some(
+                                TokenKind::Assign
+                                | TokenKind::Arrow
+                                | TokenKind::SemiColon
+                                | TokenKind::LBracket
+                            )
+                        )
+                    }
                     (Some(TokenKind::LBrace), _) => true,
                     (Some(TokenKind::Less), _) => {
                         let mut i = self.current + 2;
@@ -2648,32 +2683,51 @@ impl Parser {
         let try_block = self.parse_block("try".to_string())?;
         self.consume(TokenKind::RBrace, "Expected '}' to close try block")?;
 
-        self.consume(TokenKind::Catch, "Expected 'catch' after try block")?;
-        self.consume(TokenKind::LParen, "Expected '(' after 'catch'")?;
+        let mut catches = Vec::new();
+        while self.peek().kind == TokenKind::Catch {
+            self.advance(); // consume 'catch'
+            self.consume(TokenKind::LParen, "Expected '(' after 'catch'")?;
 
-        let catch_param: String = if let TokenKind::Identifier(n) = &self.peek().kind.clone() {
-            let n = n.to_string();
-            self.advance();
-            n
-        } else {
-            return Err(format!(
-                "Expected parameter name in catch block at line {}",
-                self.peek().line
-            ));
-        };
+            let catch_param: String = if let TokenKind::Identifier(n) = &self.peek().kind.clone() {
+                let n = n.to_string();
+                self.advance();
+                n
+            } else {
+                return Err(format!(
+                    "Expected parameter name in catch block at line {}",
+                    self.peek().line
+                ));
+            };
 
-        self.consume(TokenKind::RParen, "Expected ')' after catch parameter")?;
-        if self.peek().kind == TokenKind::Arrow {
-            self.advance(); // consume '->'
+            let param_type = if self.peek().kind == TokenKind::Colon {
+                self.advance(); // consume ':'
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
+
+            self.consume(TokenKind::RParen, "Expected ')' after catch parameter")?;
+            if self.peek().kind == TokenKind::Arrow {
+                self.advance(); // consume '->'
+            }
+            self.consume(TokenKind::LBrace, "Expected '{' to open catch block")?;
+            let catch_block = self.parse_block("catch".to_string())?;
+            self.consume(TokenKind::RBrace, "Expected '}' to close catch block")?;
+
+            catches.push(CatchClause {
+                param: catch_param,
+                param_type,
+                body: catch_block,
+            });
         }
-        self.consume(TokenKind::LBrace, "Expected '{' to open catch block")?;
-        let catch_block = self.parse_block("catch".to_string())?;
-        self.consume(TokenKind::RBrace, "Expected '}' to close catch block")?;
+
+        if catches.is_empty() {
+            return Err("Expected at least one 'catch' block after 'try'".to_string());
+        }
 
         Ok(Stmt::TryCatchStmt {
             try_block,
-            catch_param: catch_param.to_string(),
-            catch_block,
+            catches,
         })
     }
 

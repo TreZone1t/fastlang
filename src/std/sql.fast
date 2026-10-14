@@ -34,7 +34,7 @@ set sql;
 
 public class Statement -> {
     public -> {
-        raw_ptr<void> stmt_handle = undefined;
+        void* stmt_handle = undefined;
         bool is_valid = false;
 
         fn step() -> bool {
@@ -107,7 +107,7 @@ public class Statement -> {
 
     constructor -> {
         init() -> {}
-        init(h: raw_ptr<void>) -> {
+        init(h: void*) -> {
             this.stmt_handle = h;
             this.is_valid = true;
         }
@@ -122,7 +122,7 @@ public class Statement -> {
 
 public class Database -> {
     public -> {
-        raw_ptr<void> db_handle = undefined;
+        void* db_handle = undefined;
         bool is_open = false;
 
         fn exec(sql_str: str) -> int32 {
@@ -137,7 +137,7 @@ public class Database -> {
                 Statement invalid_stmt = new Statement();
                 return invalid_stmt;
             }
-            raw_ptr<void> stmt_ptr = @c::fast_sql_prepare(this.db_handle, sql_str);
+            void* stmt_ptr = @c::fast_sql_prepare(this.db_handle, sql_str);
             Statement stmt = new Statement(stmt_ptr);
             return stmt;
         }
@@ -174,7 +174,7 @@ public class Database -> {
     constructor -> {
         init() -> {}
         init(path: str) -> {
-            raw_ptr<void> db_ptr = @c::fast_sql_open(path);
+            void* db_ptr = @c::fast_sql_open(path);
             this.db_handle = db_ptr;
             this.is_open = true;
         }

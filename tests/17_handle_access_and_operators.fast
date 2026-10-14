@@ -137,24 +137,24 @@ impl InnerPayload {
 }
 
 blueprint AccessOverload = {
-    raw_ptr<InnerPayload> ptr = undefined;
+    InnerPayload* ptr = undefined;
 }
 
 impl AccessOverload {
     handle -> {
-        fn property_access(prop: MemberType) -> raw_ptr<unknown> {
+        fn property_access(prop: MemberType) -> unknown* {
             return @compile::access(this.ptr, prop);
         }
-        fn handle_access(prop: MemberType) -> raw_ptr<unknown> {
+        fn handle_access(prop: MemberType) -> unknown* {
             return @compile::access(this.ptr, prop);
         }
-        fn namespace_access(prop: MemberType) -> raw_ptr<unknown> {
+        fn namespace_access(prop: MemberType) -> unknown* {
             return @compile::access(this.ptr, prop);
         }
-        fn arrow(prop: MemberType) -> raw_ptr<unknown> {
+        fn arrow(prop: MemberType) -> unknown* {
             return @compile::access(this.ptr, prop);
         }
-        fn fat_arrow(prop: MemberType) -> raw_ptr<unknown> {
+        fn fat_arrow(prop: MemberType) -> unknown* {
             return @compile::access(this.ptr, prop);
         }
     }

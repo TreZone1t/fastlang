@@ -178,8 +178,6 @@ impl CodeGenerator {
                         .and_then(|t| self.find_assign_handle(t, &["arrow", "arrow_assign"]));
                     if let Some(h) = handle {
                         format!("{}.{}({})", l, h, r)
-                    } else if self.custom_scopes.contains(&l) {
-                        format!("([&]() {{ {}.arrow({}); return {}; }}())", l, r, l)
                     } else {
                         format!("{}.arrow({})", l, r)
                     }
@@ -256,7 +254,7 @@ impl CodeGenerator {
                 let obj_code = self.visit_expression(object);
                 let indices_code: Vec<String> =
                     indices.iter().map(|i| self.visit_expression(i)).collect();
-                if self.custom_scopes.contains(&obj_code) || indices_code.len() > 1 {
+                if indices_code.len() > 1 {
                     format!("{}.index_access({})", obj_code, indices_code.join(", "))
                 } else if indices_code.len() == 1 {
                     format!("{}[{}]", obj_code, indices_code[0])
@@ -330,7 +328,11 @@ impl CodeGenerator {
                             && (resolved_type == "array"
                                 || resolved_type.starts_with("fast_std::array")
                                 || resolved_type.starts_with("array<")
-                                || resolved_type.ends_with("[]"))
+                                || resolved_type.ends_with("[]")
+                                || resolved_type == "str"
+                                || resolved_type == "ustr"
+                                || resolved_type == "char*"
+                                || resolved_type == "char32_t*")
                         {
                             Some("array".to_string())
                         } else if targets.contains(&"char".to_string()) && (cpp_type == "char" || resolved_type == "char") {
@@ -373,7 +375,7 @@ impl CodeGenerator {
                         } else if self.raw_pointer_vars.contains(&obj_code) {
                             format!("{}->{}", obj_code, safe_prop)
                         } else if let Some(t) = self.extract_cpp_type_from_expr(object) {
-                            if t.ends_with('*') {
+                            if t.ends_with('*') && t != "char*" && t != "const char*" && t != "char32_t*" && t != "const char32_t*" && t != "str" && t != "ustr" {
                                 format!("{}->{}", obj_code, safe_prop)
                             } else {
                                 format!("{}.{}", obj_code, safe_prop)
@@ -448,7 +450,7 @@ impl CodeGenerator {
                     _ => callee_code,
                 };
 
-                if self.custom_scope_types.contains(&safe_callee) {
+                if self.machine_types.contains(&safe_callee) {
                     format!("{}{}()({})", safe_callee, gen_code, args_code.join(", "))
                 } else if self.pointer_vars.contains(&safe_callee) {
                     format!("(*{}){}({})", safe_callee, gen_code, args_code.join(", "))
@@ -587,7 +589,7 @@ impl CodeGenerator {
                 } else if self.raw_pointer_vars.contains(&obj_code) {
                     format!("{}->{}", obj_code, safe_prop)
                 } else if let Some(t) = self.extract_cpp_type_from_expr(object) {
-                    if t.ends_with('*') {
+                    if t.ends_with('*') && t != "char*" && t != "const char*" && t != "char32_t*" && t != "const char32_t*" && t != "str" && t != "ustr" {
                         format!("{}->{}", obj_code, safe_prop)
                     } else {
                         format!("{}.{}", obj_code, safe_prop)
@@ -741,7 +743,11 @@ impl CodeGenerator {
             Expr::Cast { expr, target_type } => {
                 let expr_code = self.visit_expression(expr);
                 let cpp_type = type_to_cpp(target_type);
-                if let Some(target) = self.match_primitive_target(expr, "cast") {
+                if matches!(target_type, BaseType::Str) {
+                    format!("fastlang_as_str({})", expr_code)
+                } else if matches!(target_type, BaseType::UStr) {
+                    format!("fastlang_as_ustr({})", expr_code)
+                } else if let Some(target) = self.match_primitive_target(expr, "cast") {
                     let template_arg = cpp_type;
                     format!("fastlang_{}_cast<{}>({})", target, template_arg, expr_code)
                 } else {
@@ -1045,8 +1051,8 @@ impl CodeGenerator {
                 }
                 None
             }
-            Expr::LiteralString(_) => Some("fast_std::array<char>".to_string()),
-            Expr::LiteralUString(_) => Some("fast_std::array<char32_t>".to_string()),
+            Expr::LiteralString(_) => Some("char*".to_string()),
+            Expr::LiteralUString(_) => Some("char32_t*".to_string()),
             Expr::ArrayLiteral(_) => Some("array".to_string()),
             Expr::LiteralChar(_) => Some("char".to_string()),
             Expr::LiteralBool(_) => Some("bool".to_string()),
