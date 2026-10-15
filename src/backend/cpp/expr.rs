@@ -1,5 +1,5 @@
 use crate::backend::cpp::generator::CodeGenerator;
-use crate::backend::cpp::stmt::type_to_cpp;
+use crate::backend::cpp::stmt::{cpp_safe_name, type_to_cpp};
 use crate::frontend::parser::ast::*;
 
 impl CodeGenerator {
@@ -133,7 +133,7 @@ impl CodeGenerator {
                     "{}".to_string()
                 }
             }
-            Expr::Identifier(name) => crate::backend::cpp::stmt::cpp_safe_name(name),
+            Expr::Identifier(name) => cpp_safe_name(name),
             Expr::This => {
                 if self.in_primitive_impl || self.in_machine {
                     "__this".to_string()
@@ -365,7 +365,7 @@ impl CodeGenerator {
                 let callee_code = match &**callee {
                     Expr::PropertyAccess { object, property } => {
                         let obj_code = self.visit_expression(object);
-                        let safe_prop = crate::backend::cpp::stmt::cpp_safe_name(property);
+                        let safe_prop = cpp_safe_name(property);
                         if obj_code == "::" {
                             format!("::{}", safe_prop)
                         } else if self.enum_types.contains(&obj_code) {
@@ -579,7 +579,7 @@ impl CodeGenerator {
                     return format!("fastlang_array_len({})", obj_code);
                 }
                 let obj_code = self.visit_expression(object);
-                let safe_prop = crate::backend::cpp::stmt::cpp_safe_name(property);
+                let safe_prop = cpp_safe_name(property);
                 if obj_code == "::" {
                     format!("::{}", safe_prop)
                 } else if self.enum_types.contains(&obj_code) {
@@ -762,7 +762,7 @@ impl CodeGenerator {
                 let obj_code = self.visit_expression(object);
                 let args_code: Vec<String> =
                     args.iter().map(|a| self.visit_expression(a)).collect();
-                let safe_handle = crate::backend::cpp::stmt::cpp_safe_name(handle_name);
+                let safe_handle = cpp_safe_name(handle_name);
 
                 if handle_name == "as_str" && args.is_empty() {
                     return format!("fastlang_as_str({})", obj_code);
@@ -985,7 +985,7 @@ impl CodeGenerator {
                 if bt != BaseType::Unknown {
                     Some(type_to_cpp(&bt))
                 } else {
-                    Some(crate::backend::cpp::stmt::cpp_safe_name(name))
+                    Some(cpp_safe_name(name))
                 }
             }
             Expr::IndexAccess { object, .. } => {

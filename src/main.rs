@@ -1,14 +1,20 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::rc::Rc;
 
+use crate::backend::cranelift::aot::CraneliftAotBackend;
+use crate::backend::cpp::runtime::generate_runtime_header;
 use crate::backend::*;
 use crate::frontend::parser::ast::*;
+use crate::frontend::parser::ast_json::ast_to_json_string;
+use crate::middle_end::interpreter::eval::Interpreter;
+use crate::middle_end::semantic::analyzer::decl::make_sig_key;
 use crate::middle_end::semantic::analyzer::SemanticAnalyzer;
-use crate::middle_end::semantic::environment::Environment;
+use crate::middle_end::semantic::environment::{Environment, FnSignature};
+
 pub mod backend;
+pub mod cli;
 pub mod frontend;
 pub mod loader;
 pub mod middle_end;
@@ -88,10 +94,7 @@ fn inject_module_exports(
     dep_name: &str,
     imports: &Option<Vec<String>>,
     envs: &HashMap<String, Rc<RefCell<Environment>>>,
-    all_fn_overloads: &HashMap<
-        String,
-        HashMap<String, Vec<crate::middle_end::semantic::environment::FnSignature>>,
-    >,
+    all_fn_overloads: &HashMap<String, HashMap<String, Vec<FnSignature>>>,
     debug: bool,
 ) -> Result<(), String> {
     let env = envs
@@ -285,7 +288,7 @@ fn inject_module_exports(
 fn prune_ast_for_reachability(
     ast: &[Stmt],
     reachable: &HashSet<String>,
-    fn_overloads: &HashMap<String, Vec<crate::middle_end::semantic::environment::FnSignature>>,
+    fn_overloads: &HashMap<String, Vec<FnSignature>>,
     is_main_file: bool,
 ) -> Vec<Stmt> {
     let mut pruned = Vec::new();
@@ -309,7 +312,7 @@ fn prune_ast_for_reachability(
 fn prune_decl_for_reachability(
     decl: &Decl,
     reachable: &HashSet<String>,
-    fn_overloads: &HashMap<String, Vec<crate::middle_end::semantic::environment::FnSignature>>,
+    fn_overloads: &HashMap<String, Vec<FnSignature>>,
     is_main_file: bool,
 ) -> Option<Decl> {
     match decl {
@@ -317,13 +320,11 @@ fn prune_decl_for_reachability(
             if name == "main" {
                 return Some(decl.clone());
             }
-            let sig_key = crate::middle_end::semantic::analyzer::decl::make_sig_key(name, params);
+            let sig_key = make_sig_key(name, params);
             let has_multiple_overloads = fn_overloads.get(name).map_or(0, |sigs| {
                 let mut distinct = HashSet::new();
                 for s in sigs {
-                    distinct.insert(crate::middle_end::semantic::analyzer::decl::make_sig_key(
-                        &s.name, &s.params,
-                    ));
+                    distinct.insert(make_sig_key(&s.name, &s.params));
                 }
                 distinct.len()
             }) > 1;
@@ -569,758 +570,40 @@ fn prune_decl_for_reachability(
     }
 }
 
-fn print_help() {
-    println!(
-        r#"FastLang Compiler (fast / fast_lang) v0.1.5-stable
-High-performance compiled language with fine-grained memory management and explicit scopes.
 
-USAGE:
-    fast [SUBCOMMAND] [OPTIONS]
-    fast [OPTIONS] <SOURCE_FILE> [-- <ARGS>...]
 
-SUBCOMMANDS:
-    new <NAME> [--type bin|lib] [-y]   Create a new FastLang project package
-    init [--type bin|lib] [-y]         Initialize a FastLang package in current directory
-    run [SCRIPT|FILE] [ARGS...]        Run project entry point, named script, or specific source file
-    build [FILE] [OPTIONS]             Compile project or source file without executing
-    test                               Discover and run all project tests in tests/
-    clean [PATH]                       Delete build/ directory and cached build artifacts
-    lib <list|add|remove> [PATH]       Manage compiler-wide global library search paths
-    registry <list|add|import> [...]   Manage known package registry and dependency URLs
-    pkg <add|install> [NAME]           Install or add dependencies to current project
-
-ARGUMENTS:
-    <SOURCE_FILE>                  Path to the main entry source file (.fast or .fs)
-    -- <ARGS>...                   Pass arguments directly to the executed program
-
-OPTIONS:
-    -h, --help, -help              Print this help information and exit
-    -d, --debug                    Enable verbose debug and compilation trace output
-    --debug-error, --debug-errors  Accumulate and report all semantic errors without generating code
-    -o, --output <PATH>            Specify output binary or build directory path
-    -I, --include <DIR>            Add module search directory
-    -b, --backend <BACKEND>        Set code generator backend: 'cpp' (C++20, default) or 'cranelift'
-    --ast, --emit-ast [FILE]       Dump parsed AST as formatted JSON (to stdout or FILE)
-    --ast-out, --ast-file, --json-ast <FILE>
-                                   Export parsed AST as formatted JSON directly to FILE
-    --emit-cpp, --cpp-only         Generate and emit C++ source file without compiling binary
-    --emit-ir, --print-ir          Print intermediate representation (IR) output
-    --ir-out, --ir-file <FILE>     Write IR output directly to specified file
-    --aot                          Enable Ahead-Of-Time (AOT) compilation via Cranelift backend
-    --target <TARGET>              Specify target architecture/platform
-    --clean                        Remove temporary C++ and library files after successful build
-
-PROJECT MANIFEST (Fast.toml):
-    [package]
-    name = "my_app"
-    version = "0.1.0"
-    type = "bin"                   # "bin" (executable) or "module" / "lib" (library)
-    main = "src/main.fast"         # Entry source file
-    backend = "cpp"                # Preferred compiler backend ("cpp" or "cranelift")
-
-    [scripts]
-    dev = "fast run"               # Custom task runner scripts
-
-    [paths]
-    packages = "packages"          # Local package dependencies folder
-    libraries = []                 # Additional library search paths
-
-EXAMPLES:
-    fast new my_app
-    fast new my_lib --type lib -y
-    fast run
-    fast run my_script
-    fast run -- arg1 arg2
-    fast build
-    fast test
-    fast lib add C:/libs/my_shared_lib
-    fast lib list
-    fast main.fast -o build/main.exe
-    fast clean
-"#
-    );
-}
-
-fn run_project_tests(project_root: &std::path::Path) -> Result<(), ()> {
-    let tests_dir = project_root.join("tests");
-    if !tests_dir.exists() {
-        println!("No tests directory found at '{}'.", tests_dir.display());
-        return Ok(());
-    }
-
-    let mut entries: Vec<std::path::PathBuf> = match std::fs::read_dir(&tests_dir) {
-        Ok(read_dir) => read_dir
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| {
-                if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
-                    (ext == "fast" || ext == "fs") && p.is_file()
-                } else {
-                    false
-                }
-            })
-            .collect(),
-        Err(e) => {
-            eprintln!("Failed to read tests directory: {}", e);
-            return Err(());
-        }
-    };
-
-    if entries.is_empty() {
-        println!("No test files found in '{}'.", tests_dir.display());
-        return Ok(());
-    }
-
-    entries.sort();
-
-    println!("\n=== Running FastLang Project Tests ===");
-    println!("Found {} test(s) in {}\n", entries.len(), tests_dir.display());
-
-    let self_exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("fast_lang"));
-    let mut passed = 0;
-    let mut failed = 0;
-
-    for test_path in entries {
-        let file_name = test_path.file_name().unwrap_or_default().to_string_lossy();
-        let stem = test_path.file_stem().unwrap_or_default().to_string_lossy();
-        print!("--> Running test: {} ... ", file_name);
-        let _ = std::io::Write::flush(&mut std::io::stdout());
-
-        let build_dir = project_root.join("build");
-        let _ = std::fs::create_dir_all(&build_dir);
-        let test_bin = build_dir.join(format!("{}.exe", stem));
-
-        let compile_output = std::process::Command::new(&self_exe)
-            .arg(&test_path)
-            .arg("-o")
-            .arg(&test_bin)
-            .output();
-
-        match compile_output {
-            Ok(out) if out.status.success() => {
-                let run_output = std::process::Command::new(&test_bin).output();
-                match run_output {
-                    Ok(r_out) if r_out.status.success() => {
-                        println!("PASSED");
-                        passed += 1;
-                    }
-                    Ok(r_out) => {
-                        println!("FAILED (runtime exit code: {:?})", r_out.status.code());
-                        let stderr = String::from_utf8_lossy(&r_out.stderr);
-                        if !stderr.trim().is_empty() {
-                            eprintln!("    Stderr: {}", stderr.trim());
-                        }
-                        failed += 1;
-                    }
-                    Err(e) => {
-                        println!("FAILED to execute binary: {}", e);
-                        failed += 1;
-                    }
-                }
-            }
-            Ok(out) => {
-                println!("FAILED to compile");
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                if !stderr.trim().is_empty() {
-                    eprintln!("    Compiler error: {}", stderr.trim());
-                }
-                failed += 1;
-            }
-            Err(e) => {
-                println!("FAILED to run compiler: {}", e);
-                failed += 1;
-            }
-        }
-    }
-
-    println!("\nTest Results: {} passed, {} failed\n", passed, failed);
-    if failed > 0 {
-        Err(())
-    } else {
-        Ok(())
-    }
-}
 
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() == 1
-        || args.contains(&"--help".to_string())
-        || args.contains(&"-h".to_string())
-        || args.contains(&"-help".to_string())
-    {
-        print_help();
+    if cli::handle_subcommands(&args) {
         return;
     }
 
-    // 1. Subcommand: clean
-    if args.len() > 1 && args[1] == "clean" {
-        let target_dir = if args.len() > 2 {
-            std::path::PathBuf::from(&args[2])
-        } else {
-            std::path::PathBuf::from(".")
-        };
-        let build_dir = if target_dir.file_name().and_then(|s| s.to_str()) == Some("build") {
-            target_dir
-        } else {
-            target_dir.join("build")
-        };
-        if build_dir.exists() {
-            if let Err(e) = std::fs::remove_dir_all(&build_dir) {
-                eprintln!("Failed to clean {}: {}", build_dir.display(), e);
-                std::process::exit(1);
-            }
-            println!("Cleaned build directory: {}", build_dir.display());
-        } else {
-            println!(
-                "Nothing to clean. ({}) does not exist.",
-                build_dir.display()
-            );
-        }
-        return;
-    }
-
-    // 2. Subcommand: new <name> [--type bin|lib] [-y]
-    if args.len() > 1 && args[1] == "new" {
-        let mut proj_name: Option<String> = None;
-        let mut p_type: Option<crate::project::ProjectType> = None;
-        let mut non_interactive = false;
-
-        let mut idx = 2;
-        while idx < args.len() {
-            if (args[idx] == "--type" || args[idx] == "-t") && idx + 1 < args.len() {
-                p_type = crate::project::ProjectType::from_str_opt(&args[idx + 1]);
-                idx += 2;
-            } else if args[idx] == "-y" || args[idx] == "--yes" {
-                non_interactive = true;
-                idx += 1;
-            } else if !args[idx].starts_with('-') && proj_name.is_none() {
-                proj_name = Some(args[idx].clone());
-                idx += 1;
-            } else {
-                idx += 1;
-            }
-        }
-
-        let name = match proj_name {
-            Some(n) => n,
-            None => {
-                if non_interactive {
-                    eprintln!("Error: Project name is required. Usage: fast new <name> [--type bin|lib] [-y]");
-                    std::process::exit(1);
-                }
-                print!("Enter project name: ");
-                let _ = std::io::Write::flush(&mut std::io::stdout());
-                let mut input = String::new();
-                std::io::stdin().read_line(&mut input).unwrap_or_default();
-                let trimmed = input.trim();
-                if trimmed.is_empty() {
-                    eprintln!("Project name cannot be empty.");
-                    std::process::exit(1);
-                }
-                trimmed.to_string()
-            }
-        };
-
-        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        match crate::project::scaffold::create_new_project(&name, &cwd, p_type, non_interactive) {
-            Ok(dir) => {
-                println!("Created new FastLang project '{}' at {}", name, dir.display());
-                println!("Get started with:");
-                if name != "." {
-                    println!("  cd {}", name);
-                }
-                println!("  fast run");
-            }
-            Err(e) => {
-                eprintln!("Error creating project: {}", e);
-                std::process::exit(1);
-            }
-        }
-        return;
-    }
-
-    // 3. Subcommand: init [--type bin|lib] [-y]
-    if args.len() > 1 && args[1] == "init" {
-        let mut p_type: Option<crate::project::ProjectType> = None;
-        let mut non_interactive = false;
-
-        let mut idx = 2;
-        while idx < args.len() {
-            if (args[idx] == "--type" || args[idx] == "-t") && idx + 1 < args.len() {
-                p_type = crate::project::ProjectType::from_str_opt(&args[idx + 1]);
-                idx += 2;
-            } else if args[idx] == "-y" || args[idx] == "--yes" {
-                non_interactive = true;
-                idx += 1;
-            } else {
-                idx += 1;
-            }
-        }
-
-        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let proj_name = cwd.file_name().and_then(|n| n.to_str()).unwrap_or("my_project").to_string();
-        let target_type = if let Some(t) = p_type {
-            t
-        } else if non_interactive {
-            crate::project::ProjectType::Bin
-        } else {
-            crate::project::ProjectType::Bin
-        };
-
-        match crate::project::scaffold::init_project_in_dir(&cwd, proj_name, target_type) {
-            Ok(_) => {
-                println!("Initialized FastLang project in '{}'", cwd.display());
-                println!("Run project with: fast run");
-            }
-            Err(e) => {
-                eprintln!("Error initializing project: {}", e);
-                std::process::exit(1);
-            }
-        }
-        return;
-    }
-
-    // 4. Subcommand: lib <list | add <path> | remove <path>>
-    if args.len() > 1 && args[1] == "lib" {
-        let sub = args.get(2).map(|s| s.as_str()).unwrap_or("list");
-        match sub {
-            "list" => {
-                let config = crate::project::GlobalConfig::load();
-                if config.library_paths.is_empty() {
-                    println!("No global library paths registered. Add one using 'fast lib add <path>'.");
-                } else {
-                    println!("Registered Global Library Paths:");
-                    for (i, p) in config.library_paths.iter().enumerate() {
-                        println!("  [{}] {}", i + 1, p);
-                    }
-                }
-            }
-            "add" => {
-                let lib_path_arg = match args.get(3) {
-                    Some(p) => p,
-                    None => {
-                        eprintln!("Usage: fast lib add <path>");
-                        std::process::exit(1);
-                    }
-                };
-                let lib_path = std::path::Path::new(lib_path_arg);
-                if !lib_path.exists() {
-                    eprintln!("Warning: path '{}' does not currently exist on disk.", lib_path.display());
-                }
-                let mut config = crate::project::GlobalConfig::load();
-                match config.add_library_path(lib_path) {
-                    Ok(_) => {
-                        println!("Added global library path: {}", lib_path.display());
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to save global config: {}", e);
-                        std::process::exit(1);
-                    }
-                }
-            }
-            "remove" | "rm" => {
-                let lib_path_arg = match args.get(3) {
-                    Some(p) => p,
-                    None => {
-                        eprintln!("Usage: fast lib remove <path>");
-                        std::process::exit(1);
-                    }
-                };
-                let mut config = crate::project::GlobalConfig::load();
-                match config.remove_library_path(lib_path_arg) {
-                    Ok(true) => {
-                        println!("Removed global library path: {}", lib_path_arg);
-                    }
-                    Ok(false) => {
-                        println!("Path '{}' was not found in registered libraries.", lib_path_arg);
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to save global config: {}", e);
-                        std::process::exit(1);
-                    }
-                }
-            }
-            other => {
-                eprintln!("Unknown lib subcommand '{}'. Use 'add', 'list', or 'remove'.", other);
-                std::process::exit(1);
-            }
-        }
-        return;
-    }
-
-    // 4b. Subcommand: registry <list | add <name> <url> [version] [desc] | import <file>>
-    if args.len() > 1 && args[1] == "registry" {
-        let sub = args.get(2).map(|s| s.as_str()).unwrap_or("list");
-        match sub {
-            "list" => {
-                let reg = crate::project::DependencyRegistry::load();
-                let list = reg.list();
-                if list.is_empty() {
-                    println!("No dependencies registered in known registry.");
-                } else {
-                    println!("Known Dependency Registry ({} packages):", list.len());
-                    println!("{:<15} {:<10} {:<45} {}", "NAME", "VERSION", "URL", "DESCRIPTION");
-                    println!("{:-<15} {:-<10} {:-<45} {:-<20}", "", "", "", "");
-                    for dep in list {
-                        let ver = dep.version.as_deref().unwrap_or("-");
-                        let desc = dep.description.as_deref().unwrap_or("");
-                        println!("{:<15} {:<10} {:<45} {}", dep.name, ver, dep.url, desc);
-                    }
-                }
-            }
-            "add" => {
-                let name = match args.get(3) {
-                    Some(n) => n.clone(),
-                    None => {
-                        eprintln!("Usage: fast registry add <name> <url> [version] [description]");
-                        std::process::exit(1);
-                    }
-                };
-                let url = match args.get(4) {
-                    Some(u) => u.clone(),
-                    None => {
-                        eprintln!("Usage: fast registry add <name> <url> [version] [description]");
-                        std::process::exit(1);
-                    }
-                };
-                let version = args.get(5).cloned();
-                let description = args.get(6).cloned();
-
-                let mut reg = crate::project::DependencyRegistry::load();
-                let dep = crate::project::KnownDependency {
-                    name: name.clone(),
-                    version,
-                    url,
-                    description,
-                };
-                match reg.add(dep) {
-                    Ok(_) => println!("Successfully registered package '{}' in known registry.", name),
-                    Err(e) => {
-                        eprintln!("Failed to save registry: {}", e);
-                        std::process::exit(1);
-                    }
-                }
-            }
-            "import" => {
-                let file_path = match args.get(3) {
-                    Some(f) => std::path::Path::new(f),
-                    None => {
-                        eprintln!("Usage: fast registry import <path-to-dependencies.toml>");
-                        std::process::exit(1);
-                    }
-                };
-                let mut reg = crate::project::DependencyRegistry::load();
-                match reg.import_file(file_path) {
-                    Ok(count) => {
-                        println!("Successfully imported {} package(s) into known dependency registry.", count);
-                    }
-                    Err(e) => {
-                        eprintln!("Import failed: {}", e);
-                        std::process::exit(1);
-                    }
-                }
-            }
-            other => {
-                eprintln!("Unknown registry subcommand '{}'. Use 'list', 'add', or 'import'.", other);
-                std::process::exit(1);
-            }
-        }
-        return;
-    }
-
-    // 4c. Subcommand: pkg <add <name> | install> (or fast add <name>)
-    if (args.len() > 1 && args[1] == "pkg") || (args.len() > 1 && args[1] == "add") {
-        let is_direct_add = args[1] == "add";
-        let sub = if is_direct_add {
-            "add"
-        } else {
-            args.get(2).map(|s| s.as_str()).unwrap_or("install")
-        };
-        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let (manifest_opt, project_root) = match crate::project::FastManifest::find_in_dir_or_parents(&cwd) {
-            Some((m, root)) => (Some(m), root),
-            None => {
-                eprintln!("Error: No Fast.toml manifest found in current directory or parents.");
-                std::process::exit(1);
-            }
-        };
-        let mut manifest = manifest_opt.unwrap();
-        let packages_dir = manifest.get_packages_dir(&project_root);
-
-        match sub {
-            "add" => {
-                let pkg_name_idx = if is_direct_add { 2 } else { 3 };
-                let pkg_name = match args.get(pkg_name_idx) {
-                    Some(n) => n.clone(),
-                    None => {
-                        eprintln!("Usage: fast pkg add <name> (or fast add <name>)");
-                        std::process::exit(1);
-                    }
-                };
-                let req_version = args.get(pkg_name_idx + 1).cloned();
-
-                match crate::project::resolve_and_fetch_dependency(&pkg_name, req_version.as_deref(), &packages_dir) {
-                    Ok(_) => {
-                        let deps = manifest.dependencies.get_or_insert_with(HashMap::new);
-                        deps.insert(pkg_name.clone(), req_version.unwrap_or_else(|| "latest".to_string()));
-                        let _ = manifest.save_to_file(&project_root.join("Fast.toml"));
-                        println!("Package '{}' added to Fast.toml and installed in packages/.", pkg_name);
-                    }
-                    Err(e) => {
-                        eprintln!("Error: {}", e);
-                        std::process::exit(1);
-                    }
-                }
-            }
-            "install" => {
-                if let Some(ref deps) = manifest.dependencies {
-                    println!("Installing dependencies from Fast.toml ({} packages)...", deps.len());
-                    for (name, ver) in deps {
-                        if let Err(e) = crate::project::resolve_and_fetch_dependency(name, Some(ver.as_str()), &packages_dir) {
-                            eprintln!("Warning: Failed to install package '{}': {}", name, e);
-                        }
-                    }
-                    println!("Dependencies installation complete.");
-                } else {
-                    println!("No dependencies found in Fast.toml.");
-                }
-            }
-            other => {
-                eprintln!("Unknown pkg subcommand '{}'. Use 'add' or 'install'.", other);
-                std::process::exit(1);
-            }
-        }
-        return;
-    }
-
-    // 5. Subcommand: test
-    if args.len() > 1 && args[1] == "test" {
-        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let project_root = crate::project::FastManifest::find_in_dir_or_parents(&cwd)
-            .map(|(_, root)| root)
-            .unwrap_or(cwd);
-        if run_project_tests(&project_root).is_err() {
-            std::process::exit(1);
-        }
-        return;
-    }
-
-    let mut run_after_compile = false;
-    let mut is_build_cmd = false;
-    let mut i = 1;
-
-    if args.len() > 1 && args[1] == "run" {
-        // Check if args[2] is a custom script defined in Fast.toml
-        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let manifest_info = crate::project::FastManifest::find_in_dir_or_parents(&cwd);
-        if let Some((ref manifest, ref project_root)) = manifest_info {
-            if args.len() > 2 && !args[2].starts_with('-') && args[2] != "--" {
-                if let Some(ref scripts) = manifest.scripts {
-                    if let Some(cmd) = scripts.get(&args[2]) {
-                        let trailing_args = &args[3..];
-                        #[cfg(windows)]
-                        let mut process = std::process::Command::new("cmd");
-                        #[cfg(windows)]
-                        {
-                            process.current_dir(project_root);
-                            process.arg("/C").arg(cmd);
-                            for a in trailing_args {
-                                process.arg(a);
-                            }
-                        }
-                        #[cfg(not(windows))]
-                        let mut process = {
-                            let mut full_cmd = cmd.clone();
-                            for a in trailing_args {
-                                full_cmd.push(' ');
-                                full_cmd.push_str(a);
-                            }
-                            let mut cmd_proc = std::process::Command::new("sh");
-                            cmd_proc.current_dir(project_root);
-                            cmd_proc.arg("-c").arg(&full_cmd);
-                            cmd_proc
-                        };
-
-                        let status = match process.status() {
-                            Ok(s) => s.code().unwrap_or(0),
-                            Err(e) => {
-                                eprintln!("Failed to execute script '{}': {}", args[2], e);
-                                std::process::exit(1);
-                            }
-                        };
-                        std::process::exit(status);
-                    }
-                }
-            }
-        }
-
-        run_after_compile = true;
-        i = 2;
-    } else if args.len() > 1 && args[1] == "build" {
-        is_build_cmd = true;
-        i = 2;
-    }
-
-    let mut user_target_file: Option<String> = None;
-    let mut target = None;
-    let mut custom_includes = Vec::new();
-    let mut cli_backend: Option<String> = None;
-    let mut _emit_ir = false;
-    let mut _ir_output_file: Option<String> = None;
-    let mut emit_cpp = false;
-    let mut debug = false;
-    let mut use_aot = false;
-    let mut custom_output: Option<String> = None;
-    let mut ast_output_file: Option<String> = None;
-    let mut emit_ast = false;
-    let mut clean_artifacts = false;
-    let mut debug_errors = false;
-    let mut run_args = Vec::new();
-
-    while i < args.len() {
-        if args[i] == "--" {
-            run_args.extend(args[i + 1..].iter().cloned());
-            break;
-        } else if args[i] == "--help" || args[i] == "-h" || args[i] == "-help" {
-            print_help();
-            return;
-        } else if args[i] == "--target" && i + 1 < args.len() {
-            target = Some(args[i + 1].clone());
-            i += 2;
-        } else if (args[i] == "-I" || args[i] == "--include") && i + 1 < args.len() {
-            let include_path = args[i + 1].clone();
-            let include_path = if include_path.ends_with('/') || include_path.ends_with('\\') {
-                include_path
-            } else {
-                format!("{}/", include_path)
-            };
-            custom_includes.push(include_path);
-            i += 2;
-        } else if (args[i] == "--backend" || args[i] == "-b") && i + 1 < args.len() {
-            cli_backend = Some(args[i + 1].clone());
-            i += 2;
-        } else if (args[i] == "--ir-out" || args[i] == "--ir-file") && i + 1 < args.len() {
-            _emit_ir = true;
-            _ir_output_file = Some(args[i + 1].clone());
-            i += 2;
-        } else if args[i] == "--print-ir" || args[i] == "--emit-ir" {
-            _emit_ir = true;
-            if i + 1 < args.len()
-                && !args[i + 1].starts_with('-')
-                && (args[i + 1].ends_with(".ir") || args[i + 1].ends_with(".txt"))
-            {
-                _ir_output_file = Some(args[i + 1].clone());
-                i += 2;
-            } else {
-                i += 1;
-            }
-        } else if args[i] == "--emit-cpp" || args[i] == "--cpp-only" {
-            emit_cpp = true;
-            i += 1;
-        } else if (args[i] == "--ast-out" || args[i] == "--ast-file" || args[i] == "--json-ast")
-            && i + 1 < args.len()
-        {
-            emit_ast = true;
-            ast_output_file = Some(args[i + 1].clone());
-            i += 2;
-        } else if args[i] == "--emit-ast" || args[i] == "--ast" {
-            emit_ast = true;
-            if i + 1 < args.len()
-                && !args[i + 1].starts_with('-')
-                && (args[i + 1].ends_with(".json")
-                    || args[i + 1].ends_with(".txt")
-                    || args[i + 1].ends_with(".ast"))
-            {
-                ast_output_file = Some(args[i + 1].clone());
-                i += 2;
-            } else {
-                i += 1;
-            }
-        } else if args[i] == "--debug" || args[i] == "-d" {
-            debug = true;
-            i += 1;
-        } else if args[i] == "--debug-error" || args[i] == "--debug-errors" {
-            debug_errors = true;
-            i += 1;
-        } else if (args[i] == "-o" || args[i] == "--output") && i + 1 < args.len() {
-            custom_output = Some(args[i + 1].clone());
-            i += 2;
-        } else if args[i] == "--clean" {
-            clean_artifacts = true;
-            i += 1;
-        } else if args[i] == "--aot" {
-            use_aot = true;
-            i += 1;
-        } else if !args[i].starts_with('-') && user_target_file.is_none() {
-            let is_file = args[i].ends_with(".fast")
-                || args[i].ends_with(".fs")
-                || std::path::Path::new(&args[i]).is_file();
-            if is_file || !run_after_compile {
-                user_target_file = Some(args[i].clone());
-            } else {
-                run_args.push(args[i].clone());
-            }
-            i += 1;
-        } else if run_after_compile && !args[i].starts_with('-') {
-            run_args.push(args[i].clone());
-            i += 1;
-        } else {
-            i += 1;
-        }
-    }
-
-    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let (path, manifest_info) = if let Some(ref target_f) = user_target_file {
-        let pb = std::path::PathBuf::from(target_f);
-        let m = crate::project::FastManifest::find_in_dir_or_parents(&pb)
-            .or_else(|| crate::project::FastManifest::find_in_dir_or_parents(&cwd));
-        (target_f.clone(), m)
-    } else {
-        let m = crate::project::FastManifest::find_in_dir_or_parents(&cwd);
-        if let Some((ref manifest, ref project_root)) = m {
-            let entry = manifest.get_entry_point(project_root);
-            (entry.to_string_lossy().to_string(), m)
-        } else if std::path::Path::new("src/main.fast").exists() {
-            ("src/main.fast".to_string(), None)
-        } else if std::path::Path::new("main.fast").exists() {
-            ("main.fast".to_string(), None)
-        } else if run_after_compile || is_build_cmd {
-            eprintln!("Error: No Fast.toml project manifest found and no source file specified.");
-            std::process::exit(1);
-        } else {
-            ("fast.fs".to_string(), None)
-        }
-    };
-
-    let (manifest, project_root) = match manifest_info {
-        Some((m, root)) => (Some(m), Some(root)),
-        None => (None, None),
-    };
-
-    let backend = cli_backend
-        .or_else(|| manifest.as_ref().and_then(|m| m.package.backend.clone()))
-        .unwrap_or_else(|| "cpp".to_string());
-
-    if custom_output.is_some() && backend == "cranelift" {
-        use_aot = true;
-    }
-
-    let is_test_file = {
-        let pb = std::path::Path::new(&path);
-        pb.components().any(|c| c.as_os_str() == "tests" || c.as_os_str() == "test")
-    };
-
-    let is_module_project = !is_test_file
-        && manifest
-            .as_ref()
-            .map(|m| m.package.project_type == crate::project::ProjectType::Module)
-            .unwrap_or(false);
-
-    if is_module_project && run_after_compile {
-        eprintln!("Error: Cannot execute a module/library project with 'fast run'.");
-        eprintln!("Use 'fast build' to compile the library, or 'fast test' to run tests.");
-        std::process::exit(1);
-    }
+    let cli::CliOptions {
+        path,
+        manifest_info: _,
+        manifest,
+        project_root,
+        target,
+        custom_includes,
+        backend,
+        emit_ir: _emit_ir,
+        ir_output_file: _ir_output_file,
+        emit_cpp,
+        debug,
+        use_aot,
+        custom_output,
+        ast_output_file,
+        emit_ast,
+        clean_artifacts,
+        debug_errors,
+        run_after_compile,
+        is_build_cmd: _,
+        run_args,
+        is_test_file: _,
+        is_module_project,
+    } = cli::parse_cli(&args);
 
     let mut loader = match (&project_root, &manifest) {
         (Some(root), Some(m)) => loader::ProjectLoader::new_with_project(root.clone(), Some(m.clone())),
@@ -1344,7 +627,7 @@ fn main() {
     }
 
     if emit_ast {
-        let json_str = crate::frontend::parser::ast_json::ast_to_json_string(&program.main_ast);
+        let json_str = ast_to_json_string(&program.main_ast);
         if let Some(out_f) = ast_output_file {
             std::fs::write(&out_f, &json_str).expect("Failed to write AST JSON file");
             println!("AST exported successfully to {}", out_f);
@@ -1355,10 +638,7 @@ fn main() {
     }
 
     let mut envs: HashMap<String, Rc<RefCell<Environment>>> = HashMap::new();
-    let mut all_fn_overloads: HashMap<
-        String,
-        HashMap<String, Vec<crate::middle_end::semantic::environment::FnSignature>>,
-    > = HashMap::new();
+    let mut all_fn_overloads: HashMap<String, HashMap<String, Vec<FnSignature>>> = HashMap::new();
     let mut analyzed_modules = HashSet::new();
 
     let mut all_module_dep_graphs: HashMap<String, HashSet<String>> = HashMap::new();
@@ -1523,10 +803,7 @@ fn main() {
         return;
     }
 
-    let mut combined_fn_overloads: HashMap<
-        String,
-        Vec<crate::middle_end::semantic::environment::FnSignature>,
-    > = HashMap::new();
+    let mut combined_fn_overloads: HashMap<String, Vec<FnSignature>> = HashMap::new();
     for (_, mod_overloads) in &all_fn_overloads {
         for (fn_name, sigs) in mod_overloads {
             combined_fn_overloads
@@ -1553,7 +830,7 @@ fn main() {
     }
 
     // Compile-Time AST Evaluation & Constant Folding Pass via Interpreter
-    let mut interp = crate::middle_end::interpreter::eval::Interpreter::new();
+    let mut interp = Interpreter::new();
     interp.target_backend = backend.clone();
     interp.current_env = Some(main_analyzer.current_env.clone());
     interp.fn_overloads = main_analyzer.fn_overloads.clone();
@@ -1698,7 +975,7 @@ fn main() {
 
     // Write build/clib/fast_runtime.h only for C++ backend
     if backend == "cpp" {
-        let runtime_header = crate::backend::cpp::runtime::generate_runtime_header();
+        let runtime_header = generate_runtime_header();
         let runtime_path = clib_dir.join("fast_runtime.h");
         let should_write = match std::fs::read_to_string(&runtime_path) {
             Ok(content) => content != runtime_header,
@@ -1782,7 +1059,7 @@ fn main() {
                 .into_owned();
 
             if use_aot {
-                let mut mod_backend = crate::backend::cranelift::aot::CraneliftAotBackend::new();
+                let mut mod_backend = CraneliftAotBackend::new();
                 mod_backend.compile_ast(&m.ast);
                 mod_backend.finalize(&mod_out_o);
                 module_obj_files.push(mod_out_o);
@@ -1792,7 +1069,7 @@ fn main() {
         if use_aot {
             let out_o = format!("{}.o", out_path_base);
 
-            let mut aot_backend = crate::backend::cranelift::aot::CraneliftAotBackend::new();
+            let mut aot_backend = CraneliftAotBackend::new();
             aot_backend.compile_ast(&program.main_ast);
             aot_backend.finalize(&out_o);
 

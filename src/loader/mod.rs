@@ -1,8 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use crate::frontend::parser::ast::{Decl, Stmt};
-use crate::frontend::parser::ast::TypeMetadata;
-use crate::project::{FastManifest, GlobalConfig};
+
+use crate::frontend::lexer::scanner::Scanner;
+use crate::frontend::lexer::token::TokenKind;
+use crate::frontend::parser::ast::{Decl, Stmt, TypeMetadata, Visibility};
+use crate::frontend::parser::parser::Parser;
+use crate::project::{resolve_and_fetch_dependency, FastManifest, GlobalConfig};
+use crate::{extract_line_col_from_msg, report_visual_error};
 pub fn merge_metadata(target: &mut HashMap<String, TypeMetadata>, incoming: HashMap<String, TypeMetadata>) {
     for (k, v) in incoming {
         let entry = target.entry(k).or_insert_with(|| v.clone());
@@ -435,7 +439,7 @@ impl ProjectLoader {
                     }
                 }
 
-                if let Ok(pkg_path) = crate::project::resolve_and_fetch_dependency(
+                if let Ok(pkg_path) = resolve_and_fetch_dependency(
                     &name,
                     ver.as_deref(),
                     &packages_dir,
@@ -507,19 +511,19 @@ impl ProjectLoader {
 
         self.process_file_dependencies(&contents);
     
-        let mut scanner = crate::frontend::lexer::scanner::Scanner::new(contents.clone());
+        let mut scanner = Scanner::new(contents.clone());
         let mut tokens = Vec::new();
     
         loop {
             let tok = scanner.next_token();
-            let is_eof = tok.kind == crate::frontend::lexer::token::TokenKind::EOF;
+            let is_eof = tok.kind == TokenKind::EOF;
     
-            if let crate::frontend::lexer::token::TokenKind::Error(ref msg) = tok.kind {
+            if let TokenKind::Error(ref msg) = tok.kind {
                 eprintln!("[Lexer Error in {}] {}", path, msg);
             }
     
             match tok.kind {
-                crate::frontend::lexer::token::TokenKind::InlineComment | crate::frontend::lexer::token::TokenKind::MultiLineComment => {}
+                TokenKind::InlineComment | TokenKind::MultiLineComment => {}
                 _ => tokens.push(tok),
             }
     
@@ -528,7 +532,7 @@ impl ProjectLoader {
             }
         }
     
-        let mut parser = crate::frontend::parser::parser::Parser::new(tokens);
+        let mut parser = Parser::new(tokens);
         let prog = parser.parse_program();
 
         match prog {
@@ -580,7 +584,7 @@ impl ProjectLoader {
                                     | Decl::MachineDecl { ref mut visibility, .. }
                                     | Decl::MacroDecl { ref mut visibility, .. }
                                     | Decl::MicroDecl { ref mut visibility, .. } => {
-                                        *visibility = crate::frontend::parser::ast::Visibility::Public;
+                                        *visibility = Visibility::Public;
                                     }
                                     _ => {}
                                 }
@@ -591,7 +595,7 @@ impl ProjectLoader {
                     }
 
                     top_stmts.push(Stmt::Declaration(Decl::NamespaceDecl {
-                        visibility: crate::frontend::parser::ast::Visibility::Public,
+                        visibility: Visibility::Public,
                         name: resolved_ns,
                         decls: inner_decls,
                     }));
@@ -604,7 +608,7 @@ impl ProjectLoader {
                 Ok((stmts, metadata))
             }
             Err(err_msg) => {
-                let (line_opt, col_opt) = crate::extract_line_col_from_msg(&err_msg);
+                let (line_opt, col_opt) = extract_line_col_from_msg(&err_msg);
                 let clean_msg = if let Some(line_idx) = err_msg.find("at line ") {
                     err_msg[..line_idx].trim().trim_end_matches('(').trim().to_string()
                 } else {
@@ -612,7 +616,7 @@ impl ProjectLoader {
                 };
 
                 if let Some(l) = line_opt {
-                    crate::report_visual_error(&contents, l, col_opt.unwrap_or(1), &clean_msg);
+                    report_visual_error(&contents, l, col_opt.unwrap_or(1), &clean_msg);
                 } else {
                     eprintln!("\n\x1b[31;1merror:\x1b[0m {}\n", clean_msg);
                 }

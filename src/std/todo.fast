@@ -1909,3 +1909,234 @@ blueprint unique<T> -> {
         this.id = id_counter.counter;
     };
 }
+micro()();
+micro x = () -> {
+    {
+        //i am an inserted ghost block and i will be called after being inserted by the second ()
+        println("called");
+    };
+};
+x()(); // the 1st () will call the micro x and the 2nd () will call the ghost block
+// we will add a way to call blueprints and classes and structs in <> way like in react
+
+// we may allow any object have render method (we will make it a handle for it) an return the needed typed doc (html, json, etc)
+// and for each doc we may have a unique way for it 
+// ex :
+blueprint counter {
+    int32 count = 0;
+}
+impl counter {
+    fn render() -> {
+        return @html {
+            <div>
+                <h1>Hello, @f{count}</h1>
+            </div>
+        };
+    }
+    fn increment() -> void {
+        this.count = this.count + 1;
+    }
+}
+fn main() -> void {
+    ..
+    counter C = counter {
+        count = 0;
+    };
+    // we also may allow to call classes and structs (because we can use static) difines directly -> 2
+
+    app.get("/", (_ , res: HttpResponse) -> void {
+        res.send_html(@html {
+            <html>
+                <head>
+                    <title>Hello, world!</title>
+                </head>
+                <body>
+                    <C />
+                </body>
+            </html>
+        });
+        C.increment();
+
+    });
+} 
+// 2 :
+class counter {
+    static {
+        int32 count = 0;
+    fn render() -> {
+        return @html {
+            <div>
+                <h1>Hello, @f{count}</h1>
+            </div>
+        };
+    }
+    fn increment() -> void {
+        this.count = this.count + 1;
+    }
+    }
+}
+fn main() -> void {
+    ..
+    app.get("/", (_ , res: HttpResponse) -> void {
+        res.send_html(@html {
+            <html>
+                <head>
+                    <title>Hello, world!</title>
+                </head>
+                <body>
+                    <counter />
+                </body>
+            </html>
+        });
+        counter.increment();
+
+    });
+}
+// we allow to write the <head> in <body> by gathering them at the end  
+// so we have here a object that have head and body and we will insert the head part 
+// if we call it in the head in the place we called it there and the body part will be insert at the end of the body
+// and if body we will insert the body part in place where we called it and the head part will be insert at the end of the head
+// ex :
+blueprint Header {
+    char[] style_path;
+}
+impl Header {
+    fn render() -> {
+        return @html {
+            <>
+            <head>
+                <title>Hello, world!</title>
+                <link rel="stylesheet" href="@f{style_path}" />
+            </head>
+            <body>
+                <h1>Hello, world!</h1>
+            </body>
+            </>
+        };
+    }
+}
+app.get("/", (_ , res: HttpResponse) -> void {
+    res.send_html(@html {
+        <html>
+        <head>
+            <link rel="stylesheet" href="other_style.css" />
+        </head>
+            <body>
+               <h1>before Header</h1>
+              <Header style_path="style.css" />
+              <h1>after Header</h1>
+            </body>
+        </html>
+    });
+});
+ // the output will be
+ @html {
+    <html>
+        <head>
+            <link rel="stylesheet" href="other_style.css" />
+            <title>Hello, world!</title>
+            <link rel="stylesheet" href="style.css" />
+        </head>
+        <body>
+            <h1>before Header</h1>
+            <h1>Hello, world!</h1>
+            <h1>after Header</h1>
+        </body>
+    </html>
+}
+// the way we will represent the type in runtime
+enum type {
+    Int8,
+    ...
+    class,
+}
+@sys {
+set r_typeof<T>(T) -> type;
+}
+extern @c {
+    fn fast_typeof<T>(T) -> type;
+}
+// the same with sizeof
+// for the sql lib we will add a way to create a an easy syntax for making schema 
+// like prisma
+@fdb {
+datasource db {
+  provider = "sql"
+  url      = env("DATABASE_URL") 
+  path  = env("DATABASE_PATH")
+}
+model User {
+    //it will like prisma 
+}
+}
+// to make something like that we need to difine rules for making an custom (foriegn lang)
+// mabye it will something like a handle or what ever 
+// also for macro 
+// we will allow more custminzation for it 
+macro makeup_if -> (
+    set this.type = condition;
+    set this as con;
+){
+    set this.type as scope;
+    set inner {scope} if(con){
+        println("if");
+    };
+    set return as ret = auto;
+    set super as sp = function; //it will run inner like a fn
+}{
+    set inner {scope} if(!con){
+        println("else");
+    };
+    set return = ret;
+    set super = sp;
+};
+int x = 10;
+makeup_if(x == 10){
+    println("x = 10");
+}{
+    println("unr");
+} // that will print "if\n" then "x = 10\n"
+makeup_if(x > 15){
+    println("unr");
+}{
+    println("x > 15");
+} // that will print "else\n" then "x > 15\n"
+
+// there will be more custaminzation but we will leave that for that time 
+// we will add shifts >> << in 0.1.6-alpha also 
+// more ex for macro update  , 
+macro &_gh(c : int32){
+       set counter := c ? 0 : c;
+}->&if[
+   set this as keyword::if;
+   set override = true; // to set the override the if scope 
+    ][
+  set  this.type = condition;
+  set this as con;
+]{
+ set inner {scope} if(con);
+ set handle += {
+    fn error(e) -> void { //todo: same as catch 
+       println(e +" this happened in if ")
+    }
+ }
+}&else if(&if){
+    &_gh(&_gh[counter] + 1);
+}else{
+ set inner {scope} if(!con);
+ set handle += {
+    fn error(e) -> void { //todo: same as catch 
+       println(e +" this happened in if ")
+    }
+ }
+}
+// to call this we will do this
+if(x == 10){  // so that will override the if scope and make it handle errors for example
+    throw new Error("x = 10");
+}else if(x > 15){
+    throw new Error("x > 15");
+}
+// we need to add more syscall (time , window , ..)
+// we will support lua , js , css , sql , cpp , c , asm 
+// we will create a way to support tailwind css or we maay make something like it 
+// todo : rgb , colors
